@@ -35,7 +35,7 @@ PureOS is a fully functional desktop operating system engineered entirely from s
 The OS is structured in clean layers, each built on top of the previous one:
 
 ```mermaid
-graph TB
+flowchart TD
     subgraph HW[Hardware Layer]
         CPU[x86-64 CPU]
         PCI[PCI Bus]
@@ -108,12 +108,12 @@ graph TB
         APPS[15+ Native GUI Apps]
     end
 
-    CPU --> KERNEL
-    KERNEL --> DRIVERS
-    DRIVERS --> VFS
-    DRIVERS --> NET_STACK
-    KERNEL --> COMPOSITOR
-    COMPOSITOR --> APPS
+    HW --> KRN
+    KRN --> DRV
+    DRV --> FSL
+    DRV --> NETL
+    KRN --> DE
+    DE --> APP
 ```
 
 ---
