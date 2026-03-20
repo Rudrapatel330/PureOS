@@ -36,7 +36,7 @@ The OS is structured in clean layers, each built on top of the previous one:
 
 ```mermaid
 graph TB
-    subgraph Hardware Layer
+    subgraph HW[Hardware Layer]
         CPU[x86-64 CPU]
         PCI[PCI Bus]
         DISK[ATA / AHCI Disk]
@@ -48,30 +48,30 @@ graph TB
         USB_HW[USB UHCI]
     end
 
-    subgraph Kernel Layer
+    subgraph KRN[Kernel Layer]
         BOOT[Custom 2-Stage Bootloader] --> KERNEL[64-bit C Kernel]
         KERNEL --> GDT[GDT / IDT / ISR]
-        KERNEL --> PAGING[Virtual Memory & Paging]
+        KERNEL --> PAGING[Virtual Memory and Paging]
         KERNEL --> HEAP[Dynamic Heap Allocator]
-        KERNEL --> SCHED[Task Scheduler & SMP]
+        KERNEL --> SCHED[Task Scheduler and SMP]
         KERNEL --> SYSCALL[System Calls]
         KERNEL --> ACPI_K[ACPI Power Management]
     end
 
-    subgraph Driver Layer
+    subgraph DRV[Driver Layer]
         DRIVERS[Device Drivers]
         DRIVERS --> VGA_D[VGA / BGA Graphics]
         DRIVERS --> KBD_D[Keyboard Driver]
         DRIVERS --> MOUSE_D[Mouse Driver]
         DRIVERS --> ATA_D[ATA / AHCI Storage]
         DRIVERS --> NET_D[PCnet / NE2000 Network]
-        DRIVERS --> AUDIO_D[ES1370 + WAV Audio]
+        DRIVERS --> AUDIO_D[ES1370 and WAV Audio]
         DRIVERS --> USB_D[USB UHCI Driver]
-        DRIVERS --> TIMER_D[PIT Timer + RTC Clock]
+        DRIVERS --> TIMER_D[PIT Timer and RTC Clock]
         DRIVERS --> PCI_D[PCI Bus Enumeration]
     end
 
-    subgraph Filesystem Layer
+    subgraph FSL[Filesystem Layer]
         VFS[Virtual Filesystem Switch]
         VFS --> FAT[FAT12 / FAT16 / FAT32]
         VFS --> EXT2[Ext2]
@@ -80,7 +80,7 @@ graph TB
         VFS --> PIPES[Unix-style Pipes]
     end
 
-    subgraph Network Layer
+    subgraph NETL[Network Layer]
         NET_STACK[Network Stack]
         NET_STACK --> ETH[Ethernet Frames]
         NET_STACK --> ARP[ARP Resolution]
@@ -93,27 +93,27 @@ graph TB
         NET_STACK --> SMTP_N[SMTP Email Client]
     end
 
-    subgraph Desktop Environment
+    subgraph DE[Desktop Environment]
         COMPOSITOR[Window Compositor]
-        COMPOSITOR --> TASKBAR_D[Taskbar + System Tray]
+        COMPOSITOR --> TASKBAR_D[Taskbar and System Tray]
         COMPOSITOR --> STARTMENU_D[Start Menu]
         COMPOSITOR --> SYSMENU_D[System Quick-Settings Menu]
-        COMPOSITOR --> ANIMATIONS[Spring & Ease Animations]
+        COMPOSITOR --> ANIMATIONS[Spring and Ease Animations]
         COMPOSITOR --> THEMES[Theme Engine]
         COMPOSITOR --> WORKSPACES[Virtual Workspaces]
         COMPOSITOR --> CLIPBOARD_D[Clipboard Manager]
     end
 
-    subgraph Applications
+    subgraph APP[Applications]
         APPS[15+ Native GUI Apps]
     end
 
-    Hardware Layer --> Kernel Layer
-    Kernel Layer --> Driver Layer
-    Driver Layer --> Filesystem Layer
-    Driver Layer --> Network Layer
-    Kernel Layer --> Desktop Environment
-    Desktop Environment --> Applications
+    CPU --> KERNEL
+    KERNEL --> DRIVERS
+    DRIVERS --> VFS
+    DRIVERS --> NET_STACK
+    KERNEL --> COMPOSITOR
+    COMPOSITOR --> APPS
 ```
 
 ---
@@ -188,7 +188,7 @@ graph TB
     end
 
     subgraph Data Link
-        ETH[Ethernet Frame<br>Parser & Builder]
+        ETH[Ethernet Frame<br>Parser and Builder]
     end
 
     subgraph Network
@@ -272,9 +272,9 @@ sequenceDiagram
     MailApp->>Gmail: AUTH LOGIN (Base64 credentials)
     Gmail-->>MailApp: 235 Authentication Successful
 
-    MailApp->>Gmail: MAIL FROM:<sender>
+    MailApp->>Gmail: MAIL FROM sender
     Gmail-->>MailApp: 250 OK
-    MailApp->>Gmail: RCPT TO:<recipient>
+    MailApp->>Gmail: RCPT TO recipient
     Gmail-->>MailApp: 250 OK
 
     MailApp->>Gmail: DATA
