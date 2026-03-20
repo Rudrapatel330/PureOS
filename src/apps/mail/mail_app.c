@@ -373,8 +373,8 @@ void mail_app_on_mouse(window_t *win, int mx, int my, int buttons) {
 
         print_serial("MAIL: Beginning SMTP Transmission...\n");
         // User MUST change this string to a real 16 character App Password!
-        const char *user = "rudraptl2611@gmail.com";
-        const char *pass = "jhik kzcx uroy diwz";
+        const char *user = "user@example.com";
+        const char *pass = "XXXX XXXX XXXX XXXX";
 
         int res = smtp_send_email("smtp.gmail.com", 465, user, pass, compose_to,
                                   compose_subject, compose_body);
