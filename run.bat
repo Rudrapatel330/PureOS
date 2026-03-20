@@ -1,0 +1,3 @@
+@echo off
+echo Starting QEMU...
+qemu-system-x86_64 -drive file=os-image.bin,format=raw,if=floppy -vga vmware -m 1024 -serial stdio -d int,cpu_reset -D qemu.log -no-reboot -no-shutdown

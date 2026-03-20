@@ -1,0 +1,292 @@
+@echo off
+if not exist build mkdir build
+del /Q build\*.o
+del /Q build\*.bin
+del /Q os-image.bin pureos.img
+
+echo Assembling Bootloader Stage 1...
+nasm -f bin src/boot/boot_sect.asm -o build/boot_sect.bin
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Assembling Bootloader Stage 2...
+nasm -f bin src/boot/stage2.asm -o build/stage2.bin
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Assembling Interrupts...
+nasm -f elf64 src/kernel/hal/interrupt.asm -o build/interrupt.o
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Kernel Entry...
+nasm -f elf64 src/kernel/kernel_entry.asm -o build/kernel_entry.o
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+:: TEMPORARY: Build C Kernel with ASM Entry
+echo Assembling ASM Entry...
+nasm src/kernel/pure_kernel.asm -f elf64 -o build/pure_kernel.o
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Assembling ISR Stubs...
+nasm -f elf64 src/kernel/hal/isr.asm -o build/isr_stubs.o
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Assembling GDT and IDT helpers...
+nasm -f elf64 src/kernel/hal/idt_load.asm -o build/idt_load.o
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+nasm -f elf64 src/kernel/hal/gdt_flush.asm -o build/gdt_flush.o
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+nasm -f elf64 src/kernel/hal/trampoline.asm -o build/trampoline.o
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling C Kernel...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/kernel.c -o build/kernel.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/gui -Isrc/drivers
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Font...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/gui/font.c -o build/font.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling IDT/ISR...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/hal/idt.c -o build/idt.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/hal/isr.c -o build/isr.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Drivers/Utils...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/vga.c -o build/vga.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/bga.c -o build/bga.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/ports.c -o build/ports.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/keyboard.c -o build/keyboard.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/mouse.c -o build/mouse.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/timer.c -o build/timer.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/rtc.c -o build/rtc.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/ata.c -o build/ata.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/speaker.c -o build/speaker.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/ne2000.c -o build/ne2000.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/pci.c -o build/pci.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/ahci.c -o build/ahci.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/es1370.c -o build/es1370.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/usb/uhci.c -o build/uhci.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Kernel Components...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/hal/acpi.c -o build/acpi.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/kernel -Isrc/kernel/hal/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/hal/apic.c -o build/apic.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/kernel -Isrc/kernel/hal/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/hal/smp.c -o build/smp.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/kernel -Isrc/kernel/hal/hal -Isrc/drivers
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/hal/gdt.c -o build/gdt.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/kernel -Isrc/kernel/hal/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/hal/hal.c -o build/hal.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/heap.c -o build/heap.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/mem.c -o build/mem.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/hal/pic.c -o build/pic.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/kernel -Isrc/kernel/hal/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/string.c -o build/string.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/window.c -o build/window.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/gui -Isrc/drivers
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/anim.c -o build/anim.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/desktop.c -o build/desktop.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/compositor.c -o build/compositor.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/gui -Isrc/drivers
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/ui/ctxmenu.c -o build/ctxmenu.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/gui -Isrc/drivers -Isrc/ui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/task.c -o build/task.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/config.c -o build/config.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/clipboard.c -o build/clipboard.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/random.c -o build/random.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/syscall.c -o build/syscall.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/hal/paging.c -o build/paging.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/kernel -Isrc/kernel/hal/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/kernel/elf.c -o build/elf.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/fs -Isrc/apps
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Shell and Filesystem...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/shell/shell.c -o build/shell.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/fs
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/fs/ramfs.c -o build/ramfs.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/fs
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/fs/fat.c -o build/fat.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/fs
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/fs/fs.c -o build/fs.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/fs
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/fs/vfs.c -o build/vfs.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/fs
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Applications...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/terminal.c -o build/terminal.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/apps
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/autocomplete.c -o build/autocomplete.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/apps -Isrc/fs
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/calculator.c -o build/calculator.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/paint.c -o build/paint.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/filemgr.c -o build/filemgr.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/explorer.c -o build/explorer.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/fs
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/editor.c -o build/editor.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/settings.c -o build/settings.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/lockscreen.c -o build/lockscreen.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/taskmgr.c -o build/taskmgr.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/gui/taskbar.c -o build/taskbar.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/gui/startmenu.c -o build/startmenu.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Video Support...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/video_dev.c -o build/video_dev.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/fs -Isrc/lib
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/videoplayer.c -o build/videoplayer.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/browser/dom.c -o build/dom.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/apps
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/browser/css.c -o build/css.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/apps
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/browser/layout.c -o build/layout.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/apps
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+if exist build\js.o del /Q build\js.o
+if exist build\browser.o del /Q build\browser.o
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/browser/js.c -o build/js.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/apps
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/browser.c -o build/browser.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/net -Isrc/apps/browser
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Network Stack...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/net/net_core.c -o build/net_core.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/net/arp.c -o build/arp.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/net/ipv4.c -o build/ipv4.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/net/udp.c -o build/udp.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/net/tcp.c -o build/tcp.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/net/dns.c -o build/dns.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/net/http.c -o build/http.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/net/tls.c -o build/tls.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net -Isrc/net/lib/bearssl/inc
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+REM tls12.c disabled for now - causes page faults
+REM .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/net/tls12.c -o build/tls12.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net -Isrc/net/lib/bearssl/inc
+
+echo Compiling BearSSL (This may take a moment)...
+powershell -ExecutionPolicy Bypass -File build_bearssl.ps1
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -fno-omit-frame-pointer -Wall -Wextra -mcmodel=large -c src/kernel/panic.c -o build/panic.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c test_simple.c -o build/test_simple.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Linking Kernel...
+.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.bin build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/kernel.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/ne2000.o build/pci.o build/ahci.o build/es1370.o build/uhci.o build/hal.o build/string.o build/random.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/terminal.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/editor.o build/lockscreen.o build/taskmgr.o build/taskbar.o build/startmenu.o build/settings.o build/config.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/js.o build/browser.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/http.o build/tls.o build/test_simple.o build/panic.o build/bearssl.a @doom_objs_list.txt --oformat binary
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Linking Kernel (ELF)...
+.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.elf build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/kernel.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/ne2000.o build/pci.o build/ahci.o build/es1370.o build/uhci.o build/hal.o build/string.o build/random.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/terminal.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/editor.o build/lockscreen.o build/taskmgr.o build/taskbar.o build/startmenu.o build/settings.o build/config.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/js.o build/browser.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/http.o build/tls.o build/test_simple.o build/panic.o build/bearssl.a @doom_objs_list.txt
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Creating OS Image...
+copy /b build\boot_sect.bin + build\stage2.bin + build\kernel.bin os-image.bin
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Done.

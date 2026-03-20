@@ -1,0 +1,3 @@
+-DFT_CONFIG_MODULES_H=<slimftmodules.h>
+-DFT_CONFIG_OPTIONS_H=<slimftoptions.h>
+-DFT2_BUILD_LIBRARY

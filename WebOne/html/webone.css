@@ -1,0 +1,69 @@
+/* WebOne default stylesheet */
+h1, h2, h3, h4
+{
+	font-family: sans-serif;
+}
+html
+{
+	font-family: Cambria, sans-serif;
+}
+body
+{
+	margin:4em auto;
+	max-width: 52em;
+	min-width: 13em;
+	padding: 3em;
+}
+li
+{
+	margin: 0px;
+}
+ul
+{
+	list-style: square;
+}
+table
+{
+	margin-bottom:1.4em;
+	width:100%;
+	border-collapse:collapse;
+}
+th 
+{
+	font-weight:bold; 
+	background-color:#f0f0f0;
+}
+th,td 
+{
+	border:1px solid #ddd; 
+	padding:.33em .67em; 
+	vertical-align:middle;
+}
+tr:nth-of-type(even) 
+{
+	background-color:#f8f8f8;
+}
+tr:hover 
+{
+	background-color:#FFFCDB;
+}
+table.nostyle, th.nostyle, tr.nostyle, td.nostyle, tr.nostyle:hover
+{
+	border-style: none !important;
+	background-color: transparent !important;
+	padding: unset !important;
+}
+tr.nostyle:nth-of-type(even)
+{
+	/* Separate for Firefox 2 */
+	border-style: none !important;
+	background-color: transparent !important;
+	padding: unset !important;
+}
+img.fileicon 
+{
+	vertical-align: bottom;
+	border-style: none;
+	width: 16px;
+	height: 16px;
+}

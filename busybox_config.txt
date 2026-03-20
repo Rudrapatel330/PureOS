@@ -1,0 +1,21 @@
+# BusyBox Configuration for PureOS
+# This is a subset of standard busybox configs
+
+CONFIG_HAVE_DOT_CONFIG=y
+
+# Standard Tools
+CONFIG_LS=y
+CONFIG_CAT=y
+CONFIG_ECHO=y
+CONFIG_PWD=y
+CONFIG_SH_IS_ASH=y
+CONFIG_ASH=y
+CONFIG_MKDIR=y
+CONFIG_RM=y
+CONFIG_MV=y
+CONFIG_CP=y
+
+# Disable complex/Linux-specific
+# CONFIG_MOUNT is disabled for now (uses AHCI directly)
+# CONFIG_DF is disabled
+# CONFIG_FREE is disabled

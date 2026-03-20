@@ -1,0 +1,11 @@
+# SIMPLE BOCHS CONFIG
+megs: 32
+romimage: file=D:\bochs\Bochs-3.0\BIOS-bochs-legacy
+vgaromimage: file=D:\bochs\Bochs-3.0\VGABIOS-lgpl-latest.bin
+boot: floppy
+floppya: 1_44=build/pureos.img, status=inserted
+log: bochslog.txt
+cpu: reset_on_triple_fault=1
+port_e9_hack: enabled=1
+mouse: enabled=0
+display_library: win32

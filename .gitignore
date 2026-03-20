@@ -1,0 +1,49 @@
+# OS Images and Virtual Drives
+*.vdi
+*.img
+*.iso
+*.lock
+os-image.bin
+
+# Build Directories and Object Files
+build/
+*.o
+*.a
+*.bin
+*.elf
+*.hex
+
+# Logs, Dumps, and Debug Outputs
+*.log
+*.out
+dump.txt
+temp_dump.txt
+*dump*.txt
+*disasm*.txt
+nm_output*.txt
+symbols*.txt
+
+# Media files & screen recordings
+*.mp4
+*.mpg
+Gemini_Generated_Image_*.png
+frame_*.png
+
+# Exclude text dumps but keep configuration texts
+*.txt
+!bochsrc.txt
+!bochsrc*.txt
+!busybox_config.txt
+!readme.txt
+!README.txt
+
+# Ignore downloaded/temporary sources and invalid windows files
+*.tar.gz
+*.zip
+clean_repo.py
+nul
+
+# Ignore huge compiler toolchains and 100MB+ generated headers
+tools/
+src/fs/wallpaper_png_data.h
+
