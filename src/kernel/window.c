@@ -370,70 +370,40 @@ window_t *winmgr_create_window(int x, int y, int w, int h, const char *title) {
     win->taskbar_y = next_anim_origin_y >= 0 ? next_anim_origin_y : y + h;
     win->launch_x = win->taskbar_x;
     win->launch_y = win->taskbar_y;
-    // Determine side based on icon's horizontal position
-    if (next_anim_origin_x < screen_width / 3) {
-      // Left Side: Anchor Left edge (sx = target x)
-      sx = x;
-    } else if (next_anim_origin_x > (2 * screen_width) / 3) {
-      // Right Side: Anchor Right edge (sx = target x + target w)
-      sx = x + w;
-    } else {
-      // Center: Anchor Middle (sx = target x + target w / 2)
-      sx = x + w / 2;
-    }
-
-    if (next_anim_origin_y >= 0) {
-      sy = next_anim_origin_y;
-    }
+    // Perfect Fountain bounds mapping to Dock location
+    sx = win->taskbar_x;
+    sy = win->taskbar_y;
 
     // Reset for next launch
     next_anim_origin_x = -1;
     next_anim_origin_y = -1;
+  } else {
+    // Default taskbar-centered fountain fallback for Start Menu / CLI launches
+    win->taskbar_x = screen_width / 2;
+    win->taskbar_y = screen_height;
+    win->launch_x = win->taskbar_x;
+    win->launch_y = win->taskbar_y;
+    sx = win->taskbar_x;
+    sy = win->taskbar_y;
   }
 
-  // Determine stretch axis: If moving primarily horizontally, stretch height
-  // slower. If moving primarily vertically (or default), stretch width slower.
-  float kw = SPRING_SNAPPY_K;
-  float dw = SPRING_SNAPPY_D;
-  float kh = SPRING_SNAPPY_K;
-  float dh = SPRING_SNAPPY_D;
+  // macOS Genie: fast initial pull, soft decelerating spring finish
+  float kw = 280.0f;
+  float dw = 30.0f;
 
   extern int screen_height;
   win->pinch_top = (win->launch_y >= 0 && win->launch_y < screen_height / 2);
 
-  int dx = (win->launch_x >= 0)
-               ? (x > win->launch_x ? x - win->launch_x : win->launch_x - x)
-               : 0;
-  int dy = (win->launch_y >= 0)
-               ? (y > win->launch_y ? y - win->launch_y : win->launch_y - y)
-               : 100;
-
-  if (dx > dy) {
-    // Desktop/Side Move: Width is stiffer than height for a vertical funnel
-    // look
-    kw = 220.0f;
-    dw = 28.0f;
-    kh = SPRING_SNAPPY_K;
-    dh = SPRING_SNAPPY_D;
-  } else {
-    // Taskbar/Bottom Move: Height is stiffer than width for a horizontal squash
-    // look
-    kh = 220.0f;
-    dh = 28.0f;
-    kw = SPRING_SNAPPY_K;
-    dw = SPRING_SNAPPY_D;
-  }
-
+  // Ease-in-out position/size animation from icon origin to final window rect
   anim_start_spring(&win->anim_x, (float)sx, (float)x, kw, dw);
-  anim_start_spring(&win->anim_y, (float)sy, (float)y, kh, dh);
+  anim_start_spring(&win->anim_y, (float)sy, (float)y, kw, dw);
   anim_start_spring(&win->anim_w, (float)sw, (float)w, kw, dw);
-  anim_start_spring(&win->anim_h, (float)sh, (float)h, kh, dh);
+  anim_start_spring(&win->anim_h, (float)sh, (float)h, kw, dw);
 
   // Phase 1: Allocate Surface
   win->opacity = 0;
   win->fading_mode = 1; // Fade in
-  anim_start_spring(&win->anim_opacity, 0.0f, 255.0f, SPRING_STIFF_K,
-                    SPRING_STIFF_D); // Fast fade to 255 (Opaque)
+  anim_start_spring(&win->anim_opacity, 0.0f, 255.0f, kw, dw);
 
   // Phase 3: Blur Support
   win->blur_enabled = 0;
@@ -443,9 +413,9 @@ window_t *winmgr_create_window(int x, int y, int w, int h, const char *title) {
   win->vel_x = 0;
   win->vel_y = 0;
 
-  // Phase 4: Scaling & Warp Support — Pop-in effect
-  win->scale = 0.85f;
-  anim_start_spring(&win->anim_scale, 0.85f, 1.0f, SPRING_BOUNCY_K, SPRING_BOUNCY_D);
+  // Phase 4: Scaling & Warp Support — Genie scale-up
+  win->scale = 0.01f; // Start from near-zero for true genie emergence
+  anim_start_spring(&win->anim_scale, 0.01f, 1.0f, kw, dw);
 
   win->scroll_position = 0;
   win->content_height = 0;
@@ -481,18 +451,13 @@ window_t *winmgr_create_window(int x, int y, int w, int h, const char *title) {
       win->saved_h      = alloc_h;
       win->visible_height = alloc_h;
 
-      // CRITICAL: Restart size springs targeting the actual (smaller) size.
-      // The springs were already started above with the original w/h targets.
-      // If we leave them, anim_w/anim_h spring toward the original large size
-      // but win->width/height is smaller, so the window snaps tiny when
-      // the animation ends and the compositor clips to win->width/height.
+      // CRITICAL: Restart animations targeting the actual (smaller) size.
       anim_start_spring(&win->anim_w, 0.0f, (float)alloc_w, kw, dw);
-      anim_start_spring(&win->anim_h, 0.0f, (float)alloc_h, kh, dh);
+      anim_start_spring(&win->anim_h, 0.0f, (float)alloc_h, kw, dw);
 
-      // Re-anchor position springs so the smaller window is still centered at (x,y)
+      // Re-anchor position so the smaller window is still centered at (x,y)
       int new_sx = x + alloc_w / 2; // Default center anchor
       if (win->launch_x >= 0) {
-        // Keep the same side-anchor logic as above, but relative to alloc_w
         extern int screen_width;
         if (win->launch_x < screen_width / 3)
           new_sx = x;
@@ -503,7 +468,7 @@ window_t *winmgr_create_window(int x, int y, int w, int h, const char *title) {
       }
       int new_sy = (win->launch_y >= 0) ? win->launch_y : y + alloc_h;
       anim_start_spring(&win->anim_x, (float)new_sx, (float)x, kw, dw);
-      anim_start_spring(&win->anim_y, (float)new_sy, (float)y, kh, dh);
+      anim_start_spring(&win->anim_y, (float)new_sy, (float)y, kw, dw);
     }
   }
 
@@ -1200,9 +1165,91 @@ void winmgr_render_window(window_t *win) {
   }
 }
 
-// === Animation System ===
-// Interpolate: start + (end - start) * frame / total
-// === Animation System Integration ===
+// Pre-calculate 64-slice mesh for Genie effect warping
+static float genie_bezier(float t, float p1, float p2) {
+  float u = 1.0f - t;
+  return 3.0f * u * u * t * p1 + 3.0f * u * t * t * p2 + t * t * t;
+}
+
+void winmgr_update_genie_mesh(window_t *win) {
+  if (!win->is_animating)
+    return;
+
+  int cur_w = (int)win->anim_w.current_val;
+  int cur_h = (int)win->anim_h.current_val;
+
+  // progress 0=full window, 1=icon
+  float progress = 0.0f;
+  if (win->width > 0)
+    progress = 1.0f - (float)(cur_w) / (float)win->width;
+  if (progress < 0) progress = 0;
+  if (progress > 1) progress = 1;
+
+  float wp = progress * progress * (3.0f - 2.0f * progress);
+
+  // Vertical scaling bounds for compression logic
+  float R = (float)cur_h / (float)win->height;
+  float optimal_p = R / 3.0f;
+  if (optimal_p > 0.8f) optimal_p = 0.8f;
+  float p1_sy, p2_sy;
+  if (!win->pinch_top) {
+      p1_sy = optimal_p; p2_sy = 0.05f;
+  } else {
+      p1_sy = 0.95f; p2_sy = 1.0f - optimal_p;
+  }
+
+  int tx = (win->launch_x >= 0) ? win->launch_x : win->taskbar_x;
+  float rel_x = 0.5f;
+  if (tx >= 0 && win->width > 0) {
+    rel_x = (float)(tx - win->x) / (float)win->width;
+    if (rel_x < 0.0f) rel_x = 0.0f;
+    if (rel_x > 1.0f) rel_x = 1.0f;
+  }
+
+  float bend_limit = (float)win->width * 0.6f;
+
+  for (int i = 0; i < 64; i++) {
+    float ty_raw = (float)i / 63.0f;
+    
+    // Calculate Textured Y (curved)
+    win->mesh_ty[i] = genie_bezier(ty_raw, p1_sy, p2_sy);
+
+    float ty_funnel = win->pinch_top ? (1.0f - ty_raw) : ty_raw;
+
+    // S-curve Sigmoid approximation (Double-smoothstep)
+    float ss = ty_funnel * ty_funnel * (3.0f - 2.0f * ty_funnel);
+    float ty_s = ss * ss * (3.0f - 2.0f * ss);
+
+    float eval_t = ty_s + (wp * 2.0f) - 1.0f;
+    if (eval_t < 0.0f) eval_t = 0.0f;
+    if (eval_t > 1.0f) eval_t = 1.0f;
+
+    float target_w_ratio = 32.0f / (float)win->width;
+    if (target_w_ratio < 0.01f)
+      target_w_ratio = 0.01f;
+
+    // S-curve width scaling
+    float st_w = eval_t * eval_t * (3.0f - 2.0f * eval_t);
+    st_w = st_w * st_w * (3.0f - 2.0f * st_w);
+
+    float row_scale = 1.0f + st_w * (target_w_ratio - 1.0f);
+    int rw = (int)((float)win->width * row_scale);
+    if (rw < 2) rw = 2;
+
+    float base_rx = (float)win->x + (float)(win->width - rw) * rel_x;
+    float bend_target = (tx - 16.0f) - ((float)win->x + (float)(win->width - 32) * rel_x);
+
+    float st_b = eval_t * eval_t * (3.0f - 2.0f * eval_t);
+    st_b = st_b * st_b * (3.0f - 2.0f * st_b);
+
+    float bend_factor = st_b * bend_target;
+    if (bend_factor > bend_limit) bend_factor = bend_limit;
+    if (bend_factor < -bend_limit) bend_factor = -bend_limit;
+
+    win->mesh_lx[i] = base_rx + bend_factor;
+    win->mesh_rx[i] = win->mesh_lx[i] + (float)rw;
+  }
+}
 
 void winmgr_tick_animations(float dt) {
   extern int ui_dirty;
@@ -1460,6 +1507,10 @@ void winmgr_tick_animations(float dt) {
     // Tick spatial properties if the window is marked as animating.
     // The completion block below will clear win->is_animating when all properties finish.
     if (win->is_animating) {
+      if (win->anim_mode == 1 || win->anim_mode == 2) {
+        winmgr_update_genie_mesh(win);
+      }
+
       // Invalidate OLD ghost area
       int ox = (int)win->anim_x.current_val;
       int oy = (int)win->anim_y.current_val;
@@ -1473,35 +1524,56 @@ void winmgr_tick_animations(float dt) {
       anim_tick(&win->anim_w, dt);
       anim_tick(&win->anim_h, dt);
 
-      int nx = (int)win->anim_x.current_val;
-      int ny = (int)win->anim_y.current_val;
-      int nw = (int)win->anim_w.current_val;
-      int nh = (int)win->anim_h.current_val;
+      // Calculate the ACTUAL rendered bounds (matching compositor_warp_blend's p^5 logic)
+      float progress = 0.0f;
+      if (win->width > 0)
+        progress = 1.0f - (float)(ow) / (float)win->width;
+      if (progress < 0) progress = 0;
+      if (progress > 1) progress = 1;
 
-      // Invalidate the ENTIRE animation area (bounding box of ghost AND icon)
-      // and also the standard target region. This ensures the "neck" is
-      // cleared.
-      int tx = (win->anim_mode == 2 && win->launch_x >= 0) ? win->launch_x
-                                                           : win->taskbar_x;
-      int ty = (win->anim_mode == 2 && win->launch_y >= 0) ? win->launch_y
-                                                           : win->taskbar_y;
+      float p2 = progress * progress;
+      float p5 = p2 * p2 * progress;
+      float inv_p = 1.0f - progress;
+      float inv_p2 = inv_p * inv_p;
+      float inv_p5 = inv_p2 * inv_p2 * inv_p;
 
-      // Bounding box of old/new ghost and icon
-      int min_x = (ox < nx) ? ox : nx;
-      if (tx >= 0 && tx < min_x)
-        min_x = tx;
-      int min_y = (oy < ny) ? oy : ny;
-      if (ty >= 0 && ty < min_y)
-        min_y = ty;
-      int max_x = (ox + ow > nx + nw) ? ox + ow : nx + nw;
-      if (tx >= 0 && tx > max_x)
-        max_x = tx;
-      int max_y = (oy + oh > ny + nh) ? oy + oh : ny + nh;
-      if (ty >= 0 && ty > max_y)
-        max_y = ty;
+      float prog_top, prog_bot;
+      if (win->pinch_top) {
+          prog_top = 1.0f - inv_p5;
+          prog_bot = p5;
+      } else {
+          prog_top = p5;
+          prog_bot = 1.0f - inv_p5;
+      }
 
-      compositor_invalidate_rect(min_x - 8, min_y - 8, (max_x - min_x) + 16,
-                                 (max_y - min_y) + 16);
+      int ty_target = (win->launch_y >= 0) ? win->launch_y : win->taskbar_y;
+      if (ty_target < 0) ty_target = screen_height;
+      int tx_target = (win->launch_x >= 0) ? win->launch_x : win->taskbar_x;
+
+      int start_y = win->y;
+      int start_bottom = win->y + win->height;
+      int target_y = ty_target - 16;
+      int target_bottom = ty_target + 16;
+
+      // Actual rendered Y bounds
+      int cur_y = start_y + (int)((target_y - start_y) * prog_top);
+      int cur_bottom = start_bottom + (int)((target_bottom - start_bottom) * prog_bot);
+      int cur_h = cur_bottom - cur_y;
+
+      // Horizontal bounds: Mesh logic (lx/rx)
+      // At progress=0, bounds are [win->x, win->x + win->width]
+      // At progress=1, bounds are [tx_target-16, tx_target+16]
+      int cur_x_left = (int)win->mesh_lx[0];
+      int cur_x_right = (int)win->mesh_rx[0];
+      for(int m=1; m<64; m++) {
+          if (win->mesh_lx[m] < cur_x_left) cur_x_left = (int)win->mesh_lx[m];
+          if (win->mesh_rx[m] > cur_x_right) cur_x_right = (int)win->mesh_rx[m];
+      }
+
+      compositor_invalidate_rect(cur_x_left - 8, cur_y - 8, (cur_x_right - cur_x_left) + 16, cur_h + 16);
+      
+      // Also invalidate the icon area to ensure the neck connects smoothly
+      compositor_invalidate_rect(tx_target - 24, ty_target - 24, 48, 48);
 
       // Watchdog: If spatial animations take too long (e.g. 120 frames), force complete.
       // This prevents the "Big Black Box" warp mode from getting stuck forever.
@@ -1905,21 +1977,28 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
           compositor_invalidate_window(win); // Invalidate current
 
           // Don't set is_minimized = 1 yet! Wait for anim.
-          // win->is_minimized = 1;
 
-          // Configure Animation
+          // Configure Genie minimize animation
           win->anim_mode = 2; // Minimize
 
           // Target: Taskbar icon position (win->taskbar_x)
           int tx = (win->taskbar_x > 0) ? win->taskbar_x : 20;
           int ty = screen_height - 28;
 
-          start_window_spring(win, win->x, win->y, win->width, win->height, tx,
-                              ty, 28, 22, SPRING_STIFF_K, SPRING_STIFF_D);
+          // Set pinch direction based on dock position
+          win->pinch_top = (ty < win->y);
 
-          // Add scale animation for minimize
-          anim_start_spring(&win->anim_scale, win->scale, 0.05f, SPRING_STIFF_K,
-                            SPRING_STIFF_D);
+          // macOS Genie minimize: fast pull, soft decelerating spring
+          float min_k = 280.0f;
+          float min_d = 30.0f;
+          win->is_animating = 1;
+          anim_start_spring(&win->anim_x, (float)win->x, (float)tx, min_k, min_d);
+          anim_start_spring(&win->anim_y, (float)win->y, (float)ty, min_k, min_d);
+          anim_start_spring(&win->anim_w, (float)win->width, 32.0f, min_k, min_d);
+          anim_start_spring(&win->anim_h, (float)win->height, 32.0f, min_k, min_d);
+
+          // Scale animation for minimize
+          anim_start_spring(&win->anim_scale, win->scale, 0.01f, min_k, min_d);
 
           ui_dirty = 1;
           return 1;
@@ -2093,6 +2172,8 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
           win->is_snapped = 1;
           win->is_maximized = 0; // Explicitly clear maximized state
           win->anim_mode = 3;    // Snap
+          win->vel_x = 0;        // Clear velocity for clean animation
+          win->vel_y = 0;
           start_window_spring(win, win->x, win->y, win->width, win->height, 0,
                               0, screen_width / 2, screen_height,
                               SPRING_STIFF_K, SPRING_STIFF_D);
@@ -2111,6 +2192,8 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
           win->is_snapped = 2;
           win->is_maximized = 0; // Explicitly clear maximized state
           win->anim_mode = 3;    // Snap
+          win->vel_x = 0;        // Clear velocity
+          win->vel_y = 0;
           start_window_spring(win, win->x, win->y, win->width, win->height,
                               screen_width / 2, 0, screen_width / 2,
                               screen_height, SPRING_STIFF_K, SPRING_STIFF_D);
@@ -2129,6 +2212,8 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
           win->is_snapped = 3;
           win->anim_mode = 3;    // Snap
           win->is_maximized = 1; // Treat as maximized
+          win->vel_x = 0;        // Clear velocity
+          win->vel_y = 0;
           start_window_spring(win, win->x, win->y, win->width, win->height, 0,
                               0, screen_width, screen_height, SPRING_STIFF_K,
                               SPRING_STIFF_D);
@@ -2140,6 +2225,8 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
           win->is_maximized = 0;
           win->is_snapped = 0;
           win->anim_mode = 3; // Snap
+          win->vel_x = 0;     // Clear velocity
+          win->vel_y = 0;
           start_window_spring(win, win->x, win->y, win->width, win->height,
                               win->x, win->y, win->saved_w, win->saved_h,
                               SPRING_STIFF_K, SPRING_STIFF_D);
@@ -2360,12 +2447,15 @@ void winmgr_close_window(window_t *win) {
     }
   }
 
-  // Fast fade out — use stiff springs for quick disappearance
+  // macOS Genie close: fast pull, soft decelerating spring
+  float close_k = 280.0f;
+  float close_d = 30.0f;
+
+  // Opacity fade-out with spring physics
   if (win->anim_opacity.active) {
     anim_retarget(&win->anim_opacity, 0.0f);
   } else {
-    anim_start_spring(&win->anim_opacity, (float)win->opacity, 0.0f,
-                      SPRING_STIFF_K, SPRING_STIFF_D);
+    anim_start_spring(&win->anim_opacity, (float)win->opacity, 0.0f, close_k, close_d);
   }
 
   // IMMEDIATELY transfer focus if this was the active window
@@ -2384,56 +2474,42 @@ void winmgr_close_window(window_t *win) {
     }
   }
 
-  // Add scale down animation
+  // Genie suck-down animation targeting the dock icon
   win->anim_mode = 2; // Minimize/Close
 
-  int tx_orig = (win->launch_x >= 0) ? win->launch_x : 20;
-  int ty = (win->launch_y >= 0) ? win->launch_y : screen_height;
+  int tx_orig = 20;
+  int ty = screen_height;
 
-  // Precise funnel target: Use the stored launch origins
-  int target_x = tx_orig;
-  int target_w = 0;
-
-  // Determine stretch axis: If moving primarily horizontally, collapse height
-  // faster. If moving primarily vertically (or default), collapse width faster.
-  float kw = SPRING_SNAPPY_K;
-  float dw = SPRING_SNAPPY_D;
-  float kh = SPRING_SNAPPY_K;
-  float dh = SPRING_SNAPPY_D;
-
-  int dx = (win->x > target_x) ? win->x - target_x : target_x - win->x;
-  int dy = (win->y > ty) ? win->y - ty : ty - win->y;
-
-  if (dx > dy) {
-    // Desktop/Side Icon: Width is stiffer than width for a vertical funnel
-    // look
-    kw = 55.0f;
-    dw = 18.0f;
-    kh = SPRING_SNAPPY_K;
-    dh = SPRING_SNAPPY_D;
-  } else {
-    // Taskbar: Height is stiffer than width for a horizontal squash look
-    kh = 55.0f;
-    dh = 18.0f;
-    kw = SPRING_SNAPPY_K;
-    dw = SPRING_SNAPPY_D;
+  if (win->taskbar_x >= 0 && win->taskbar_y >= 0) {
+      tx_orig = win->taskbar_x;
+      ty = win->taskbar_y;
+  } else if (win->launch_x >= 0 && win->launch_y >= 0) {
+      tx_orig = win->launch_x;
+      ty = win->launch_y;
   }
+
+  // Set pinch direction: bottom pinches toward dock icon below, top if dock above
+  win->pinch_top = (ty < win->y);
+
+  // Target: funnel down to dock icon size (32x32) centered at dock position
+  int target_x = tx_orig - 16;
+  int target_y = ty - 16;
+  int target_w = 32;
+  int target_h = 32;
 
   if (win->is_animating) {
     anim_retarget(&win->anim_x, (float)target_x);
-    anim_retarget(&win->anim_y, (float)ty);
+    anim_retarget(&win->anim_y, (float)target_y);
     anim_retarget(&win->anim_w, (float)target_w);
-    anim_retarget(&win->anim_h, 0.0f);
-    anim_retarget(&win->anim_scale, 0.05f);
-    // retarget doesn't update constants directly, but it's okay for now
+    anim_retarget(&win->anim_h, (float)target_h);
+    anim_retarget(&win->anim_scale, 0.01f);
   } else {
-    anim_start_spring(&win->anim_scale, win->scale, 0.05f, SPRING_STIFF_K,
-                      SPRING_STIFF_D);
+    anim_start_spring(&win->anim_scale, win->scale, 0.01f, close_k, close_d);
     win->is_animating = 1;
-    anim_start_spring(&win->anim_x, (float)win->x, (float)target_x, kw, dw);
-    anim_start_spring(&win->anim_y, (float)win->y, (float)ty, kh, dh);
-    anim_start_spring(&win->anim_w, (float)win->width, (float)target_w, kw, dw);
-    anim_start_spring(&win->anim_h, (float)win->height, 0.0f, kh, dh);
+    anim_start_spring(&win->anim_x, (float)win->x, (float)target_x, close_k, close_d);
+    anim_start_spring(&win->anim_y, (float)win->y, (float)target_y, close_k, close_d);
+    anim_start_spring(&win->anim_w, (float)win->width, (float)target_w, close_k, close_d);
+    anim_start_spring(&win->anim_h, (float)win->height, (float)target_h, close_k, close_d);
   }
 
   // Kill any residual momentum so window doesn't fly off while fading

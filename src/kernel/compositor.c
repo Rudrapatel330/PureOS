@@ -156,6 +156,49 @@ void compositor_scaled_blend(window_t *win, rect_t clip) {
     }
   }
 }
+static inline float cubic_bezier(float t, float p0, float p1, float p2, float p3) {
+  float u = 1.0f - t;
+  float tt = t * t;
+  float uu = u * u;
+  float uuu = uu * u;
+  float ttt = tt * t;
+  return uuu * p0 + 3.0f * uu * t * p1 + 3.0f * u * tt * p2 + ttt * p3;
+}
+
+// S-curve sigmoid: maps [0,1] -> [0,1] with a smooth inflection at the midpoint.
+// steepness controls how sharp the transition is (6-10 is a good range).
+static inline float s_curve(float t, float steepness) {
+  // Logistic sigmoid remapped to [0,1] -> [0,1]
+  // f(t) = 1 / (1 + e^(-steepness*(t-0.5)))
+  // Normalized so f(0)=0, f(1)=1
+  float raw = 1.0f / (1.0f + 1.0f / (t * steepness + 0.001f));
+  // Use smoothstep as a fast, well-behaved approximation
+  float ss = t * t * (3.0f - 2.0f * t); // smoothstep
+  // Blend: sharpen the smoothstep with an extra cubic push
+  float s = ss * ss * (3.0f - 2.0f * ss); // double-smoothstep for tighter S
+  (void)raw; (void)steepness; // suppress unused
+  return s;
+}
+
+// Fast fractional Bilinear Texture Sampling for high density continuous mesh resolution
+static inline uint32_t bilinear_blend_argb(uint32_t c00, uint32_t c10, uint32_t c01, uint32_t c11, int u_frac, int v_frac) {
+    if (u_frac == 0 && v_frac == 0) return c00;
+
+    int u_inv = 256 - u_frac;
+    int v_inv = 256 - v_frac;
+
+    int w00 = (u_inv * v_inv) >> 8;
+    int w10 = (u_frac * v_inv) >> 8;
+    int w01 = (u_inv * v_frac) >> 8;
+    int w11 = (u_frac * v_frac) >> 8;
+
+    int a = ((c00 >> 24) * w00 + (c10 >> 24) * w10 + (c01 >> 24) * w01 + (c11 >> 24) * w11) >> 8;
+    int r = (((c00 >> 16) & 0xFF) * w00 + ((c10 >> 16) & 0xFF) * w10 + ((c01 >> 16) & 0xFF) * w01 + ((c11 >> 16) & 0xFF) * w11) >> 8;
+    int g = (((c00 >> 8) & 0xFF) * w00 + ((c10 >> 8) & 0xFF) * w10 + ((c01 >> 8) & 0xFF) * w01 + ((c11 >> 8) & 0xFF) * w11) >> 8;
+    int b = ((c00 & 0xFF) * w00 + (c10 & 0xFF) * w10 + (c01 & 0xFF) * w01 + (c11 & 0xFF) * w11) >> 8;
+
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
 
 // 32-bit ARGB Genie Effect (Warp) Blending
 void compositor_warp_blend(window_t *win, rect_t clip) {
@@ -178,9 +221,8 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
     return;
   }
 
-
-  // anim_x, anim_y drive the "center" or "target" point
-  // anim_w, anim_h drive the current "spread"
+  // anim_x, anim_y drive the top-left position
+  // anim_w, anim_h drive the current dimensions
   int cur_x = (int)win->anim_x.current_val;
   int cur_y = (int)win->anim_y.current_val;
   int cur_w = (int)win->anim_w.current_val;
@@ -194,95 +236,140 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
   if (cur_x < -2000 || cur_x > 4000 || cur_y < -2000 || cur_y > 4000)
     return;
 
-  // The "Genie" factor: how much the bottom is pinched compared to the top
+  // Genie progress: how far along the animation is (0 = full window, 1 = icon)
+  // Use the width shrinkage as the absolute source of truth for progression
   float progress = 0.0f;
-  if (win->height > 0) {
-    progress = 1.0f - (float)(cur_h) / (float)win->height;
+  if (win->width > 0)
+    progress = 1.0f - (float)(cur_w) / (float)win->width;
+  if (progress < 0) progress = 0;
+  if (progress > 1) progress = 1;
+
+  // === SEPARATE VERTICAL TIMING (Stretching Effect) ===
+  // Delay the rigid edge's descent, and anchor the vacuum tip.
+  float inv_p = 1.0f - progress;
+  float inv_p2 = inv_p * inv_p;
+  float inv_p5 = inv_p2 * inv_p2 * inv_p;
+  float p2 = progress * progress;
+  float p5 = p2 * p2 * progress;
+
+  float prog_top, prog_bot;
+  if (win->pinch_top) {
+      // Dock is above: top edge anchors faster, bottom edge lags exponentially
+      prog_top = 1.0f - inv_p5;
+      prog_bot = p5;
+  } else {
+      // Dock is below (standard): bottom edge anchors faster, top edge lags exponentially
+      prog_top = p5;
+      prog_bot = 1.0f - inv_p5;
   }
-  if (progress < 0)
-    progress = 0;
-  if (progress > 1)
-    progress = 1;
+
+  int ty_target = (win->launch_y >= 0) ? win->launch_y : win->taskbar_y;
+  if (ty_target < 0) ty_target = screen_height;
+
+  int start_y = win->y;
+  int start_bottom = win->y + win->height;
+  int target_y = ty_target - 16;
+  int target_bottom = ty_target + 16; // Icon size (32) centered
+
+  // Override cur_y and cur_h with independent stretching bounds
+  cur_y = start_y + (int)((target_y - start_y) * prog_top);
+  int cur_bottom = start_bottom + (int)((target_bottom - start_bottom) * prog_bot);
+  cur_h = cur_bottom - cur_y;
+  if (cur_h < 2) cur_h = 2;
 
   // === PRE-LOOP: Hoist loop-invariant calculations ===
-  int tx = (win->anim_mode == 2 && win->launch_x >= 0) ? win->launch_x
-                                                       : win->taskbar_x;
+  // The dock icon X as the horizontal attractor for the Bézier bend
+  int tx = (win->launch_x >= 0) ? win->launch_x : win->taskbar_x;
   int win_center = win->x + win->width / 2;
   float tx_dist = (tx >= 0) ? (float)(tx - win_center) : 0.0f;
-  float bend_limit = (float)win->width * 0.5f;
-  float wp = progress * (2.0f - progress);
+  float bend_limit = (float)win->width * 0.6f;
 
-  // Horizontal anchor ratio (computed once)
+  // Ease-in-out warp progress: smooth acceleration/deceleration of the funnel
+  float wp = progress * progress * (3.0f - 2.0f * progress);
+
+  // Horizontal anchor ratio — where on the width the funnel converges
   float rel_x = 0.5f;
   if (tx >= 0 && win->width > 0) {
     rel_x = (float)(tx - win->x) / (float)win->width;
-    if (rel_x < 0.0f)
-      rel_x = 0.0f;
-    if (rel_x > 1.0f)
-      rel_x = 1.0f;
+    if (rel_x < 0.0f) rel_x = 0.0f;
+    if (rel_x > 1.0f) rel_x = 1.0f;
   }
 
   // Pre-calculate fixed-point constants for vertical loop
   int h_fixed = (win->surface_h << 16) / cur_h;
 
-  for (int y = 0; y < cur_h; y++) {
-    int cur_dy = cur_y + y;
-    if (cur_dy < clip.y || cur_dy >= clip.y + clip.h)
-      continue;
-    if (cur_dy < 0 || cur_dy >= screen_height)
-      continue;
+  // === MESH-DRIVEN QUAD RENDERING (63 Slices) ===
+  for (int i = 0; i < 63; i++) {
+    // Screen Y boundaries for this horizontal strip (quad)
+    int y0 = cur_y + (i * cur_h) / 63;
+    int y1 = cur_y + ((i + 1) * cur_h) / 63;
 
-    // Vertical progress within the current animated height
-    float ty = (float)y / (float)cur_h;
-    if (win->pinch_top)
-      ty = 1.0f - ty;
+    // Skip quad if it's entirely outside the clip/screen
+    if (y1 < clip.y || y0 >= clip.y + clip.h) continue;
+    if (y1 < 0 || y0 >= screen_height) continue;
 
-    // Organic Funnel: Quadratic scaling (ty*ty) creates a trumpet-like profile
-    float row_scale = 1.0f - (ty * ty * wp * 0.92f);
-    if (row_scale < 0.05f)
-      row_scale = 0.05f;
-    int rw = (int)(cur_w * row_scale);
-    if (rw < 2)
-      continue;
+    // Mesh boundaries for top and bottom of this strip
+    float lx0 = win->mesh_lx[i];
+    float rx0 = win->mesh_rx[i];
+    float lx1 = win->mesh_lx[i+1];
+    float rx1 = win->mesh_rx[i+1];
 
-    int rx = cur_x;
-    if (tx >= 0) {
-      rx = cur_x + (int)((cur_w - rw) * rel_x);
-      float bend_factor = tx_dist * (ty * ty * wp * 0.5f);
-      if (bend_factor > bend_limit)
-        bend_factor = bend_limit;
-      if (bend_factor < -bend_limit)
-        bend_factor = -bend_limit;
-      rx += (int)bend_factor;
-    } else {
-      rx = cur_x + (cur_w - rw) / 2;
-    }
+    // Texture Y (warped) boundaries from mesh
+    float ty0 = win->mesh_ty[i];
+    float ty1 = win->mesh_ty[i+1];
 
-    int step_x = (win->surface_w << 16) / rw;
-    int src_y_fixed = (y * h_fixed);
-    int src_y = src_y_fixed >> 16;
-    if (src_y >= win->surface_h)
-      src_y = win->surface_h - 1;
+    // Draw rows within this quad
+    for (int sy = y0; sy < y1; sy++) {
+      if (sy < clip.y || sy >= clip.y + clip.h) continue;
+      if (sy < 0 || sy >= screen_height) continue;
 
-    uint32_t *dest_row = &backbuffer[cur_dy * screen_width];
-    uint32_t *src_row = &win->surface[src_y * win->surface_w];
+      // Linear interpolation factor within the quad
+      float t = (y1 > y0) ? (float)(sy - y0) / (float)(y1 - y0) : 0.0f;
 
-    // Blending loop - most expensive part
-    for (int x = 0; x < rw; x++) {
-      int cur_dx = rx + x;
-      if (cur_dx < clip.x || cur_dx >= clip.x + clip.w)
-        continue;
-      if (cur_dx < 0 || cur_dx >= screen_width)
-        continue;
+      // Interpolate horizontal bounds and vertical texture mapping
+      float clx = lx0 * (1.0f - t) + lx1 * t;
+      float crx = rx0 * (1.0f - t) + rx1 * t;
+      float cty = ty0 * (1.0f - t) + ty1 * t;
 
-      int src_x = (x * step_x) >> 16;
-      if (src_x >= win->surface_w)
-        src_x = win->surface_w - 1;
+      int irx = (int)clx;
+      int irw = (int)(crx - clx);
+      if (irw < 2) continue;
 
-      uint32_t src_px = src_row[src_x];
-      if ((src_px >> 24) > 0) {
-        dest_row[cur_dx] =
-            blend_color_32(src_px, dest_row[cur_dx], win->opacity);
+      // Vertical source Y mapping (fractional for bilinear)
+      int src_y_fixed = (int)(cty * (float)win->surface_h * 256.0f);
+      int src_y0 = src_y_fixed >> 8;
+      if (src_y0 >= win->surface_h) src_y0 = win->surface_h - 1;
+      int src_y1 = (src_y0 + 1 < win->surface_h) ? src_y0 + 1 : src_y0;
+      int v_frac = src_y_fixed & 0xFF;
+
+      // Horizontal source step
+      int step_x = (win->surface_w << 16) / irw;
+
+      uint32_t *dest_row = &backbuffer[sy * screen_width];
+      uint32_t *src_row0 = &win->surface[src_y0 * win->surface_w];
+      uint32_t *src_row1 = &win->surface[src_y1 * win->surface_w];
+
+      for (int x = 0; x < irw; x++) {
+        int cur_dx = irx + x;
+        if (cur_dx < clip.x || cur_dx >= clip.x + clip.w) continue;
+        if (cur_dx < 0 || cur_dx >= screen_width) continue;
+
+        int u_fixed = x * step_x;
+        int src_x0 = u_fixed >> 16;
+        if (src_x0 >= win->surface_w) src_x0 = win->surface_w - 1;
+        int src_x1 = (src_x0 + 1 < win->surface_w) ? src_x0 + 1 : src_x0;
+        int u_frac = (u_fixed >> 8) & 0xFF;
+
+        uint32_t c00 = src_row0[src_x0];
+        uint32_t c10 = src_row0[src_x1];
+        uint32_t c01 = src_row1[src_x0];
+        uint32_t c11 = src_row1[src_x1];
+
+        uint32_t src_px = bilinear_blend_argb(c00, c10, c01, c11, u_frac, v_frac);
+
+        if ((src_px >> 24) > 0) {
+          dest_row[cur_dx] = blend_color_32(src_px, dest_row[cur_dx], win->opacity);
+        }
       }
     }
   }
@@ -507,12 +594,13 @@ static void compositor_render_rect(rect_t clip) {
 
       rect_t win_r = {win->x, win->y, win->width, win->height};
       rect_t overlap;
-      if (!rect_intersect(clip, win_r, &overlap))
+      int intersects = rect_intersect(clip, win_r, &overlap);
+      if (!intersects && !win->is_animating)
         continue;
 
       // Occlusion culling (Standard pass only)
       int occluded = 0;
-      if (pass == 0) {
+      if (pass == 1 && intersects && !win->is_animating) {
         for (int hi = w_idx + 1; hi < window_count; hi++) {
           int upper_idx = window_z_order[hi];
           if (upper_idx < 0) continue;
@@ -542,7 +630,8 @@ static void compositor_render_rect(rect_t clip) {
       }
 
       if (win->is_animating && !disable_animations) {
-        if (win->anim_mode == 1 || win->anim_mode == 2 || win->anim_mode == 3)
+        // Use Warp/Genie effect for Open and Minimize ONLY (Modes 1 and 2)
+        if (win->anim_mode == 1 || win->anim_mode == 2)
           compositor_warp_blend(win, clip);
         else
           compositor_scaled_blend(win, clip);
@@ -576,7 +665,11 @@ static void compositor_render_rect(rect_t clip) {
   extern void desktop_render_search(uint32_t *target, rect_t clip);
   desktop_render_search(backbuffer, clip);
 
-  // 4. Present to VRAM
+  // 4. Context Menu (if visible)
+  extern void ctxmenu_draw_target(int mx, int my, uint32_t *target);
+  ctxmenu_draw_target(mouse_x, mouse_y, backbuffer);
+
+  // 5. Present to VRAM
   present_rect(clip);
 }
 

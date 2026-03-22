@@ -632,8 +632,8 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
       }
 
       if (icon->win_ref) {
-        icon->win_ref->taskbar_x =
-            (!is_vertical) ? x : bd_x; // Horizontal bound reference
+        icon->win_ref->taskbar_x = (!is_vertical) ? x + (sq_size/2) : bd_x + (bd_w/2);
+        icon->win_ref->taskbar_y = (!is_vertical) ? bd_y + (bd_h/2) : y + (sq_size/2);
       }
     }
   }
@@ -790,20 +790,24 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
         window_t *win = g_taskbar.icons[i].win_ref;
         if (win->is_minimized) {
           win->anim_mode = 3; // Restore (Warp)
-          extern void start_window_spring(
-              window_t * w, int sx, int sy, int sw, int sh, int dx, int dy,
-              int dw, int dh, float stiffness, float damping);
-          anim_start_spring(&win->anim_scale, 0.05f, 1.0f, SPRING_STIFF_K,
-                            SPRING_STIFF_D);
+          float restore_k = 280.0f;
+          float restore_d = 30.0f;
+          anim_start_spring(&win->anim_scale, 0.01f, 1.0f, restore_k, restore_d);
 
+          // Set pinch direction based on dock position relative to window
+          win->pinch_top = (g_taskbar.dock_y < win->y);
+
+          win->is_animating = 1;
           if (!is_vertical) {
-            start_window_spring(win, win->taskbar_x, g_taskbar.dock_y, 44,
-                                g_taskbar.dock_h, win->x, win->y, win->width,
-                                win->height, SPRING_STIFF_K, SPRING_STIFF_D);
+            anim_start_spring(&win->anim_x, (float)win->taskbar_x, (float)win->x, restore_k, restore_d);
+            anim_start_spring(&win->anim_y, (float)g_taskbar.dock_y, (float)win->y, restore_k, restore_d);
+            anim_start_spring(&win->anim_w, 32.0f, (float)win->width, restore_k, restore_d);
+            anim_start_spring(&win->anim_h, 32.0f, (float)win->height, restore_k, restore_d);
           } else {
-            start_window_spring(win, g_taskbar.dock_x, iy, g_taskbar.dock_w, 44,
-                                win->x, win->y, win->width, win->height,
-                                SPRING_STIFF_K, SPRING_STIFF_D);
+            anim_start_spring(&win->anim_x, (float)g_taskbar.dock_x, (float)win->x, restore_k, restore_d);
+            anim_start_spring(&win->anim_y, (float)iy, (float)win->y, restore_k, restore_d);
+            anim_start_spring(&win->anim_w, 32.0f, (float)win->width, restore_k, restore_d);
+            anim_start_spring(&win->anim_h, 32.0f, (float)win->height, restore_k, restore_d);
           }
           win->is_minimized = 0;
         }

@@ -539,10 +539,6 @@ int startmenu_handle_mouse(int mx, int my, int buttons) {
       // Click anywhere in the cell
       if (lx >= ix && lx < ix + CELL_W && ly >= iy && ly < iy + CELL_H) {
         if (pinned_items[i].launch) {
-          extern int next_anim_origin_x;
-          extern int next_anim_origin_y;
-          next_anim_origin_x = mx;
-          next_anim_origin_y = my;
           pinned_items[i].launch();
           startmenu_show(0, 0);
         }
@@ -574,10 +570,6 @@ int startmenu_handle_mouse(int mx, int my, int buttons) {
       if (ly >= list_y && ly < list_y + 40 && lx >= PADDING &&
           lx <= MENU_W - PADDING) {
         if (all_apps_items[i].launch) {
-          extern int next_anim_origin_x;
-          extern int next_anim_origin_y;
-          next_anim_origin_x = mx;
-          next_anim_origin_y = my;
           all_apps_items[i].launch();
           startmenu_show(0, 0);
         }

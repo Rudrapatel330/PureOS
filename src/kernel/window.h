@@ -169,6 +169,11 @@ typedef struct {
   uint32_t flags;
   int always_on_top;
   int watchdog; // Frame-based counter to clear stuck animations
+
+  // 64-slice mesh for high-fidelity warping
+  float mesh_lx[64];
+  float mesh_rx[64];
+  float mesh_ty[64];
 } window_t;
 
 extern window_t *active_window;

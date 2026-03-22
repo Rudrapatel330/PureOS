@@ -27,8 +27,17 @@ static int was_btn = 0;
 extern int ui_dirty;
 static spinlock_irq_t editor_lock;
 
+static int ed_cursor_pos = 0;
+static int ed_selected_all = 0;
+extern int ctrl_pressed;
+
+#define KEY_LEFT  0x4B
+#define KEY_RIGHT 0x4D
+#define KEY_UP    0x48
+#define KEY_DOWN  0x50
+
 /* Global buffer */
-char editor_buffer[1024] =
+char editor_buffer[8192] =
     "Welcome to ProEditor!\nTry typing something...\n\nPureOS is moving faster "
     "now.\nScrolling testing line 1\nScrolling testing line 2\nScrolling "
     "testing line 3\nScrolling testing line 4\nScrolling testing line "
@@ -77,28 +86,78 @@ static void editor_draw(void *w) {
   int text_h = height - TEXT_Y - STATUS_H;
   if (text_h < 12)
     text_h = 12;
-  winmgr_fill_rect(win, 0, TEXT_Y, width, text_h, 0xFF282C34);
+  if (ed_selected_all) {
+    winmgr_fill_rect(win, 0, TEXT_Y, width, text_h, 0xFF3E4451);
+  } else {
+    winmgr_fill_rect(win, 0, TEXT_Y, width, text_h, 0xFF282C34);
+  }
 
   /* Draw text with scrolling */
   int cx = 8;
   int cy = TEXT_Y + 4;
   int max_y = TEXT_Y + text_h - 14;
-  int current_line = 0;
+  
   /* Copy buffer locally to avoid holding lock during long draw loop */
-  char local_buf[1024];
+  char local_buf[8192];
   spinlock_irq_acquire(&editor_lock);
   int buf_len = strlen(editor_buffer);
-  if (buf_len > 1023)
-    buf_len = 1023;
+  if (buf_len > 8191)
+    buf_len = 8191;
   for (int i = 0; i < buf_len; i++)
     local_buf[i] = editor_buffer[i];
   local_buf[buf_len] = 0;
+  int local_cursor = ed_cursor_pos;
+  if (local_cursor > buf_len) local_cursor = buf_len;
   spinlock_irq_release(&editor_lock);
 
+  // PASS 1: Auto-scroll
+  char *text1 = local_buf;
+  int lx = 8;
+  int logical_line = 0;
+  int c_index1 = 0;
+  while (1) {
+      if (c_index1 == local_cursor) {
+          if (logical_line < ed_scroll_y) {
+              ed_scroll_y = logical_line;
+              ui_dirty = 1; win->needs_redraw = 1;
+          } else {
+              int ly = (TEXT_Y + 4) + (logical_line * 14);
+              int screen_cy = ly - (ed_scroll_y * 14);
+              if (screen_cy > max_y) {
+                  ed_scroll_y += ((screen_cy - max_y) / 14) + 1;
+                  ui_dirty = 1; win->needs_redraw = 1;
+              }
+          }
+      }
+      if (!*text1) break;
+      
+      if (*text1 == '\n') {
+          lx = 8;
+          logical_line++;
+      } else {
+          lx += 8;
+          if (lx > width - 12) {
+              lx = 8;
+              logical_line++;
+          }
+      }
+      text1++;
+      c_index1++;
+  }
+
+  // PASS 2: Drawing
   char *text = local_buf;
+  int current_line = 0;
+  int c_index = 0;
+  int cursor_draw_x = -1;
+  int cursor_draw_y = -1;
 
   while (*text && cy <= max_y) {
     if (current_line >= ed_scroll_y) {
+      if (c_index == local_cursor) {
+        cursor_draw_x = cx;
+        cursor_draw_y = cy;
+      }
       if (*text == '\n') {
         cx = 8;
         cy += 14;
@@ -126,17 +185,23 @@ static void editor_draw(void *w) {
       }
     }
     text++;
+    c_index++;
+  }
+  
+  if (c_index == local_cursor && current_line >= ed_scroll_y && cy <= max_y) {
+    cursor_draw_x = cx;
+    cursor_draw_y = cy;
   }
 
   /* Cursors and status bar... */
   /* (Skipping some redundant logic for brevity in replace, but keeping it in
    * the actual file) */
-  /* Blinking cursor at end of text */
+  /* Blinking cursor at cursor pos */
   ed_cursor_blink++;
   if ((ed_cursor_blink / 15) % 2 == 0) {
     // Only draw cursor if it's on a visible line
-    if (current_line >= ed_scroll_y && cy <= max_y) {
-      winmgr_fill_rect(win, cx, cy, 2, 14, 0xFFE06C75);
+    if (cursor_draw_x >= 0 && cursor_draw_y >= 0) {
+      winmgr_fill_rect(win, cursor_draw_x, cursor_draw_y, 2, 14, 0xFFE06C75);
     }
   }
 
@@ -232,21 +297,38 @@ static void editor_handle_input(char c) {
   }
 
   spinlock_irq_acquire(&editor_lock);
+  if (ed_selected_all) {
+      editor_buffer[0] = 0;
+      ed_cursor_pos = 0;
+      ed_scroll_y = 0;
+      ed_selected_all = 0;
+      if (c == '\b') {
+          ui_dirty = 1;
+          editor_win->needs_redraw = 1;
+          spinlock_irq_release(&editor_lock);
+          return;
+      }
+  }
   int len = strlen(editor_buffer);
   if (c == '\b') {
-    if (len > 0) {
-      editor_buffer[len - 1] = 0;
+    if (ed_cursor_pos > 0) {
+      for (int i = ed_cursor_pos - 1; i <= len; i++) {
+          editor_buffer[i] = editor_buffer[i + 1];
+      }
+      ed_cursor_pos--;
       ui_dirty = 1;
       editor_win->needs_redraw = 1;
       // Scroll up if we deleted enough to see previous lines?
       // Simplified: just reset scroll if buffer is small
-      if (len < 10)
-        ed_scroll_y = 0;
+      if (len < 10) ed_scroll_y = 0;
     }
   } else if (c == '\n' || (c >= 32 && c < 127)) {
-    if (len < 1023) {
-      editor_buffer[len] = c;
-      editor_buffer[len + 1] = 0;
+    if (len < 8191) {
+      for (int i = len; i >= ed_cursor_pos; i--) {
+          editor_buffer[i + 1] = editor_buffer[i];
+      }
+      editor_buffer[ed_cursor_pos] = c;
+      ed_cursor_pos++;
       ui_dirty = 1;
       editor_win->needs_redraw = 1;
     }
@@ -288,6 +370,12 @@ static void editor_on_mouse(void *w, int rx, int ry, int buttons) {
     return;
   }
 
+  if (ry >= TEXT_Y && click) {
+     ed_selected_all = 0;
+     ui_dirty = 1;
+     win->needs_redraw = 1;
+  }
+
   if (ry >= MENU_Y && ry < MENU_Y + MENU_H && click) {
     if (rx >= 6 && rx < 48) {
       ed_dialog_mode = 1;
@@ -296,6 +384,7 @@ static void editor_on_mouse(void *w, int rx, int ry, int buttons) {
     } else if (rx >= 90 && rx < 128) {
       spinlock_irq_acquire(&editor_lock);
       editor_buffer[0] = 0;
+      ed_cursor_pos = 0;
       spinlock_irq_release(&editor_lock);
       strcpy(ed_filename, "untitled.txt");
       ed_scroll_y = 0;
@@ -307,9 +396,114 @@ static void editor_on_mouse(void *w, int rx, int ry, int buttons) {
 
 static void editor_on_key(void *w, int key, char ascii) {
   (void)w;
-  (void)key;
-  if (ascii)
-    editor_handle_input(ascii);
+  ed_cursor_blink = 0;
+  if (ed_dialog_mode > 0) {
+      if (ascii) editor_handle_input(ascii);
+      return;
+  }
+
+  spinlock_irq_acquire(&editor_lock);
+  int len = strlen(editor_buffer);
+
+  if (ctrl_pressed) {
+      if (ascii == 'a' || ascii == 'A') {
+          ed_selected_all = 1;
+          ui_dirty = 1; if (editor_win) editor_win->needs_redraw = 1;
+          spinlock_irq_release(&editor_lock);
+          return;
+      } else if (ascii == 'n' || ascii == 'N') {
+          editor_buffer[0] = 0;
+          strcpy(ed_filename, "untitled.txt");
+          ed_scroll_y = 0;
+          ed_cursor_pos = 0;
+          ui_dirty = 1;
+          if (editor_win) editor_win->needs_redraw = 1;
+      } else if (ascii == 's' || ascii == 'S') {
+          int blen = len;
+          spinlock_irq_release(&editor_lock);
+          fs_write(ed_filename, (uint8_t *)editor_buffer, blen);
+          ui_dirty = 1;
+          if (editor_win) editor_win->needs_redraw = 1;
+          return;
+      } else if (key == KEY_LEFT) {
+          ed_selected_all = 0;
+          while (ed_cursor_pos > 0 && editor_buffer[ed_cursor_pos - 1] == ' ') ed_cursor_pos--;
+          while (ed_cursor_pos > 0 && editor_buffer[ed_cursor_pos - 1] != ' ' && editor_buffer[ed_cursor_pos - 1] != '\n') ed_cursor_pos--;
+          ui_dirty = 1; if (editor_win) editor_win->needs_redraw = 1;
+      } else if (key == KEY_RIGHT) {
+          ed_selected_all = 0;
+          while (ed_cursor_pos < len && editor_buffer[ed_cursor_pos] == ' ') ed_cursor_pos++;
+          while (ed_cursor_pos < len && editor_buffer[ed_cursor_pos] != ' ' && editor_buffer[ed_cursor_pos] != '\n') ed_cursor_pos++;
+          ui_dirty = 1; if (editor_win) editor_win->needs_redraw = 1;
+      } else if (ascii == '\b') {
+          if (ed_selected_all) {
+              editor_buffer[0] = 0;
+              ed_cursor_pos = 0;
+              ed_scroll_y = 0;
+              ed_selected_all = 0;
+              ui_dirty = 1; if (editor_win) editor_win->needs_redraw = 1;
+              spinlock_irq_release(&editor_lock);
+              return;
+          }
+          int old_pos = ed_cursor_pos;
+          while (ed_cursor_pos > 0 && editor_buffer[ed_cursor_pos - 1] == ' ') ed_cursor_pos--;
+          while (ed_cursor_pos > 0 && editor_buffer[ed_cursor_pos - 1] != ' ' && editor_buffer[ed_cursor_pos - 1] != '\n') ed_cursor_pos--;
+          int chars_to_remove = old_pos - ed_cursor_pos;
+          if (chars_to_remove > 0) {
+              for (int i = ed_cursor_pos; i <= len - chars_to_remove; i++) {
+                  editor_buffer[i] = editor_buffer[i + chars_to_remove];
+              }
+              ui_dirty = 1; if (editor_win) editor_win->needs_redraw = 1;
+          }
+      }
+      spinlock_irq_release(&editor_lock);
+      return;
+  }
+
+  if (key == KEY_LEFT) {
+      ed_selected_all = 0;
+      if (ed_cursor_pos > 0) ed_cursor_pos--;
+      ui_dirty = 1; if (editor_win) editor_win->needs_redraw = 1;
+      spinlock_irq_release(&editor_lock);
+      return;
+  } else if (key == KEY_RIGHT) {
+      ed_selected_all = 0;
+      if (ed_cursor_pos < len) ed_cursor_pos++;
+      ui_dirty = 1; if (editor_win) editor_win->needs_redraw = 1;
+      spinlock_irq_release(&editor_lock);
+      return;
+  } else if (key == KEY_UP) {
+      ed_selected_all = 0;
+      int p = ed_cursor_pos - 1;
+      while(p > 0 && editor_buffer[p-1] != '\n') p--;
+      if (p > 0) {
+          int p2 = p - 1;
+          if (p2 > 0 && editor_buffer[p2] == '\n') p2--;
+          while(p2 > 0 && editor_buffer[p2-1] != '\n') p2--;
+          ed_cursor_pos = p2;
+      } else {
+          ed_cursor_pos = 0;
+      }
+      ui_dirty = 1; if (editor_win) editor_win->needs_redraw = 1;
+      spinlock_irq_release(&editor_lock);
+      return;
+  } else if (key == KEY_DOWN) {
+      ed_selected_all = 0;
+      int p = ed_cursor_pos;
+      while(p < len && editor_buffer[p] != '\n') p++;
+      if (p < len) {
+          p++;
+          ed_cursor_pos = p;
+      } else {
+          ed_cursor_pos = len;
+      }
+      ui_dirty = 1; if (editor_win) editor_win->needs_redraw = 1;
+      spinlock_irq_release(&editor_lock);
+      return;
+  }
+
+  spinlock_irq_release(&editor_lock);
+  if (ascii) editor_handle_input(ascii);
 }
 
 void editor_thread_entry(void) {
@@ -373,6 +567,8 @@ void editor_init(void) {
     }
   }
 
+  ed_cursor_pos = strlen(editor_buffer);
+
   // Create window
   print_serial("EDITOR: Calling winmgr_create_window\n");
   window_t *win = winmgr_create_window(100, 100, 600, 450, "Editor");
@@ -428,16 +624,18 @@ void editor_open_internal(const char *filename) {
   ed_read_buf[0] = 0;
   int bytes = fs_read(ed_filename, ed_read_buf);
   if (bytes > 0 && bytes <= 8192) {
-    if (bytes > 1023)
-      bytes = 1023;
+    if (bytes > 8191)
+      bytes = 8191;
     spinlock_irq_acquire(&editor_lock);
     for (int j = 0; j < bytes; j++)
       editor_buffer[j] = (char)ed_read_buf[j];
     editor_buffer[bytes] = 0;
+    ed_cursor_pos = 0;
     spinlock_irq_release(&editor_lock);
   } else {
     spinlock_irq_acquire(&editor_lock);
     editor_buffer[0] = 0;
+    ed_cursor_pos = 0;
     spinlock_irq_release(&editor_lock);
   }
 

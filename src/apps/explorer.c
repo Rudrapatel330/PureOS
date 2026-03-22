@@ -294,8 +294,8 @@ static void draw_sidebar(window_t *win) {
   winmgr_fill_rect(win, 0, 24, SIDEBAR_WIDTH, h - 24, COL_SIDEBAR_BG);
   winmgr_fill_rect(win, SIDEBAR_WIDTH - 1, 24, 1, h - 24, COL_DIVIDER);
 
-  const char *items[] = {"iCloud Drive", "Documents", "Desktop", "Shared"};
-  for (int i = 0; i < 4; i++) {
+  const char *items[] = {"This PC", "All Files", "Texts (.txt)", "Images (.png)", "Apps (.app)"};
+  for (int i = 0; i < 5; i++) {
     if (sidebar_sel == i) {
       winmgr_fill_rect(win, 5, 40 + i * 28, SIDEBAR_WIDTH - 10, 24,
                        0xFF99CCFF); // Opaque Blue selection
@@ -1095,22 +1095,31 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
   }
 
   // Sidebar hit test (items are 28px tall, drawn starting at y=40)
-  if (rx < SIDEBAR_WIDTH && ry >= 40 && ry < 40 + 4 * 28) {
+  if (rx < SIDEBAR_WIDTH && ry >= 40 && ry < 40 + 5 * 28) {
     sidebar_sel = (ry - 40) / 28;
     win->needs_redraw = 1;
 
     if (sidebar_sel == 0) {
       at_this_pc = 1;
+      search_active = 0;
       explorer_refresh();
-    } else {
+    } else if (sidebar_sel == 1) {
       at_this_pc = 0;
-      if (sidebar_sel == 1)
-        strcpy(explorer_path, "/DOCS");
-      else if (sidebar_sel == 2)
-        strcpy(explorer_path, "/APPS");
-      else if (sidebar_sel == 3)
-        strcpy(explorer_path, "/SHARED");
+      search_active = 0;
+      strcpy(explorer_path, "/");
       explorer_refresh();
+    } else if (sidebar_sel == 2) {
+      at_this_pc = 0;
+      strcpy(search_query, ".txt");
+      explorer_do_search();
+    } else if (sidebar_sel == 3) {
+      at_this_pc = 0;
+      strcpy(search_query, ".png");
+      explorer_do_search();
+    } else if (sidebar_sel == 4) {
+      at_this_pc = 0;
+      strcpy(search_query, ".app");
+      explorer_do_search();
     }
     return;
   }
@@ -1141,6 +1150,8 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
       search_active = 0;
       search_query[0] = 0;
       search_cursor = 0;
+      sidebar_sel = 1; // switch to "All Files"
+      strcpy(explorer_path, "/");
       explorer_refresh();
       win->needs_redraw = 1;
     }

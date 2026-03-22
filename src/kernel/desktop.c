@@ -1179,19 +1179,7 @@ static void draw_mini_icon(int x, int y, int type, uint32_t *target) {
   }
 }
 
-void desktop_draw_overlay() {
-  extern int mouse_x, mouse_y;
-  extern uint32_t *real_lfb;
-  extern uint32_t *backbuffer;
-
-  // Only draw context menu here - taskbar/clock/start menu are handled by
-  // taskbar.c and startmenu.c via the compositor
-  extern ctxmenu_t context_menu;
-  if (context_menu.visible) {
-    ctxmenu_draw_target(mouse_x, mouse_y, backbuffer);
-    ctxmenu_draw_target(mouse_x, mouse_y, real_lfb);
-  }
-}
+// desktop_draw_overlay removed as it's now integrated into compositor.c
 
 extern void terminal_init();
 extern void calculator_init();
@@ -1478,6 +1466,17 @@ void desktop_mouse_move(int mx, int my) {
     extern int ui_dirty;
     ui_dirty = 1;
   }
+
+  extern ctxmenu_t context_menu;
+  if (context_menu.visible) {
+    if (mx >= context_menu.x && mx < context_menu.x + context_menu.width &&
+        my >= context_menu.y && my < context_menu.y + context_menu.height) {
+      compositor_invalidate_rect(context_menu.x, context_menu.y,
+                                 context_menu.width, context_menu.height);
+      extern int ui_dirty;
+      ui_dirty = 1;
+    }
+  }
 }
 
 void desktop_click(int mx, int my, int buttons) {
@@ -1497,8 +1496,11 @@ void desktop_click(int mx, int my, int buttons) {
                               {"New Editor", action_new_editor},
                               {0, 0},
                               {"Refresh", action_refresh},
-                              {"About PureOS", action_about}};
-    ctxmenu_show(mx, my, items, 5);
+                              {"About PureOS", action_about},
+                              {0, 0},
+                              {"Restart", taskbar_reboot},
+                              {"Shut Down", taskbar_shutdown}};
+    ctxmenu_show(mx, my, items, 8);
     extern int ui_dirty;
     ui_dirty = 1;
     return;
