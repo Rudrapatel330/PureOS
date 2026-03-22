@@ -4,9 +4,12 @@
 #include "../kernel/config.h"
 #include "../kernel/screen.h"
 #include "../kernel/string.h"
+#include "../kernel/theme.h"
 #include "../kernel/window.h"
 #include "startmenu.h"
 #include "sysmenu.h"
+
+extern void compositor_blur_rect(int x, int y, int w, int h, int radius);
 
 #define TASKBAR_HEIGHT 54
 #define ICON_SIZE 36
@@ -58,20 +61,18 @@ void menubar_draw(uint32_t *buffer, rect_t clip) {
   if (!rect_intersect(clip, bar_r, &overlap))
     return;
 
-  // 1. Sleek Translucent Top Bar (macOS style)
-  extern void compositor_blur_rect(int x, int y, int w, int h, int radius);
+  // 1. Sleek Translucent Top Bar (Forced Black)
   compositor_blur_rect(overlap.x, overlap.y, overlap.w, overlap.h, 6);
   vga_draw_rect_blend_lfb(overlap.x, overlap.y, overlap.w, overlap.h,
-                          0xB0FFFFFF, buffer, 0);
-  vga_draw_rect_lfb(0, 23, screen_width, 1, 0xFFD0D0D0,
-                    buffer); // Bottom separator
+                          0xA0000000, buffer, 0); // Increased opacity fixed black
+  vga_draw_rect_lfb(0, 23, screen_width, 1, 0xFF444444,
+                    buffer); // Darker separator
 
-  // 2. Left Menu Items
-  vga_draw_string_lfb(10, 8, "PureOS", 0xFF000000,
-                      buffer); // Bold logo equivalent
-  vga_draw_string_lfb(70, 8, "File", 0xFF333333, buffer);
-  vga_draw_string_lfb(115, 8, "Edit", 0xFF333333, buffer);
-  vga_draw_string_lfb(160, 8, "View", 0xFF333333, buffer);
+  // 2. Left Menu Items (Fixed White)
+  vga_draw_string_lfb(10, 8, "PureOS", 0xFFFFFFFF, buffer);
+  vga_draw_string_lfb(70, 8, "File", 0xFFAAAAAA, buffer);
+  vga_draw_string_lfb(115, 8, "Edit", 0xFFAAAAAA, buffer);
+  vga_draw_string_lfb(160, 8, "View", 0xFFAAAAAA, buffer);
 
   // 3. Right Tray (Clock)
   uint32_t now = get_timer_ticks();
@@ -88,7 +89,7 @@ void menubar_draw(uint32_t *buffer, rect_t clip) {
   time_str[4] = (cached_time.minute % 10) + '0';
   time_str[5] = 0;
 
-  vga_draw_string_lfb(screen_width - 80, 8, time_str, 0xFF000000, buffer);
+  vga_draw_string_lfb(screen_width - 80, 8, time_str, 0xFFFFFFFF, buffer);
 
   // 4. Performance Overlay (draw before tray so tray icons aren't hidden)
   extern int current_fps;
@@ -103,17 +104,17 @@ void menubar_draw(uint32_t *buffer, rect_t clip) {
   char perf_str[64];
   snprintf(perf_str, sizeof(perf_str), "FPS: %d | Mem: %d/%d MB | Cmp: %u Mcyc",
            current_fps, used_mb, total_mb, mcyc);
-  vga_draw_string_lfb(210, 8, perf_str, 0xFF000000, buffer);
+  vga_draw_string_lfb(210, 8, perf_str, 0xFFFFFFFF, buffer);
 
   // 5. Tray icons (clickable area for system menu) — drawn last so visible
   int tray_x = screen_width - 180;
   // Wi-Fi icon
-  vga_draw_string_lfb(tray_x, 8, "W", 0xFF555555, buffer);
+  vga_draw_string_lfb(tray_x, 8, "W", 0xFFAAAAAA, buffer);
   // Volume icon
-  vga_draw_string_lfb(tray_x + 20, 8, "V", 0xFF555555, buffer);
+  vga_draw_string_lfb(tray_x + 20, 8, "V", 0xFFAAAAAA, buffer);
   // Battery icon
-  vga_draw_rect_lfb(tray_x + 40, 10, 14, 8, 0xFF555555, buffer);
-  vga_draw_rect_lfb(tray_x + 54, 12, 2, 4, 0xFF555555, buffer);
+  vga_draw_rect_lfb(tray_x + 40, 10, 14, 8, 0xFFAAAAAA, buffer);
+  vga_draw_rect_lfb(tray_x + 54, 12, 2, 4, 0xFFAAAAAA, buffer);
   vga_draw_rect_lfb(tray_x + 42, 12, 10, 4, 0xFF66BB6A, buffer);
 }
 
@@ -564,10 +565,9 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
   if (!rect_intersect(clip, dock_r, &overlap))
     return;
 
-  // 2. Glass Background (Dark frosted)
-  extern void compositor_blur_rect(int x, int y, int w, int h, int radius);
+  // 2. Glass Background (Fixed Translucent Black)
   compositor_blur_rect(bd_x, bd_y, bd_w, bd_h, 14);
-  vga_draw_rect_blend_lfb_ex(bd_x, bd_y, bd_w, bd_h, 0x90202030, 1, 0x40FFFFFF,
+  vga_draw_rect_blend_lfb_ex(bd_x, bd_y, bd_w, bd_h, 0xA0000000, 1, 0x40FFFFFF,
                              buffer, 14);
 
   // 3. Eagle/Start Icon & Separator
@@ -603,7 +603,7 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
     int icon_radius = sq_size / 2;
     compositor_blur_rect(sq_x, sq_y, sq_size, sq_size, icon_radius);
 
-    uint32_t base_color = 0x60FFFFFF;
+    uint32_t base_color = 0x60000000; // Fixed dark translucent icons for all themes
     if (g_taskbar.edit_mode) {
       base_color = 0x80FFAA55; // Highlight while dragging
     }
@@ -774,9 +774,10 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
     }
   }
 
+  extern int ctrl_pressed;
   for (int i = 0; i < g_taskbar.icon_count; i++) {
-    int ix = g_taskbar.icons[i].x;
-    int iy = g_taskbar.icons[i].y;
+    int ix = (int)g_taskbar.icons[i].x;
+    int iy = (int)g_taskbar.icons[i].y;
     int isz = (int)(48 * g_taskbar.icons[i].scale);
 
     int hit = 0;
@@ -786,7 +787,7 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
       hit = 1;
 
     if (hit) {
-      if (g_taskbar.icons[i].is_running && g_taskbar.icons[i].win_ref) {
+      if (g_taskbar.icons[i].is_running && g_taskbar.icons[i].win_ref && !ctrl_pressed) {
         window_t *win = g_taskbar.icons[i].win_ref;
         if (win->is_minimized) {
           win->anim_mode = 3; // Restore (Warp)

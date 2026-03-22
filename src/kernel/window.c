@@ -10,6 +10,7 @@
 #include "screen.h"
 #include "string.h"
 #include "task.h"
+#include "theme.h"
 #include <stddef.h>
 
 // Integer-based Supersampled SDF alpha mask helper (4x4)
@@ -286,6 +287,15 @@ window_t *winmgr_create_window(int x, int y, int w, int h, const char *title) {
   win->ws_hidden = 0; // Visible by default
   win->flags = WINDOW_FLAG_NONE; // CRITICAL: Reset flags (No Titlebar, etc.)
   win->always_on_top = 0;
+  extern int screen_width;
+  extern int screen_height;
+
+  // Handle auto-centering
+  if (x == -1 && y == -1) {
+    x = (screen_width - w) / 2;
+    y = (screen_height - h) / 2;
+  }
+
   win->x = x;
   win->y = y;
   win->prev_x = x;
@@ -1007,18 +1017,22 @@ void winmgr_render_window(window_t *win) {
   }
 
   // === Opaque Window Frame (Perfect Rounded 8px) ===
-  uint32_t glass_edge = 0xFFBABABA; // Subtle Gray edge (was pure white)
+  const theme_t *theme = theme_get();
+  uint32_t glass_edge = theme->border;
   int radius = 8;
 
   // 1. Fill base frame and title bar area (Full width to fix misalignment)
-  winmgr_fill_rect(win, 0, 0, win->width, win->height, 0xFF121212);
+  winmgr_fill_rect(win, 0, 0, win->width, win->height, theme->bg);
 
   extern window_t *active_window;
-  // Title bar colors (Gray)
-  uint32_t title_grad_top = (win == active_window) ? 0xFF3C3C3C : 0xFF2D2D2D;
-  uint32_t title_grad_bot = (win == active_window) ? 0xFF282828 : 0xFF1E1E1E;
-  winmgr_fill_rect_gradient_v(win, 0, 0, win->width, 24, title_grad_top,
-                              title_grad_bot);
+  // Title bar colors (Forced Dark for Terminal)
+  uint32_t title_col;
+  if (win->app_type == 0) {
+    title_col = (win == active_window) ? 0xFF181825 : 0xFF313244;
+  } else {
+    title_col = (win == active_window) ? theme->titlebar : theme->titlebar_inactive;
+  }
+  winmgr_fill_rect(win, 0, 0, win->width, 24, title_col);
 
   // 2. Draw border lines (Solid, only for straight sections)
   // Shorten them by 2px more to ensure they don't even touch the curves
@@ -1038,12 +1052,15 @@ void winmgr_render_window(window_t *win) {
   // === Content Area (Fully Opaque) ===
   // CRITICAL: Always use fully-opaque colors (0xFF prefix) to prevent
   // transparent content areas that appear as black rectangles.
-  if (win->app_type == 0 || win->app_type == 2) {
-    // Solid dark base for terminal (0) or editor (2) — explicit 0xFF alpha
-    winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, 0xFF1A1E24);
+  if (win->app_type == 0) {
+    // Terminal ALWAYS black regardless of theme
+    winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, 0xFF000000);
+  } else if (win->app_type == 2) {
+    // Editor uses theme input_bg (staying dark for now or following theme)
+    winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, theme->input_bg);
   } else {
-    // Solid white base for others — explicit 0xFF alpha
-    winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, 0xFFFFFFFF);
+    // Solid base from theme
+    winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, theme->bg);
   }
 
   win->blur_strength = 0; // Disable blur globally
@@ -1127,7 +1144,8 @@ void winmgr_render_window(window_t *win) {
 
   // === Title Text (with shadow) ===
   winmgr_draw_text(win, 7, 7, win->title, 0x80101010); // Subtle dark shadow
-  winmgr_draw_text(win, 6, 6, win->title, 0xFFFFFFFF); // White text
+  uint32_t title_text_col = (win->app_type == 0) ? 0xFFFFFFFF : theme->titlebar_text;
+  winmgr_draw_text(win, 6, 6, win->title, title_text_col); // Theme or Fixed text color
 
   // Text Buffer Draw
   if (win->text_buffer[0] != 0 || win->cursor_pos >= 0) {

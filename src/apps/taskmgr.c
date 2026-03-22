@@ -1,6 +1,7 @@
 #include "taskmgr.h"
 #include "../kernel/smp.h"
 #include "../kernel/string.h"
+#include "../kernel/theme.h"
 #include "../kernel/window.h"
 
 static window_t *taskmgr_win = 0;
@@ -10,15 +11,17 @@ void taskmgr_draw(window_t *win) {
   if (!win)
     return;
 
-  // Modern Flat Light Theme (Opaque)
-  winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, 0xFFFFFFFF);
-
+  const theme_t *theme = theme_get();
+ 
+  // Background
+  winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, theme->bg);
+ 
   // 1. TOP HEADER / TOOLBAR
-  winmgr_fill_rect(win, 0, 24, win->width, 30, 0xFFEBEBEB);
-  winmgr_fill_rect(win, 0, 53, win->width, 1, 0xFFD0D0D0);
-  winmgr_draw_text(win, 10, 32, "PID", 0xFF555555);
-  winmgr_draw_text(win, 50, 32, "Process Name", 0xFF555555);
-  winmgr_draw_text(win, 200, 32, "Status", 0xFF555555);
+  winmgr_fill_rect(win, 0, 24, win->width, 30, theme->titlebar);
+  winmgr_fill_rect(win, 0, 53, win->width, 1, theme->border);
+  winmgr_draw_text(win, 10, 32, "PID", theme->fg_secondary);
+  winmgr_draw_text(win, 50, 32, "Process Name", theme->fg_secondary);
+  winmgr_draw_text(win, 200, 32, "Status", theme->fg_secondary);
 
   // 2. TASK LIST WITH ZEBRA STRIPING
   int y = 54;
@@ -39,28 +42,28 @@ void taskmgr_draw(window_t *win) {
     // Zebra Striping
     if (list_idx % 2 == 1) {
       winmgr_fill_rect(win, 0, y, win->width, row_h,
-                       0xFFF2F7FF); // Light Blue-ish
+                       theme->menu_bg);
     }
 
     char pid_str[8];
     k_itoa(windows[i].id, pid_str);
-    winmgr_draw_text(win, 10, y + 6, pid_str, 0xFF000000);
+    winmgr_draw_text(win, 10, y + 6, pid_str, theme->fg);
 
     char name[32];
     if (windows[i].title[0] == 0)
       strcpy(name, "System.bin");
     else
       strncpy(name, windows[i].title, 18);
-    winmgr_draw_text(win, 50, y + 6, name, 0xFF000000);
+    winmgr_draw_text(win, 50, y + 6, name, theme->fg);
 
     const char *status = windows[i].is_minimized ? "Suspended" : "Running";
     winmgr_draw_text(win, 200, y + 6, status,
-                     windows[i].is_minimized ? 0xFF888888 : 0xFF00AA00);
+                     windows[i].is_minimized ? theme->fg_secondary : 0xFF00AA00);
 
-    // End Task Button (Subtle grey)
-    winmgr_fill_rect(win, win->width - 50, y + 2, 45, 20, 0xFFE0E0E0);
-    winmgr_draw_rect(win, win->width - 50, y + 2, 45, 20, 0xFFBBBBBB);
-    winmgr_draw_text(win, win->width - 42, y + 6, "End", 0xFF000000);
+    // End Task Button (Subtle theme-aware button)
+    winmgr_fill_rect(win, win->width - 50, y + 2, 45, 20, theme->button);
+    winmgr_draw_rect(win, win->width - 50, y + 2, 45, 20, theme->border);
+    winmgr_draw_text(win, win->width - 42, y + 6, "End", theme->button_text);
 
     y += row_h;
     list_idx++;
@@ -70,8 +73,8 @@ void taskmgr_draw(window_t *win) {
 
   // 3. STATS FOOTER
   int footer_y = win->height - 50;
-  winmgr_fill_rect(win, 0, footer_y, win->width, 50, 0xFFF0F0F0);
-  winmgr_fill_rect(win, 0, footer_y, win->width, 1, 0xFFD0D0D0);
+  winmgr_fill_rect(win, 0, footer_y, win->width, 50, theme->titlebar);
+  winmgr_fill_rect(win, 0, footer_y, win->width, 1, theme->border);
 
   extern uint32_t get_used_memory();
   extern uint32_t get_total_memory();
@@ -86,9 +89,9 @@ void taskmgr_draw(window_t *win) {
   k_itoa(pct, pct_str);
   strcat(mem_info, pct_str);
   strcat(mem_info, "% Used");
-  winmgr_draw_text(win, 10, footer_y + 10, mem_info, 0xFF333333);
+  winmgr_draw_text(win, 10, footer_y + 10, mem_info, theme->fg);
 
-  winmgr_draw_text(win, 10, footer_y + 25, "CPUs: 1 Active Core", 0xFF333333);
+  winmgr_draw_text(win, 10, footer_y + 25, "CPUs: 1 Active Core", theme->fg);
 }
 
 void taskmgr_on_scroll(void *w, int direction) {
@@ -161,7 +164,7 @@ void taskmgr_init() {
     winmgr_bring_to_front(taskmgr_win);
     return;
   }
-  taskmgr_win = winmgr_create_window(350, 100, 360, 420, "Activity Monitor");
+  taskmgr_win = winmgr_create_window(-1, -1, 500, 600, "Activity Monitor");
   if (!taskmgr_win)
     return;
 

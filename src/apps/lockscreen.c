@@ -8,6 +8,7 @@
 #include "../kernel/string.h"
 #define STBI_NO_STDIO
 #include "../kernel/image.h"
+#include "../kernel/theme.h"
 #include <stdint.h>
 
 /* External globals from kernel.c */
@@ -370,24 +371,24 @@ void lockscreen_show(void) {
     ls_draw_text(ls_buffer, center_x - 12, card_y - 56, "R", 0xFF1E2228, 4);
 
     /* User name */
-    ls_draw_text(ls_buffer, center_x - 30, card_y + 16, "rudra", 0xFFFFFFFF, 2);
+    ls_draw_text(ls_buffer, center_x - 30, card_y + 16, "rudra", theme_get()->fg, 2);
 
     /* Password Card */
     int cw = 280, ch = 44;
     int cx = center_x - cw / 2, cy = card_y + 48;
     ls_frosted_rect(ls_buffer, cx, cy, cw, ch, 30, 34, 40, 160);
-    ls_draw_rect(ls_buffer, cx, cy, cw, ch, wrong ? 0xFFFF6464 : 0xFFE06C75);
+    ls_draw_rect(ls_buffer, cx, cy, cw, ch, wrong ? 0xFFFF6464 : theme_get()->accent);
 
     /* Dots */
     for (int i = 0; i < pw_len; i++) {
-      ls_fill_circle(ls_buffer, cx + 24 + i * 16, cy + 22, 5, 0xFFFFFFFF);
+      ls_fill_circle(ls_buffer, cx + 24 + i * 16, cy + 22, 5, theme_get()->fg);
     }
 
     /* Cursor */
     tick_count++;
     if ((tick_count / 20) % 2 == 0) {
       ls_fill_rect(ls_buffer, cx + 24 + pw_len * 16, cy + 12, 2, 20,
-                   0xFFE06C75);
+                   theme_get()->accent);
     }
 
     if (pw_len == 0)

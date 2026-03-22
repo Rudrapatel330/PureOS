@@ -18,6 +18,7 @@
 #include "screen.h"
 #include "string.h"
 #include "task.h"
+#include "theme.h"
 #include "window.h"
 #include <stdint.h>
 
@@ -477,6 +478,8 @@ void kernel_poll_events(void) { desktop_process_messages(); }
 void kernel_poll_events_only(void) { desktop_process_messages(); }
 
 void kernel_main(unsigned int magic, unsigned int addr) {
+  (void)magic;
+  (void)addr;
   serial_init();
   print_serial("\n[K1] KERNEL MAIN REACHED\n");
 
@@ -550,7 +553,8 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   extern void config_load(void);
   config_init(); // Initialize defaults first
   config_load();
-  print_serial("[INIT 3] CONFIG OK\n");
+  theme_init();
+  print_serial("[INIT 3] CONFIG & THEME OK\n");
 
   // 5. PCI & Hardware Drivers
   print_serial("[INIT 4] PCI START\n");

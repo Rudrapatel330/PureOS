@@ -928,7 +928,7 @@ void filemgr_init() {
   }
 
   window_t *filemgr_win =
-      winmgr_create_window(150, 80, 420, 380, "File Manager");
+      winmgr_create_window(-1, -1, 720, 540, "File Manager");
   if (!filemgr_win)
     return;
 

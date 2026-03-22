@@ -2,6 +2,7 @@
 #include "../kernel/simd.h"
 #include "../kernel/spinlock.h"
 #include "../kernel/string.h"
+#include "../kernel/theme.h"
 #include "../kernel/window.h"
 #include "../net/net.h"
 #include "browser/css.h"
@@ -645,8 +646,9 @@ static void browser_draw_render_node(window_t *win, render_node_t *node,
       text_h = 16;
 
     if (render_y + text_h > min_y && render_y < max_y) {
+      const theme_t *theme = theme_get();
       int color =
-          node->style && node->style->has_color ? node->style->color : 0xFF000000;
+          node->style && node->style->has_color ? node->style->color : theme->fg;
       if (is_link)
         color = 0xFF0000FF;
 
@@ -671,19 +673,19 @@ static void browser_draw_render_node(window_t *win, render_node_t *node,
   } else if (node->dom_node && node->dom_node->type == DOM_NODE_ELEMENT) {
     if (strcmp(node->dom_node->tag_name, "hr") == 0) {
       if (render_y + 4 > min_y && render_y < max_y) {
-        winmgr_draw_rect(win, render_x, render_y + 4, cw - 16, 1, 0x888888);
+        winmgr_draw_rect(win, render_x, render_y + 4, cw - 16, 1, theme_get()->border);
       }
     } else if (strcmp(node->dom_node->tag_name, "input") == 0) {
       if (render_y + 20 > min_y && render_y < max_y) {
         uint32_t border_col =
             (focused_node == node->dom_node) ? 0xFF00FF00 : 0xFF888888;
         winmgr_fill_rect(win, render_x, render_y, node->box.width,
-                         node->box.height, 0xFFFFFFFF);
+                         node->box.height, theme_get()->bg);
         winmgr_draw_rect(win, render_x, render_y, node->box.width,
                          node->box.height, border_col);
         const char *val = dom_get_attribute(node->dom_node, "value");
         if (val)
-          winmgr_draw_text(win, render_x + 4, render_y + 6, val, 0x000000);
+          winmgr_draw_text(win, render_x + 4, render_y + 6, val, theme_get()->fg);
         if (focused_node == node->dom_node) {
           int vlen = val ? strlen(val) : 0;
           winmgr_draw_rect(win, render_x + 4 + vlen * 8, render_y + 4, 1, 12,
@@ -702,7 +704,7 @@ static void browser_draw_render_node(window_t *win, render_node_t *node,
           if (tc->type == DOM_NODE_TEXT && tc->text_content)
             label = tc->text_content;
         }
-        winmgr_draw_text(win, render_x + 4, render_y + 8, label, 0x000000);
+        winmgr_draw_text(win, render_x + 4, render_y + 8, label, theme_get()->fg);
       }
     } else if (strcmp(node->dom_node->tag_name, "a") == 0) {
       const char *href = dom_get_attribute(node->dom_node, "href");
@@ -746,21 +748,23 @@ static void browser_draw_cb(void *w) {
   int cx = 2, cy = 24;
   int cw = win->width - 4;
 
-  winmgr_fill_rect(win, cx, cy, cw, TOOLBAR_H, 0xFFDDDDDD);
-  winmgr_draw_text(win, cx + 7, cy + 10, "<", 0xFF000000);
-  winmgr_draw_text(win, cx + 33, cy + 10, ">", 0xFF000000);
-  winmgr_draw_text(win, cx + 55, cy + 10, "R", 0xFF000000);
+  const theme_t *theme = theme_get();
+ 
+  winmgr_fill_rect(win, cx, cy, cw, TOOLBAR_H, theme->titlebar);
+  winmgr_draw_text(win, cx + 7, cy + 10, "<", theme->fg);
+  winmgr_draw_text(win, cx + 33, cy + 10, ">", theme->fg);
+  winmgr_draw_text(win, cx + 55, cy + 10, "R", theme->fg);
 
   int ux = cx + URLBAR_X;
   int uy = cy + 4;
-  winmgr_fill_rect(win, ux, uy, URLBAR_W, 22, 0xFFFFFFFF);
+  winmgr_fill_rect(win, ux, uy, URLBAR_W, 22, theme->input_bg);
   winmgr_draw_rect(win, ux, uy, URLBAR_W, 22,
-                   url_editing ? 0x00FF00 : 0x888888);
-  winmgr_draw_text(win, ux + 4, uy + 7, url_bar, 0x000000);
+                   url_editing ? theme->accent : theme->border);
+  winmgr_draw_text(win, ux + 4, uy + 7, url_bar, theme->fg);
 
   int content_top = cy + CONTENT_Y;
   int content_h = win->height - 26 - TOOLBAR_H - 20;
-  winmgr_fill_rect(win, cx, content_top, cw, content_h, 0xFFFFFFFF);
+  winmgr_fill_rect(win, cx, content_top, cw, content_h, theme->bg);
 
   int draw_y = content_top + 4 - scroll_y;
   int content_x = cx + 6;
@@ -1005,7 +1009,7 @@ void browser_init(void) {
   is_loading = 0;
   js_init();
   print_serial("BROWSER: JS init done\n");
-  window_t *win = winmgr_create_window(50, 30, 560, 440, "PureBrowser");
+  window_t *win = winmgr_create_window(-1, -1, 850, 650, "PureBrowser");
   print_serial("BROWSER: Window created\n");
   if (!win)
     return;

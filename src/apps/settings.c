@@ -1,6 +1,7 @@
 #include "settings.h"
 #include "../kernel/config.h"
 #include "../kernel/string.h"
+#include "../kernel/theme.h"
 #include "../kernel/window.h"
 
 extern void compositor_invalidate_rect(int x, int y, int w, int h);
@@ -185,21 +186,22 @@ static void settings_draw(void *w) {
   window_t *win = (window_t *)w;
   sstate_t *s = (sstate_t *)win->user_data;
 
-  // Modern Light Theme Background
-  winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, 0xFFFFFFFF);
+  const theme_t *theme = theme_get();
+ 
+  // Modern Theme Background
+  winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, theme->bg);
 
-  // 1. SLEEK LIGHT SIDEBAR
-  winmgr_fill_rect(win, 0, 24, SW, win->height - 24, 0xFFF0F0F0);
-  winmgr_fill_rect(win, SW - 1, 24, 1, win->height - 24, 0xFFD0D0D0);
+  // 1. SLEEK SIDEBAR
+  winmgr_fill_rect(win, 0, 24, SW, win->height - 24, theme->menu_bg);
+  winmgr_fill_rect(win, SW - 1, 24, 1, win->height - 24, theme->border);
 
   const char *tabs[] = {"Home",   "Personal", "Taskbar", "Accounts",
                         "System", "About",    "Widgets"};
   for (int i = 0; i < NP; i++) {
     if (s->page == i) {
-      winmgr_fill_rect(win, 8, 40 + i * 36, SW - 16, 30,
-                       0xFFC2E0FF); // Blue Select
+      winmgr_fill_rect(win, 8, 40 + i * 36, SW - 16, 30, theme->accent); // Theme Accent
     }
-    winmgr_draw_text(win, 20, 48 + i * 36, tabs[i], 0xFF000000);
+    winmgr_draw_text(win, 20, 48 + i * 36, tabs[i], s->page == i ? theme->button_text : theme->fg);
   }
 
   // 2. CONTENT AREA (CARDS)
@@ -208,21 +210,21 @@ static void settings_draw(void *w) {
   int card_w = win->width - cx - 20;
 
   if (s->page == PA) { // Home
-    winmgr_draw_text(win, cx, cy, "General Settings", 0xFF000000);
+    winmgr_draw_text(win, cx, cy, "General Settings", theme->fg);
     cy += 30;
 
     // Aesthetic Settings Card
-    winmgr_fill_rect(win, cx, cy, card_w, 45, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "System Appearance", 0xFF333333);
-    winmgr_draw_text(win, cx + card_w - 60, cy + 15, "Light >", 0xFF007AFF);
+    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "System Appearance", theme->fg);
+    winmgr_draw_text(win, cx + card_w - 60, cy + 15, "Light >", theme->accent);
 
     cy += 60;
-    winmgr_fill_rect(win, cx, cy, card_w, 45, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Wallpapers", 0xFF333333);
+    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "Wallpapers", theme->fg);
   } else if (s->page == PT) { // Taskbar
-    winmgr_draw_text(win, cx, cy, "Taskbar Apps", 0xFF000000);
+    winmgr_draw_text(win, cx, cy, "Taskbar Apps", theme->fg);
     cy += 30;
 
     // List of apps to pin
@@ -230,9 +232,9 @@ static void settings_draw(void *w) {
                                "Paint",    "Files",      "Task Mgr", "Browser",
                                "Video",    "Settings"};
     for (int i = 0; i < 10; i++) {
-      winmgr_fill_rect(win, cx, cy, card_w, 30, 0xFFFAFAFA);
-      winmgr_draw_rect(win, cx, cy, card_w, 30, 0xFFE0E0E0);
-      winmgr_draw_text(win, cx + 15, cy + 8, app_names[i], 0xFF333333);
+      winmgr_fill_rect(win, cx, cy, card_w, 30, theme->input_bg);
+      winmgr_draw_rect(win, cx, cy, card_w, 30, theme->border);
+      winmgr_draw_text(win, cx + 15, cy + 8, app_names[i], theme->fg);
 
       // Is pinned?
       int is_pinned = 0;
@@ -254,25 +256,25 @@ static void settings_draw(void *w) {
     winmgr_draw_text(win, cx + 30, cy + 18, "Apply", 0xFFFFFFFF);
 
   } else if (s->page == PC) { // Accounts
-    winmgr_draw_text(win, cx, cy, "Accounts", 0xFF000000);
+    winmgr_draw_text(win, cx, cy, "Accounts", theme->fg);
     cy += 30;
 
-    winmgr_fill_rect(win, cx, cy, card_w, 60, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 60, 0xFFE0E0E0);
+    winmgr_fill_rect(win, cx, cy, card_w, 60, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 60, theme->border);
     winmgr_fill_rect(win, cx + 15, cy + 15, 30, 30, CA);
     winmgr_draw_text(win, cx + 24, cy + 22, "R", 0xFFFFFFFF);
-    winmgr_draw_text(win, cx + 55, cy + 15, "Rudra Patel", 0xFF000000);
-    winmgr_draw_text(win, cx + 55, cy + 30, "Administrator", 0xFF666666);
+    winmgr_draw_text(win, cx + 55, cy + 15, "Rudra Patel", theme->fg);
+    winmgr_draw_text(win, cx + 55, cy + 30, "Administrator", theme->fg_secondary);
 
     cy += 80;
 
-    winmgr_fill_rect(win, cx, cy, card_w, 110, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 110, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Lock Password", 0xFF333333);
+    winmgr_fill_rect(win, cx, cy, card_w, 110, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 110, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "Lock Password", theme->fg);
 
     // Password textbox
     winmgr_fill_rect(win, cx + 15, cy + 40, card_w - 30, 25, 0xFFFFFFFF);
-    winmgr_draw_rect(win, cx + 15, cy + 40, card_w - 30, 25, 0xFFCCCCCC);
+    winmgr_draw_rect(win, cx + 15, cy + 40, card_w - 30, 25, theme->border);
 
     // Draw masked dots for safety instead of cleartext
     char disp[32];
@@ -293,26 +295,26 @@ static void settings_draw(void *w) {
 
   } else if (s->page == PE) { // About
     winmgr_draw_text(win, cx + (card_w - 48) / 2, cy + 10, "PureOS",
-                     0xFF000000);
+                     theme->fg);
     winmgr_draw_text(win, cx + (card_w - 80) / 2, cy + 30, "Version 2.0",
-                     0xFF666666);
+                     theme->fg_secondary);
 
     cy += 70;
-    winmgr_fill_rect(win, cx, cy, card_w, 80, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 80, 0xFFE0E0E0);
+    winmgr_fill_rect(win, cx, cy, card_w, 80, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 80, theme->border);
     winmgr_draw_text(win, cx + 15, cy + 15, "Processor: x86 CPU @ 2.4GHz",
-                     0xFF333333);
-    winmgr_draw_text(win, cx + 15, cy + 35, "Memory: 512 MB DDR3", 0xFF333333);
+                     theme->fg);
+    winmgr_draw_text(win, cx + 15, cy + 35, "Memory: 512 MB DDR3", theme->fg);
     winmgr_draw_text(win, cx + 15, cy + 55, "Graphics: VBE Adapter",
-                     0xFF333333);
+                     theme->fg);
   } else if (s->page == PB) { // Personalization
-    winmgr_draw_text(win, cx, cy, "Personalization", 0xFF000000);
+    winmgr_draw_text(win, cx, cy, "Personalization", theme->fg);
     cy += 30;
 
     // Wallpaper
-    winmgr_fill_rect(win, cx, cy, card_w, 90, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 90, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Background", 0xFF333333);
+    winmgr_fill_rect(win, cx, cy, card_w, 90, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 90, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "Background", theme->fg);
 
     int tx = cx + 15, ty = cy + 40, tw = 65, th = 40;
     for (int i = 0; i < 3; i++) {
@@ -331,25 +333,25 @@ static void settings_draw(void *w) {
     cy += 110;
 
     // Theme
-    winmgr_fill_rect(win, cx, cy, card_w, 65, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 65, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Color mode", 0xFF333333);
+    winmgr_fill_rect(win, cx, cy, card_w, 65, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 65, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "Color mode", theme->fg);
 
     int py = cy + 38, pw = 85;
-    winmgr_fill_rect(win, cx + 15, py, pw, 22, s->th == 0 ? CA : 0xFFE0E0E0);
+    winmgr_fill_rect(win, cx + 15, py, pw, 22, s->th == 0 ? CA : theme->button);
     winmgr_draw_text(win, cx + 33, py + 5, "Dark",
-                     s->th == 0 ? 0xFFFFFFFF : 0xFF333333);
+                     s->th == 0 ? 0xFFFFFFFF : theme->fg);
     winmgr_fill_rect(win, cx + 15 + pw + 8, py, pw, 22,
-                     s->th == 1 ? CA : 0xFFE0E0E0);
+                     s->th == 1 ? CA : theme->button);
     winmgr_draw_text(win, cx + 15 + pw + 30, py + 5, "Light",
-                     s->th == 1 ? 0xFFFFFFFF : 0xFF333333);
+                     s->th == 1 ? 0xFFFFFFFF : theme->fg);
 
     cy += 85;
 
     // Desktop Icons Toggle
-    winmgr_fill_rect(win, cx, cy, card_w, 45, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Desktop Icons", 0xFF333333);
+    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "Desktop Icons", theme->fg);
     // Toggle switch
     winmgr_fill_rect(win, cx + card_w - 50, cy + 12, 40, 20,
                      s->di ? CA : 0xFFCCCCCC);
@@ -357,44 +359,44 @@ static void settings_draw(void *w) {
                      0xFFFFFFFF);
 
     cy += 60;
-    winmgr_fill_rect(win, cx, cy, card_w, 45, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Icon Filter", 0xFF333333);
+    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "Icon Filter", theme->fg);
 
     int fx = cx + card_w - 180;
     const char *fn[] = {"None", "Red", "Grn", "Yel"};
     for (int i = 0; i < 4; i++) {
-      uint32_t bg = (s->filter == i) ? CA : 0xFFE0E0E0;
+      uint32_t bg = (s->filter == i) ? CA : theme->button;
       winmgr_fill_rect(win, fx + i * 42, cy + 12, 38, 22, bg);
       winmgr_draw_text(win, fx + i * 42 + 4, cy + 17, fn[i],
-                       (s->filter == i) ? 0xFFFFFFFF : 0xFF333333);
+                       (s->filter == i) ? 0xFFFFFFFF : theme->fg);
     }
 
     cy += 60;
 
     // Intensity Controls
-    winmgr_draw_text(win, cx + 15, cy, "Icon Intensity", 0xFF333333);
+    winmgr_draw_text(win, cx + 15, cy, "Icon Intensity", theme->fg);
     char i_per[8];
     k_itoa((s->icon_int * 100) / 255, i_per);
     strcat(i_per, "%");
-    winmgr_draw_text(win, cx + 185, cy + 15, i_per, 0xFF666666);
+    winmgr_draw_text(win, cx + 185, cy + 15, i_per, theme->fg_secondary);
 
-    winmgr_fill_rect(win, cx + 15, cy + 15, 120, 20, 0xFFE0E0E0);
+    winmgr_fill_rect(win, cx + 15, cy + 15, 120, 20, theme->button);
     winmgr_fill_rect(win, cx + 15, cy + 15, (s->icon_int * 120) / 255, 20, CA);
-    winmgr_draw_text(win, cx + 145, cy + 15, "-", 0xFF333333);
-    winmgr_draw_text(win, cx + 165, cy + 15, "+", 0xFF333333);
+    winmgr_draw_text(win, cx + 145, cy + 15, "-", theme->fg);
+    winmgr_draw_text(win, cx + 165, cy + 15, "+", theme->fg);
 
     cy += 50;
-    winmgr_draw_text(win, cx + 15, cy, "BG Intensity", 0xFF333333);
+    winmgr_draw_text(win, cx + 15, cy, "BG Intensity", theme->fg);
     char b_per[8];
     k_itoa((s->bg_int * 100) / 255, b_per);
     strcat(b_per, "%");
-    winmgr_draw_text(win, cx + 185, cy + 15, b_per, 0xFF666666);
+    winmgr_draw_text(win, cx + 185, cy + 15, b_per, theme->fg_secondary);
 
-    winmgr_fill_rect(win, cx + 15, cy + 15, 120, 20, 0xFFE0E0E0);
+    winmgr_fill_rect(win, cx + 15, cy + 15, 120, 20, theme->button);
     winmgr_fill_rect(win, cx + 15, cy + 15, (s->bg_int * 120) / 255, 20, CA);
-    winmgr_draw_text(win, cx + 145, cy + 15, "-", 0xFF333333);
-    winmgr_draw_text(win, cx + 165, cy + 15, "+", 0xFF333333);
+    winmgr_draw_text(win, cx + 145, cy + 15, "-", theme->fg);
+    winmgr_draw_text(win, cx + 165, cy + 15, "+", theme->fg);
 
     cy += 60;
 
@@ -404,13 +406,13 @@ static void settings_draw(void *w) {
     winmgr_draw_text(win, cx + 22, cy + 11, "Apply", 0xFFFFFFFF);
 
   } else if (s->page == PD) { // System
-    winmgr_draw_text(win, cx, cy, "System", 0xFF000000);
+    winmgr_draw_text(win, cx, cy, "System", theme->fg);
     cy += 30;
 
-    winmgr_fill_rect(win, cx, cy, card_w, 50, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 50, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 12, "Display", 0xFF000000);
-    winmgr_draw_text(win, cx + 15, cy + 28, "1024x768 32bpp BGA", 0xFF666666);
+    winmgr_fill_rect(win, cx, cy, card_w, 50, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 50, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 12, "Display", theme->fg);
+    winmgr_draw_text(win, cx + 15, cy + 28, "1024x768 32bpp BGA", theme->fg_secondary);
 
     cy += 60;
     winmgr_fill_rect(win, cx, cy, card_w, 50, 0xFFFAFAFA);
@@ -424,13 +426,13 @@ static void settings_draw(void *w) {
     winmgr_draw_text(win, cx + 15, cy + 12, "Storage", 0xFF000000);
     winmgr_draw_text(win, cx + 15, cy + 28, "ATA Primary Master", 0xFF666666);
   } else if (s->page == PW) { // Widgets
-    winmgr_draw_text(win, cx, cy, "Desktop Widgets", 0xFF000000);
+    winmgr_draw_text(win, cx, cy, "Desktop Widgets", theme->fg);
     cy += 30;
 
     // Clock Widget
-    winmgr_fill_rect(win, cx, cy, card_w, 45, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Digital Clock", 0xFF333333);
+    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "Digital Clock", theme->fg);
     winmgr_fill_rect(win, cx + card_w - 50, cy + 12, 40, 20,
                      s->show_clock ? CA : 0xFFCCCCCC);
     winmgr_fill_rect(win, cx + card_w - 50 + (s->show_clock ? 22 : 2), cy + 14,
@@ -438,9 +440,9 @@ static void settings_draw(void *w) {
 
     cy += 60;
     // Calendar Widget
-    winmgr_fill_rect(win, cx, cy, card_w, 45, 0xFFFAFAFA);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Month Calendar", 0xFF333333);
+    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
+    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "Month Calendar", theme->fg);
     winmgr_fill_rect(win, cx + card_w - 50, cy + 12, 40, 20,
                      s->show_calendar ? CA : 0xFFCCCCCC);
     winmgr_fill_rect(win, cx + card_w - 50 + (s->show_calendar ? 22 : 2),
@@ -500,6 +502,8 @@ static void apply_config(sstate_t *s) {
   global_config.show_clock_widget = s->show_clock;
   global_config.show_calendar_widget = s->show_calendar;
   global_config.timezone_offset_m = s->tz;
+ 
+  theme_set_mode(s->th);
 
   global_config.num_pinned = s->num_pinned;
   for (int i = 0; i < s->num_pinned; i++) {
@@ -508,17 +512,13 @@ static void apply_config(sstate_t *s) {
 
   config_save();
   for (int i = 0; i < window_count; i++) {
-    if (windows[i].id != 0 && windows[i].app_type != 9) {
-      windows[i].style =
-          global_config.theme_mode == 1
-              ? (window_style_t){0xFF000080, 0, 0xFFFFFFFF, 0xFF808080, 0xFFC0C0C0}
-              : (window_style_t){0xFF333333, 0, 0xFF666666, 0xFF222222, 0xFF444444};
+    if (windows[i].id != 0) {
       windows[i].needs_redraw = 1;
     }
   }
   desktop_invalidate();
   compositor_invalidate_rect(0, 0, screen_width, screen_height);
-  print_serial("SETTINGS: Configuration applied (pw updated).\n");
+  print_serial("SETTINGS: Configuration applied (theme updated).\n");
 }
 
 static void settings_on_mouse(void *w, int mx, int my, int buttons) {
@@ -861,7 +861,7 @@ static void settings_on_close(void *w) {
 }
 
 void settings_init() {
-  window_t *win = winmgr_create_window(80, 40, 560, 420, "Settings");
+  window_t *win = winmgr_create_window(-1, -1, 800, 600, "Settings");
   if (!win)
     return;
   sstate_t *st = (sstate_t *)kmalloc(sizeof(sstate_t));

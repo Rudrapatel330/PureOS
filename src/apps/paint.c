@@ -2,6 +2,7 @@
 #include "../fs/fs.h"
 #include "../kernel/heap.h"
 #include "../kernel/string.h"
+#include "../kernel/theme.h"
 #include "../kernel/window.h" // For window_t
 
 // Canvas Settings
@@ -339,19 +340,21 @@ void paint_draw_ui() {
     }
   }
 
+  const theme_t *theme = theme_get();
+ 
   // Background
-  winmgr_fill_rect(w, 0, 0, w->width, w->height, 0xFF202020);
+  winmgr_fill_rect(w, 0, 0, w->width, w->height, theme->bg);
 
   // Top Menu Bar
-  winmgr_fill_rect(w, 0, 24, w->width, 30, 0xFF18181A);
-  winmgr_draw_text(w, 15, 34, "File", 0xFFFFFFFF);
-  winmgr_draw_text(w, 60, 34, "Edit", 0xFFFFFFFF);
-  winmgr_draw_text(w, 105, 34, "View", 0xFFFFFFFF);
-  winmgr_draw_rect(w, 8, 28, 42, 22, 0xFF444444); 
+  winmgr_fill_rect(w, 0, 24, w->width, 30, theme->titlebar);
+  winmgr_draw_text(w, 15, 34, "File", theme->titlebar_text);
+  winmgr_draw_text(w, 60, 34, "Edit", theme->titlebar_text);
+  winmgr_draw_text(w, 105, 34, "View", theme->titlebar_text);
+  winmgr_draw_rect(w, 8, 28, 42, 22, theme->border);
 
   // Main Ribbon Toolbar
-  winmgr_fill_rect(w, 0, 54, w->width, 60, 0xFF252526);
-  winmgr_fill_rect(w, 0, 114, w->width, 1, 0xFF111111); 
+  winmgr_fill_rect(w, 0, 54, w->width, 60, theme->menu_bg);
+  winmgr_fill_rect(w, 0, 114, w->width, 1, theme->border);
 
   // Section 1: Tools (3x2 Grid)
   winmgr_draw_text(w, 40, 100, "Tools", 0xFFAAAAAA);
@@ -360,9 +363,9 @@ void paint_draw_ui() {
     int row = i / 3;
     int tx = 20 + (col * 30);
     int ty = 56 + (row * 22);
-    uint32_t bg = (paint_state.current_tool == i) ? 0xFF404040 : 0xFF252526;
+    uint32_t bg = (paint_state.current_tool == i) ? theme->accent : theme->button;
     winmgr_fill_rect(w, tx, ty, 26, 20, bg);
-    winmgr_draw_rect(w, tx, ty, 26, 20, 0xFF111111);
+    winmgr_draw_rect(w, tx, ty, 26, 20, theme->border);
     
     // Pixel Art Icons!
     int ix = tx + 6;
@@ -446,9 +449,9 @@ void paint_draw_ui() {
   winmgr_fill_rect(w, 290, 60, 1, 40, 0xFF444444); 
 
   // Section 2: Size
-  winmgr_draw_text(w, 305, 100, "Size", 0xFFAAAAAA);
-  winmgr_fill_rect(w, 295, 65, 45, 20, 0xFF18181A);
-  winmgr_draw_rect(w, 295, 65, 45, 20, 0xFF444444);
+  winmgr_draw_text(w, 305, 100, "Size", theme->fg_secondary);
+  winmgr_fill_rect(w, 295, 65, 45, 20, theme->input_bg);
+  winmgr_draw_rect(w, 295, 65, 45, 20, theme->input_border);
   int s = paint_state.brush_size;
   winmgr_fill_rect(w, 317 - (s / 2), 75 - (s / 2), s, s, 0xFFFFFFFF);
 
@@ -534,8 +537,8 @@ void paint_draw_ui() {
   }
 
   // --- BOTTOM STATUS BAR ---
-  winmgr_fill_rect(w, 0, w->height - 24, w->width, 24, 0xFF18181A);
-  winmgr_fill_rect(w, 0, w->height - 24, w->width, 1, 0xFF111111);
+  winmgr_fill_rect(w, 0, w->height - 24, w->width, 24, theme->titlebar_inactive);
+  winmgr_fill_rect(w, 0, w->height - 24, w->width, 1, theme->border);
   
   char dims[64];
   k_itoa(paint_state.canvas_w, dims);
@@ -735,7 +738,7 @@ static void paint_on_close(void *w) {
 }
 
 void paint_init() {
-  paint_state.win = winmgr_create_window(50, 20, 680, 520, "Untitled - Paint");
+  paint_state.win = winmgr_create_window(-1, -1, 900, 700, "Untitled - Paint");
   if (!paint_state.win)
     return;
   paint_state.win->app_type = 4; // Paint

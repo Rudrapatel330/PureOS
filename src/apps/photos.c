@@ -1,7 +1,8 @@
 #include "../fs/fs.h"
 #include "../kernel/heap.h" // Actually we use malloc/free, need heap.h
 #include "../kernel/image.h"
-#include "../kernel/string.h" // We use strcpy/strlen/strcmp, need string.h
+#include "../kernel/string.h"
+#include "../kernel/theme.h"
 #include "../kernel/window.h"
 
 #define MAX_PHOTOS 64
@@ -135,20 +136,22 @@ static void photos_draw(void *w) {
   window_t *win = (window_t *)w;
   photos_app_t *app = (photos_app_t *)win->user_data;
 
+  const theme_t *theme = theme_get();
+ 
   // Background
-  winmgr_fill_rect(win, 0, 0, win->width, win->height, 0xFFF0F0F0);
-
+  winmgr_fill_rect(win, 0, 0, win->width, win->height, theme->bg);
+ 
   // Sidebar
-  winmgr_fill_rect(win, 0, 0, SIDEBAR_W, win->height, 0xFFE0E0E0);
-  winmgr_draw_line(win, SIDEBAR_W, 0, SIDEBAR_W, win->height, 0xFFCCCCCC);
-
-  winmgr_draw_text(win, 5, 5, "Photos", 0xFF333333);
+  winmgr_fill_rect(win, 0, 0, SIDEBAR_W, win->height, theme->menu_bg);
+  winmgr_draw_line(win, SIDEBAR_W, 0, SIDEBAR_W, win->height, theme->border);
+ 
+  winmgr_draw_text(win, 5, 5, "Photos", theme->fg);
 
   // File List
   for (int i = 0; i < app->count; i++) {
-    uint32_t text_col = (i == app->selected_idx) ? 0xFF0078D4 : 0xFF333333;
+    uint32_t text_col = (i == app->selected_idx) ? theme->button_text : theme->fg;
     if (i == app->selected_idx) {
-      winmgr_fill_rect(win, 5, 30 + i * 20, SIDEBAR_W - 10, 18, 0xFFD0E0FF);
+      winmgr_fill_rect(win, 5, 30 + i * 20, SIDEBAR_W - 10, 18, theme->accent);
     }
     winmgr_draw_text(win, 10, 32 + i * 20, app->filenames[i], text_col);
   }
@@ -160,7 +163,7 @@ static void photos_draw(void *w) {
   int view_h = win->height - 40;
 
   winmgr_draw_rect(win, view_x - 1, view_y - 1, view_w + 2, view_h + 2,
-                   0xFFCCCCCC);
+                   theme->border);
 
   if (app->img_data) {
     // Determine draw coordinates (Fit to viewer area while preserving aspect
@@ -224,12 +227,12 @@ static void photos_draw(void *w) {
     }
   } else {
     winmgr_draw_text(win, view_x + 20, view_y + 50, "No image selected",
-                     0xFF888888);
+                     theme->fg_secondary);
   }
-
+ 
   // Status bar at bottom
   winmgr_draw_text(win, SIDEBAR_W + 10, win->height - 20, app->status,
-                   0xFF666666);
+                   theme->fg_secondary);
 }
 
 static void photos_on_mouse(void *w, int mx, int my, int buttons) {
@@ -294,7 +297,7 @@ void photos_open(const char *path) {
     app = (photos_app_t *)win->user_data;
     winmgr_bring_to_front(win);
   } else {
-    win = winmgr_create_window(100, 100, 500, 400, "Photos");
+    win = winmgr_create_window(-1, -1, 800, 600, "Photos");
     if (!win)
       return;
 

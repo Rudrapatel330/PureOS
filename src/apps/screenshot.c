@@ -2,6 +2,7 @@
 #include "../kernel/screen.h"
 #include "../kernel/string.h"
 #include "../kernel/task.h"
+#include "../kernel/theme.h"
 #include "../kernel/window.h"
 
 extern void capture_screenshot(void);
@@ -18,11 +19,13 @@ static void screenshot_draw(void *w) {
   window_t *win = (window_t *)w;
   screenshot_app_t *app = (screenshot_app_t *)win->user_data;
 
+  const theme_t *theme = theme_get();
+ 
   // Background
-  winmgr_fill_rect(win, 0, 0, win->width, win->height, win->style.bg_color);
-
+  winmgr_fill_rect(win, 0, 0, win->width, win->height, theme->bg);
+ 
   // Title/Header
-  winmgr_draw_text(win, 10, 10, "Screenshot Utility", 0xFF000000);
+  winmgr_draw_text(win, 10, 10, "Screenshot Utility", theme->fg);
 
   // Buttons
   winmgr_draw_button(win, 10, 40, 140, 25, "Capture Now");
@@ -41,7 +44,7 @@ static void screenshot_draw(void *w) {
     strcat(app->status, count);
     strcat(app->status, "s...");
   }
-  winmgr_draw_text(win, 10, 110, app->status, status_col);
+  winmgr_draw_text(win, 10, 110, app->status, theme->fg_secondary);
 }
 
 static void screenshot_on_mouse(void *w, int mx, int my, int buttons) {
@@ -88,7 +91,7 @@ static void screenshot_on_close(void *w) {
 }
 
 void screenshot_init() {
-  window_t *win = winmgr_create_window(300, 200, 180, 140, "Screenshot");
+  window_t *win = winmgr_create_window(-1, -1, 300, 200, "Screenshot");
   if (!win)
     return;
 

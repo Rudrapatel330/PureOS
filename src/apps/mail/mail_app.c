@@ -3,6 +3,7 @@
 #include "../../kernel/heap.h"
 #include "../../kernel/mail_core.h"
 #include "../../kernel/string.h"
+#include "../../kernel/theme.h"
 #include "../../kernel/window.h"
 #include "../../net/smtp.h"
 #include "mail.h"
@@ -168,38 +169,40 @@ void mail_app_draw(window_t *win) {
   if (!win)
     return;
 
+  const theme_t *theme = theme_get();
+ 
   // Background
-  winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, 0xFFFFFFFF);
+  winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, theme->bg);
 
   // 1. TOOLBAR
-  winmgr_fill_rect(win, 0, 24, win->width, 30, 0xFFF0F0F0);
-  winmgr_fill_rect(win, 0, 53, win->width, 1, 0xFFD0D0D0);
-
+  winmgr_fill_rect(win, 0, 24, win->width, 30, theme->titlebar);
+  winmgr_fill_rect(win, 0, 53, win->width, 1, theme->border);
+ 
   // Buttons
-  winmgr_fill_rect(win, 10, 28, 60, 20, 0xFFE0E0E0);
-  winmgr_draw_text(win, 20, 32, "Sync", 0xFF000000);
-
-  winmgr_fill_rect(win, 80, 28, 80, 20, compose_mode ? 0xFF0078D7 : 0xFFE0E0E0);
+  winmgr_fill_rect(win, 10, 28, 60, 20, theme->button);
+  winmgr_draw_text(win, 20, 32, "Sync", theme->fg);
+ 
+  winmgr_fill_rect(win, 80, 28, 80, 20, compose_mode ? theme->accent : theme->button);
   winmgr_draw_text(win, 90, 32, "Compose",
-                   compose_mode ? 0xFFFFFFFF : 0xFF000000);
-
-  winmgr_draw_text(win, win->width - 150, 32, status_text, 0xFF555555);
+                   compose_mode ? theme->button_text : theme->fg);
+ 
+  winmgr_draw_text(win, win->width - 150, 32, status_text, theme->fg_secondary);
 
   // 2. SIDEBAR (Accounts)
   winmgr_fill_rect(win, 0, 54, MAIL_SIDEBAR_WIDTH, win->height - 54 - 26,
-                   0xFFF8F8F8);
+                   theme->menu_bg);
   winmgr_fill_rect(win, MAIL_SIDEBAR_WIDTH, 54, 1, win->height - 54 - 26,
-                   0xFFD0D0D0);
-
-  winmgr_draw_text(win, 5, 60, "ACCOUNTS", 0xFF888888);
+                   theme->border);
+ 
+  winmgr_draw_text(win, 5, 60, "ACCOUNTS", theme->fg_secondary);
   for (int i = 0; i < account_count; i++) {
     int y = 80 + i * MAIL_ROW_HEIGHT;
     if (i == selected_account_idx) {
       winmgr_fill_rect(win, 2, y, MAIL_SIDEBAR_WIDTH - 4, MAIL_ROW_HEIGHT,
-                       0xFF0078D7);
-      winmgr_draw_text(win, 5, y + 5, accounts[i], 0xFFFFFFFF);
+                       theme->accent);
+      winmgr_draw_text(win, 5, y + 5, accounts[i], theme->button_text);
     } else {
-      winmgr_draw_text(win, 5, y + 5, accounts[i], 0xFF000000);
+      winmgr_draw_text(win, 5, y + 5, accounts[i], theme->fg);
     }
   }
 
@@ -207,98 +210,98 @@ void mail_app_draw(window_t *win) {
   int list_x = MAIL_SIDEBAR_WIDTH + 1;
   if (compose_mode) {
     winmgr_fill_rect(win, list_x, 54, win->width - list_x,
-                     win->height - 54 - 26, 0xFFFFFFFF);
-
+                     win->height - 54 - 26, theme->bg);
+ 
     // "To:" field
-    uint32_t to_border = (compose_field == 0) ? 0xFF0078D7 : 0xFFCCCCCC;
-    winmgr_draw_text(win, list_x + 10, 82, "To:", 0xFF888888);
+    uint32_t to_border = (compose_field == 0) ? theme->accent : theme->border;
+    winmgr_draw_text(win, list_x + 10, 82, "To:", theme->fg_secondary);
     winmgr_fill_rect(win, list_x + 70, 73, win->width - list_x - 90, 26,
-                     0xFFF5F5F5);
+                     theme->input_bg);
     winmgr_fill_rect(win, list_x + 70, 99, win->width - list_x - 90, 1,
                      to_border);
-    winmgr_draw_text(win, list_x + 75, 82, compose_to, 0xFF000000);
+    winmgr_draw_text(win, list_x + 75, 82, compose_to, theme->fg);
 
     // "Subject:" field
-    uint32_t subj_border = (compose_field == 1) ? 0xFF0078D7 : 0xFFCCCCCC;
-    winmgr_draw_text(win, list_x + 10, 118, "Subject:", 0xFF888888);
+    uint32_t subj_border = (compose_field == 1) ? theme->accent : theme->border;
+    winmgr_draw_text(win, list_x + 10, 118, "Subject:", theme->fg_secondary);
     winmgr_fill_rect(win, list_x + 70, 108, win->width - list_x - 90, 26,
-                     0xFFF5F5F5);
+                     theme->input_bg);
     winmgr_fill_rect(win, list_x + 70, 134, win->width - list_x - 90, 1,
                      subj_border);
-    winmgr_draw_text(win, list_x + 75, 118, compose_subject, 0xFF000000);
-
+    winmgr_draw_text(win, list_x + 75, 118, compose_subject, theme->fg);
+ 
     // Divider
-    winmgr_fill_rect(win, list_x, 140, win->width - list_x, 1, 0xFFE0E0E0);
-
+    winmgr_fill_rect(win, list_x, 140, win->width - list_x, 1, theme->border);
+ 
     // Body field
-    uint32_t body_border = (compose_field == 2) ? 0xFF0078D7 : 0xFFCCCCCC;
+    uint32_t body_border = (compose_field == 2) ? theme->accent : theme->border;
     winmgr_fill_rect(win, list_x + 10, 148, win->width - list_x - 20,
-                     win->height - 220, 0xFFF8F8F8);
+                     win->height - 220, theme->input_bg);
     winmgr_fill_rect(win, list_x + 10, win->height - 72,
                      win->width - list_x - 20, 1, body_border);
-    winmgr_draw_text(win, list_x + 15, 155, compose_body, 0xFF000000);
-
+    winmgr_draw_text(win, list_x + 15, 155, compose_body, theme->fg);
+ 
     // Field hint
     winmgr_draw_text(win, list_x + 10, win->height - 60,
-                     "Tab=Next Field  Backspace=Delete", 0xFF999999);
-
+                     "Tab=Next Field  Backspace=Delete", theme->fg_secondary);
+ 
     // Send Button
-    winmgr_fill_rect(win, list_x + 10, win->height - 48, 70, 26, 0xFF0078D7);
-    winmgr_draw_text(win, list_x + 22, win->height - 41, "SEND", 0xFFFFFFFF);
+    winmgr_fill_rect(win, list_x + 10, win->height - 48, 70, 26, theme->accent);
+    winmgr_draw_text(win, list_x + 22, win->height - 41, "SEND", theme->button_text);
     return;
   }
 
   winmgr_fill_rect(win, list_x, 54, MAIL_LIST_WIDTH, win->height - 54 - 26,
-                   0xFFFFFFFF);
+                   theme->bg);
   winmgr_fill_rect(win, list_x + MAIL_LIST_WIDTH, 54, 1, win->height - 54 - 26,
-                   0xFFD0D0D0);
-
+                   theme->border);
+ 
   for (int i = 0; i < msg_count; i++) {
     int y = 54 + i * (MAIL_ROW_HEIGHT + 14);
     if (i == selected_msg_idx) {
       winmgr_fill_rect(win, list_x + 2, y + 2, MAIL_LIST_WIDTH - 4,
-                       MAIL_ROW_HEIGHT + 10, 0xFFCCE8FF);
+                       MAIL_ROW_HEIGHT + 10, theme->accent);
     }
-
+ 
     char sender[26];
     strncpy(sender, msg_headers[i].from, 22);
     sender[22] = 0; // Force null termination
-    winmgr_draw_text(win, list_x + 8, y + 6, sender, 0xFF000000);
-
+    winmgr_draw_text(win, list_x + 8, y + 6, sender, (i == selected_msg_idx) ? theme->button_text : theme->fg);
+ 
     char subj[26];
     strncpy(subj, msg_headers[i].subject, 22);
     subj[22] = 0; // Force null termination
-    winmgr_draw_text(win, list_x + 8, y + 20, subj, 0xFF555555);
-
+    winmgr_draw_text(win, list_x + 8, y + 20, subj, (i == selected_msg_idx) ? theme->button_text : theme->fg_secondary);
+ 
     winmgr_fill_rect(win, list_x, y + MAIL_ROW_HEIGHT + 12, MAIL_LIST_WIDTH, 1,
-                     0xFFEEEEEE);
+                     theme->border);
   }
 
   // 4. MESSAGE VIEW
   int view_x = list_x + MAIL_LIST_WIDTH + 1;
   if (has_msg_loaded) {
-    winmgr_draw_text(win, view_x + 10, 60, "From: ", 0xFF888888);
-    winmgr_draw_text(win, view_x + 60, 60, current_msg.header.from, 0xFF000000);
-
-    winmgr_draw_text(win, view_x + 10, 80, "Subject: ", 0xFF888888);
+    winmgr_draw_text(win, view_x + 10, 60, "From: ", theme->fg_secondary);
+    winmgr_draw_text(win, view_x + 60, 60, current_msg.header.from, theme->fg);
+ 
+    winmgr_draw_text(win, view_x + 10, 80, "Subject: ", theme->fg_secondary);
     winmgr_draw_text(win, view_x + 80, 80, current_msg.header.subject,
-                     0xFF000000);
-
+                     theme->fg);
+ 
     winmgr_fill_rect(win, view_x + 10, 100, win->width - view_x - 20, 1,
-                     0xFFD0D0D0);
-
+                     theme->border);
+ 
     // Body (Simple)
-    winmgr_draw_text(win, view_x + 10, 110, current_msg.body, 0xFF000000);
+    winmgr_draw_text(win, view_x + 10, 110, current_msg.body, theme->fg);
   } else {
     winmgr_draw_text(win, view_x + 50, win->height / 2,
-                     "Select a message to read.", 0xFF888888);
+                     "Select a message to read.", theme->fg_secondary);
   }
-
+ 
   // 5. STATUS BAR
   int sb_y = win->height - 26;
-  winmgr_fill_rect(win, 0, sb_y, win->width, 26, 0xFFF0F0F0);
-  winmgr_fill_rect(win, 0, sb_y, win->width, 1, 0xFFD0D0D0);
-  winmgr_draw_text(win, 10, sb_y + 5, status_text, 0xFF333333);
+  winmgr_fill_rect(win, 0, sb_y, win->width, 26, theme->titlebar_inactive);
+  winmgr_fill_rect(win, 0, sb_y, win->width, 1, theme->border);
+  winmgr_draw_text(win, 10, sb_y + 5, status_text, theme->fg);
 }
 
 void mail_app_on_mouse(window_t *win, int mx, int my, int buttons) {
@@ -476,7 +479,7 @@ void mail_app_on_key(window_t *win, int key, char ascii) {
 
 void mail_app_init() {
   print_serial("MAIL: Initializing app...\n");
-  mail_win = winmgr_create_window(100, 100, 700, 500, "PureOS Mail");
+  mail_win = winmgr_create_window(-1, -1, 1000, 750, "PureOS Mail");
   if (!mail_win)
     return;
 

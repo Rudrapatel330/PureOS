@@ -78,7 +78,7 @@ static void videoplayer_on_key(void *w, int key, char c) {
 }
 
 void videoplayer_init(const char *path) {
-  window_t *win = winmgr_create_window(200, 150, 480, 360, "Video Player");
+  window_t *win = winmgr_create_window(-1, -1, 640, 480, "Video Player");
   if (!win)
     return;
 

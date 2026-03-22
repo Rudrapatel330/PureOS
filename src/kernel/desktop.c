@@ -12,6 +12,7 @@ static uint32_t last_time_update = 0;
 #include "compositor.h"
 #include "config.h"
 #include "string.h"
+#include "theme.h"
 #define STBI_NO_STDIO
 #include "../drivers/rtc.h"
 #include "../include/apps.h"
@@ -868,7 +869,7 @@ void desktop_render_icons(uint32_t *target, rect_t clip) {
 
     draw_icon(icons[i].x, icons[i].y, icons[i].type, target);
 
-    uint32_t text_col = icons[i].selected ? 0xFFFFFF00 : 0xFFFFFFFF;
+    uint32_t text_col = icons[i].selected ? theme_get()->accent : theme_get()->fg;
     draw_string_to_trg(target, icons[i].x - 2, icons[i].y + 45, icons[i].label,
                        text_col);
   }
@@ -978,6 +979,8 @@ void draw_clock_widget(uint32_t *target, int x, int y, int w, int h,
                        rect_t clip) {
   rtc_time_t now = cached_time;
 
+  const theme_t *theme = theme_get();
+ 
   // Auto-font-scale based on width
   int font_scale = w / 50;
   if (font_scale < 1)
@@ -985,8 +988,9 @@ void draw_clock_widget(uint32_t *target, int x, int y, int w, int h,
   if (font_scale > 8)
     font_scale = 8;
 
-  // Background card (Glassmorphism)
-  draw_rounded_rect_trg(target, x, y, w, h, 20, 0x80FFFFFF, clip);
+  // Background card (Glassmorphism based on theme)
+  uint32_t widget_bg = (theme->menu_bg & 0x00FFFFFF) | 0x80000000;
+  draw_rounded_rect_trg(target, x, y, w, h, 20, widget_bg, clip);
 
   // Border if active
   if (dragging_widget == 1 || resizing_widget == 1) {
@@ -1023,7 +1027,7 @@ void draw_clock_widget(uint32_t *target, int x, int y, int w, int h,
   int time_len = strlen(time_str) * 8 * font_scale;
   int tx = x + (w - time_len) / 2;
   int ty = y + (h / 2) - (8 * font_scale / 2) - 5;
-  draw_string_large(target, tx, ty, time_str, 0xFF000000, font_scale, clip);
+  draw_string_large(target, tx, ty, time_str, theme->fg, font_scale, clip);
 
   char date_str[32];
   char d[4];
@@ -1039,15 +1043,18 @@ void draw_clock_widget(uint32_t *target, int x, int y, int w, int h,
   int dx = x + (w - date_len) / 2;
   int dy = ty + (8 * font_scale) + 5;
   if (dy < y + h - 15)
-    draw_string_large(target, dx, dy, date_str, 0xBB333333, 1, clip);
+    draw_string_large(target, dx, dy, date_str, theme->fg_secondary, 1, clip);
 }
 
 void draw_calendar_widget(uint32_t *target, int x, int y, int w, int h,
                           rect_t clip) {
   rtc_time_t now = cached_time;
 
-  // Dark Card
-  draw_rounded_rect_trg(target, x, y, w, h, 20, 0xCC1A1A1A, clip);
+  const theme_t *theme = theme_get();
+ 
+  // Card (Glassmorphism based on theme)
+  uint32_t widget_bg = (theme->menu_bg & 0x00FFFFFF) | 0xCC000000;
+  draw_rounded_rect_trg(target, x, y, w, h, 20, widget_bg, clip);
 
   // Border if active
   if (dragging_widget == 2 || resizing_widget == 2) {
@@ -1075,9 +1082,9 @@ void draw_calendar_widget(uint32_t *target, int x, int y, int w, int h,
   strcat(head, yr);
 
   int font_head = (w > 250) ? 2 : 1;
-  draw_string_large(target, x + 10, y + 10, head, 0xFFFFFFFF, font_head, clip);
+  draw_string_large(target, x + 10, y + 10, head, theme->fg, font_head, clip);
   draw_string_large(target, x + 10, y + 15 + font_head * 15, "S M T W T F S",
-                    0xFF888888, 1, clip);
+                    theme->fg_secondary, 1, clip);
 
   int grid_w = (w - 20) / 7;
   int grid_h = (h - 60) / 6;
@@ -1201,7 +1208,7 @@ static void action_refresh(void) {
 }
 
 static void action_about(void) {
-  window_t *win = winmgr_create_window(300, 250, 250, 120, "About");
+  window_t *win = winmgr_create_window(-1, -1, 400, 200, "About");
   const char *about = "PureOS v2.0\nBy You!\n32-bit Protected Mode";
   int i = 0;
   while (about[i] && i < 255) {

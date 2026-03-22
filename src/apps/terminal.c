@@ -2,6 +2,7 @@
 #include "../fs/fs.h"
 #include "../kernel/clipboard.h"
 #include "../kernel/heap.h"
+#include "../kernel/theme.h"
 #include "../kernel/window.h"
 #include "autocomplete.h"
 
@@ -88,7 +89,9 @@ void term_print_line_to(window_t *win, const char *text) {
 }
 
 #include "../shell/shell.h"
-
+ 
+extern void print_serial(const char *str);
+ 
 void terminal_handle_key_win(window_t *win, char c) {
   term_app_t *t = get_term(win);
   if (!t)
@@ -294,7 +297,7 @@ void terminal_draw(window_t *win) {
 
   int cy = 28;
   for (int i = start; i < end && i < MAX_LINES; i++) {
-    winmgr_draw_text(win, 6, cy, t->lines[i], 0xFF00FF00); // Bright Green
+    winmgr_draw_text(win, 6, cy, t->lines[i], 0xFFFFFFFF); // Fixed white text
     cy += 10;
   }
 
@@ -303,10 +306,10 @@ void terminal_draw(window_t *win) {
   for (int i = 0; t->input_buf[i] && p < 254; i++)
     prompt[p++] = t->input_buf[i];
   prompt[p] = 0;
-  winmgr_draw_text(win, 6, cy, prompt, 0xFF00FF00); // Bright Green
+  winmgr_draw_text(win, 6, cy, prompt, 0xFFFFFFFF); // Fixed white prompt
 
   if (t->scroll_offset > 0) {
-    winmgr_draw_text(win, win->width - 30, 28, "^^^", 0xFF00FF00); // Bright Green
+    winmgr_draw_text(win, win->width - 30, 28, "^^^", 0xFF89B4FA); // Fixed blue accent
   }
 }
 
@@ -322,14 +325,19 @@ static void terminal_on_close(void *w) {
 }
 
 void terminal_init() {
-  if (last_active_term && last_active_term->id != 0) {
-    last_active_term->is_minimized = 0;
-    winmgr_bring_to_front(last_active_term);
+  window_t *win = winmgr_create_window(-1, -1, 640, 440, "Terminal");
+  if (!win) {
+    print_serial("TERMINAL: Failed to create window (OOM)\n");
     return;
   }
-  window_t *win = winmgr_create_window(100, 450, 400, 200, "Terminal");
 
   term_app_t *t = (term_app_t *)kmalloc(sizeof(term_app_t));
+  if (!t) {
+    print_serial("TERMINAL: Failed to allocate state (OOM)\n");
+    winmgr_close_window(win);
+    return;
+  }
+
   for (int i = 0; i < (int)sizeof(term_app_t); i++)
     ((char *)t)[i] = 0;
   t->history_browse = -1;

@@ -10,6 +10,7 @@
 #include "../kernel/spinlock.h"
 #include "../kernel/string.h"
 #include "../kernel/task.h"
+#include "../kernel/theme.h"
 #include "../kernel/window.h"
 
 /* MuPDF headers */
@@ -418,20 +419,21 @@ update_window:
 #define PDF_STATUS_H 22
 
 /* Colors - Dark theme with PDF red accent (Opaque) */
-#define PDF_COL_BG 0xFF1A1D23
-#define PDF_COL_MENU 0xFF252830
-#define PDF_COL_MENU_BORDER 0xFF3A3F4B
-#define PDF_COL_TEXT 0xFFD4D8DF
-#define PDF_COL_DIM 0xFF6B737E
-#define PDF_COL_ACCENT 0xFFE04040
-#define PDF_COL_STATUS 0xFF1E2228
-#define PDF_COL_PAGE_BG 0xFF383C46
-#define PDF_COL_DIALOG_BG 0xFF2C313A
-#define PDF_COL_DIALOG_BORDER 0xFFE04040
-#define PDF_COL_INPUT_BG 0xFF282C34
-#define PDF_COL_WHITE_PAGE 0xFFFFFFFF
-#define PDF_COL_BTN 0xFF353A45
-#define PDF_COL_BTN_HOVER 0xFF454B58
+/* Colors - Dynamic Theme-Aware */
+#define PDF_COL_BG           (theme_get()->bg)
+#define PDF_COL_MENU         (theme_get()->menu_bg)
+#define PDF_COL_MENU_BORDER  (theme_get()->border)
+#define PDF_COL_TEXT         (theme_get()->fg)
+#define PDF_COL_DIM          (theme_get()->fg_secondary)
+#define PDF_COL_ACCENT       (theme_get()->accent)
+#define PDF_COL_STATUS       (theme_get()->titlebar_inactive)
+#define PDF_COL_PAGE_BG      (theme_get()->bg)
+#define PDF_COL_DIALOG_BG    (theme_get()->menu_bg)
+#define PDF_COL_DIALOG_BORDER (theme_get()->accent)
+#define PDF_COL_INPUT_BG     (theme_get()->input_bg)
+#define PDF_COL_WHITE_PAGE   0xFFFFFFFF
+#define PDF_COL_BTN          (theme_get()->button)
+#define PDF_COL_BTN_HOVER    (theme_get()->accent)
 
 static void pdfreader_draw(void *w) {
   window_t *win = (window_t *)w;
@@ -894,7 +896,7 @@ void pdfreader_init(void) {
   }
 
   /* Create window */
-  pdf_win = winmgr_create_window(120, 80, 550, 500, "PDF Reader");
+  pdf_win = winmgr_create_window(-1, -1, 850, 750, "PDF Reader");
   if (!pdf_win) {
     print_serial("PDFREADER: Failed to create window (OOM)\n");
     return;
