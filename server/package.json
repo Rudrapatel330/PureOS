@@ -1,0 +1,9 @@
+{
+  "name": "purebox-relay",
+  "version": "1.0.0",
+  "description": "Relay server for PureOS Chat",
+  "main": "index.js",
+  "dependencies": {
+    "ws": "^8.20.0"
+  }
+}

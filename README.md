@@ -174,6 +174,7 @@ PureOS ships with **15+ native desktop applications**, all built directly into t
 |---|---|
 | 🌐 **Web Browser** | Built-in web browser with custom HTML/DOM parser, CSS engine, JavaScript interpreter, and layout renderer — connects over raw TCP sockets |
 | 📧 **Mail Client** | Full SMTP email client that can send real emails through Gmail — see [Email Setup Guide](#-email-setup-guide) below |
+| 🐦 **PureChat** | Real-time bidirectional chat client with newline-delimited JSON protocol and kernel-level network polling |
 
 ---
 
@@ -419,6 +420,22 @@ PureOS can send **real emails** through Gmail. To configure:
 6. Open **Mail** from the Start Menu → Click **Compose** → Fill in recipient, subject, body → Click **SEND**
 
 > ⚠️ **Security Warning:** Never commit your real App Password to a public Git repository. Always replace it with a placeholder before pushing to GitHub.
+
+---
+
+## 🐦 PureChat & Relay Server
+
+PureOS includes a fully functional real-time chat system inspired by modern messaging apps. It consists of a native GUI client and a lightweight Python-based relay server for cross-platform synchronization (PC/Mobile).
+
+### 🖥️ Native Chat Client (`src/apps/chat.c`)
+- **Real-Time Polling** — Kernel-level NIC polling ensures background messages are received instantly.
+- **JSON Protocol** — Utilizes a newline-delimited JSON protocol for robust, non-blocking communication.
+- **Smart Parsing** — Hand-written JSON parser handles varying server-side formatting gracefully.
+
+### 🐍 Python Relay Server (`server/relay.py`)
+- **Unified Port** — Serving both the web dashboard and WebSocket messaging on a single port (7862) for easy Ngrok/Cloud deployment.
+- **TCP Bridge** — Bridging raw TCP sockets (Port 7860) from PureOS to modern WebSockets (Port 7861/7862).
+- **Premium Dashboard** — Modern, responsive web interface with a custom 'KABUTAR' splash screen and glassmorphic UI.
 
 ---
 

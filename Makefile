@@ -1,7 +1,7 @@
 # PureOS 64-bit Makefile
 CC = .\tools\bin\x86_64-elf-gcc.exe
 LD = .\tools\bin\x86_64-elf-ld.exe
-NASM = nasm
+NASM = D:\nasm\nasm.exe
 
 CFLAGS = -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large \
          -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/gui -Isrc/drivers -Isrc/fs -Isrc/apps -Isrc/net
@@ -51,7 +51,12 @@ KERNEL_C_SOURCES = src/kernel/kernel.c \
                    src/kernel/anim.c \
                    src/gui/taskbar.c \
                    src/gui/startmenu.c \
-                   src/gui/sysmenu.c
+                   src/gui/sysmenu.c \
+                   src/drivers/camera.c \
+                   src/apps/camera.c \
+                   src/apps/chat.c \
+                   src/drivers/usb/uvc.c \
+                   src/drivers/usb/ohci.c
 
 KERNEL_ASM_OBJS = $(patsubst %.asm, build/%_asm.o, $(notdir $(KERNEL_ASM_SOURCES)))
 KERNEL_C_OBJS = $(patsubst %.c, build/%.o, $(notdir $(KERNEL_C_SOURCES)))
@@ -86,6 +91,9 @@ build/%.o: src/fs/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/%.o: src/gui/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/%.o: src/apps/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Userland Rules

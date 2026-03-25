@@ -14,41 +14,41 @@ echo Compiling Wallpaper Blobs...
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Assembling Bootloader Stage 1...
-nasm -f bin src/boot/boot_sect.asm -o build/boot_sect.bin
+D:\nasm\nasm.exe -f bin src/boot/boot_sect.asm -o build/boot_sect.bin
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Assembling Bootloader Stage 2...
-nasm -f bin src/boot/stage2.asm -o build/stage2.bin
+D:\nasm\nasm.exe -f bin src/boot/stage2.asm -o build/stage2.bin
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Assembling Interrupts...
-nasm -f elf64 src/kernel/hal/interrupt.asm -o build/interrupt.o
+D:\nasm\nasm.exe -f elf64 src/kernel/hal/interrupt.asm -o build/interrupt.o
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Compiling Kernel Entry...
-nasm -f elf64 src/kernel/kernel_entry.asm -o build/kernel_entry.o
+D:\nasm\nasm.exe -f elf64 src/kernel/kernel_entry.asm -o build/kernel_entry.o
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 :: TEMPORARY: Build C Kernel with ASM Entry
 echo Assembling ASM Entry...
-nasm src/kernel/pure_kernel.asm -f elf64 -o build/pure_kernel.o
+D:\nasm\nasm.exe src/kernel/pure_kernel.asm -f elf64 -o build/pure_kernel.o
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Assembling ISR Stubs...
-nasm -f elf64 src/kernel/hal/isr.asm -o build/isr_stubs.o
+D:\nasm\nasm.exe -f elf64 src/kernel/hal/isr.asm -o build/isr_stubs.o
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Assembling GDT and IDT helpers...
-nasm -f elf64 src/kernel/hal/idt_load.asm -o build/idt_load.o
+D:\nasm\nasm.exe -f elf64 src/kernel/hal/idt_load.asm -o build/idt_load.o
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-nasm -f elf64 src/kernel/hal/gdt_flush.asm -o build/gdt_flush.o
+D:\nasm\nasm.exe -f elf64 src/kernel/hal/gdt_flush.asm -o build/gdt_flush.o
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-nasm -f elf64 src/kernel/hal/trampoline.asm -o build/trampoline.o
+D:\nasm\nasm.exe -f elf64 src/kernel/hal/trampoline.asm -o build/trampoline.o
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-nasm -f elf64 src/kernel/hal/setjmp.asm -o build/setjmp.o
+D:\nasm\nasm.exe -f elf64 src/kernel/hal/setjmp.asm -o build/setjmp.o
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Compiling C Kernel...
@@ -109,10 +109,22 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/es1370.c -o build/es1370.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
 if %errorlevel% neq 0 exit /b %errorlevel%
 
+echo Compiling Camera Driver...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/camera.c -o build/camera.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/usb/uhci.c -o build/uhci.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers/usb
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/usb/usb.c -o build/usb.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers/usb
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling UVC Driver...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/usb/uvc.c -o build/uvc.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers/usb
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling OHCI Driver...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/usb/ohci.c -o build/ohci.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers/usb
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/drivers/wav.c -o build/wav.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
@@ -282,6 +294,14 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/editor.c -o build/editor.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui
+
+echo Compiling Chat App...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/chat.c -o build/chat.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/apps
+if %errorlevel% neq 0 exit /b %errorlevel%
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Camera App...
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -mcmodel=large -c src/apps/camera.c -o build/camera_app.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/gui -Isrc/fs
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-unused-parameter -mcmodel=large -c src/lib/mupdf_stubs.c -o build/mupdf_stubs.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Imupdf/include
@@ -388,14 +408,14 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Assembling Fonts...
-nasm -f elf64 src/lib/fonts.asm -o build/fonts.o
+D:\nasm\nasm.exe -f elf64 src/lib/fonts.asm -o build/fonts.o
 
 echo Linking Kernel...
-.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.bin build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/setjmp.o build/kernel.o build/screenshot_core.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/pcnet.o build/pci.o build/ahci.o build/es1370.o build/uhci.o build/usb.o build/wav.o build/wifi.o build/blitter.o build/hal.o build/string.o build/simd.o build/gfx_2d.o build/gfx_2d_test.o build/profiler.o build/random.o build/base64.o build/math.o build/stdio_wrapper.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/apps.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/mail_core.o build/mail_storage.o build/mail_app.o build/image.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/devfs.o build/pipe.o build/ext2.o build/terminal.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/editor.o build/lockscreen.o build/taskmgr.o build/photos.o build/taskbar.o build/startmenu.o build/sysmenu.o build/sysmon.o build/settings.o build/config.o build/theme.o build/workspace.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/js.o build/browser.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/smtp.o build/http.o build/tls.o build/dhcp.o build/test_simple.o build/panic.o build/debug.o build/wallpaper_blobs.o build/mupdf_stubs.o build/pdfreader.o build/fonts.o build/mupdf.a build/bearssl.a --oformat binary
+.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.bin build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/setjmp.o build/kernel.o build/screenshot_core.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/pcnet.o build/pci.o build/ahci.o build/es1370.o build/camera.o build/uhci.o build/ohci.o build/usb.o build/uvc.o build/wav.o build/wifi.o build/blitter.o build/hal.o build/string.o build/simd.o build/gfx_2d.o build/gfx_2d_test.o build/profiler.o build/random.o build/base64.o build/math.o build/stdio_wrapper.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/apps.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/mail_core.o build/mail_storage.o build/mail_app.o build/image.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/devfs.o build/pipe.o build/ext2.o build/terminal.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/editor.o build/camera_app.o build/lockscreen.o build/taskmgr.o build/photos.o build/taskbar.o build/startmenu.o build/sysmenu.o build/sysmon.o build/settings.o build/config.o build/theme.o build/workspace.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/js.o build/browser.o build/chat.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/smtp.o build/http.o build/tls.o build/dhcp.o build/test_simple.o build/panic.o build/debug.o build/wallpaper_blobs.o build/mupdf_stubs.o build/pdfreader.o build/fonts.o build/mupdf.a build/bearssl.a --oformat binary
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Linking Kernel (ELF)...
-.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.elf build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/setjmp.o build/kernel.o build/screenshot_core.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/pcnet.o build/pci.o build/ahci.o build/es1370.o build/uhci.o build/usb.o build/wav.o build/wifi.o build/blitter.o build/hal.o build/string.o build/simd.o build/gfx_2d.o build/gfx_2d_test.o build/profiler.o build/random.o build/base64.o build/math.o build/stdio_wrapper.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/apps.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/mail_core.o build/mail_storage.o build/mail_app.o build/image.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/devfs.o build/pipe.o build/ext2.o build/terminal.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/editor.o build/lockscreen.o build/taskmgr.o build/photos.o build/taskbar.o build/startmenu.o build/sysmenu.o build/sysmon.o build/settings.o build/config.o build/theme.o build/workspace.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/js.o build/browser.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/smtp.o build/http.o build/tls.o build/dhcp.o build/test_simple.o build/panic.o build/debug.o build/wallpaper_blobs.o build/mupdf_stubs.o build/pdfreader.o build/fonts.o build/mupdf.a build/bearssl.a
+.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.elf build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/setjmp.o build/kernel.o build/screenshot_core.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/pcnet.o build/pci.o build/ahci.o build/es1370.o build/camera.o build/uhci.o build/ohci.o build/usb.o build/uvc.o build/wav.o build/wifi.o build/blitter.o build/hal.o build/string.o build/simd.o build/gfx_2d.o build/gfx_2d_test.o build/profiler.o build/random.o build/base64.o build/math.o build/stdio_wrapper.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/apps.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/mail_core.o build/mail_storage.o build/mail_app.o build/image.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/devfs.o build/pipe.o build/ext2.o build/terminal.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/editor.o build/camera_app.o build/lockscreen.o build/taskmgr.o build/photos.o build/taskbar.o build/startmenu.o build/sysmenu.o build/sysmon.o build/settings.o build/config.o build/theme.o build/workspace.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/js.o build/browser.o build/chat.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/smtp.o build/http.o build/tls.o build/dhcp.o build/test_simple.o build/panic.o build/debug.o build/wallpaper_blobs.o build/mupdf_stubs.o build/pdfreader.o build/fonts.o build/mupdf.a build/bearssl.a
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Creating OS Image...

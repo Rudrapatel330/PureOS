@@ -23,6 +23,11 @@
 #include <stdint.h>
 
 extern void videoplayer_update();
+extern void camera_init();
+extern void camera_update();
+extern void camera_app_update();
+extern void usb_init();
+extern void usb_poll();
 
 // Forward declarations
 void exit(int status);
@@ -311,6 +316,14 @@ void desktop_task() {
 
   while (1) {
     desktop_process_messages();
+    usb_poll();
+
+    // Background Network Polling
+    static uint8_t net_poll_buf[1600];
+    uint16_t net_poll_len;
+    if (pcnet_poll(net_poll_buf, &net_poll_len) > 0) {
+        net_receive(net_poll_buf, net_poll_len);
+    }
 
     static uint64_t last_anim_tick_ms = 0;
     unsigned int now_tick = get_timer_ticks();
@@ -417,9 +430,16 @@ void desktop_task() {
       extern void sysmon_update(window_t * win);
       if (sysmon_win)
         sysmon_update(sysmon_win);
+      
+      extern window_t *chat_win;
+      extern void chat_update(window_t *win);
+      if (chat_win)
+        chat_update(chat_win);
     }
 
     videoplayer_update();
+    camera_update();
+    camera_app_update();
     /* Yield to scheduler — do NOT use hlt here!
        This is the master render loop. hlt halts the entire CPU
        and blocks all rendering/input processing until next IRQ. */
@@ -558,7 +578,9 @@ void kernel_main(unsigned int magic, unsigned int addr) {
 
   // 5. PCI & Hardware Drivers
   print_serial("[INIT 4] PCI START\n");
+  usb_init();
   pci_init();
+  camera_init();
   print_serial("[INIT 5] BGA START\n");
   bga_init();
 

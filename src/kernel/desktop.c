@@ -302,6 +302,7 @@ typedef enum {
   APP_VIDEOPLAYER = 8,
   APP_SETTINGS = 9,
   APP_PDFREADER = 10,
+  APP_CAMERA = 11,
   APP_PHOTOS = 12,
   APP_MAIL = 13
 } app_type_t;
@@ -352,6 +353,7 @@ void desktop_init() {
   desktop_add_icon(120, 255, "PDF Reader", APP_PDFREADER, 0xCC3333);
   desktop_add_icon(120, 330, "Photos", APP_PHOTOS, 0xE91E63);
   desktop_add_icon(120, 405, "Mail", APP_MAIL, 0x00AADD);
+  desktop_add_icon(120, 480, "Camera", APP_CAMERA, 0x444444);
 
   // Initial draw to populate valid cache
   desktop_draw();
@@ -555,6 +557,17 @@ void draw_icon(int x, int y, int type, uint32_t *target) {
     }
     draw_rect_f(x + 16, y + 21, 8, 4, 0xFF0078D4,
                 target); // Blue stamp / seal indicator in center
+    break;
+  case APP_CAMERA:
+    // Modern Camera Icon
+    draw_rect_f(x + 5, y + 10, 30, 22, 0xFF333333, target); // Body
+    draw_rect_f(x + 12, y + 7, 16, 4, 0xFF333333, target);  // Top bump
+    // Lens
+    draw_rect_f(x + 14, y + 13, 12, 12, 0xFF111111, target); 
+    draw_rect_f(x + 16, y + 15, 8, 8, 0xFF0078D4, target);   // Glass
+    draw_rect_f(x + 22, y + 15, 2, 2, 0xFFFFFFFF, target);   // Reflection
+    // Flash
+    draw_rect_f(x + 7, y + 12, 4, 3, 0xFF666666, target);
     break;
   } // end switch
 } // end draw_icon
@@ -1197,6 +1210,7 @@ extern void taskmgr_init();
 extern void videoplayer_init(const char *path);
 extern void settings_init();
 extern void pdfreader_init();
+extern void camera_app_init();
 extern window_t *winmgr_create_window(int, int, int, int, const char *);
 
 // Context menu actions
@@ -1302,6 +1316,9 @@ void desktop_mouse_up(int mx, int my) {
             break;
           case APP_PDFREADER:
             pdfreader_init();
+            break;
+          case APP_CAMERA:
+            camera_app_init();
             break;
           default:
             break;
