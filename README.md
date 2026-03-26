@@ -429,10 +429,42 @@ PureOS can send **real emails** through Gmail. To configure:
 
 PureOS includes a fully functional real-time chat system inspired by modern messaging apps. It consists of a native GUI client and a lightweight Python-based relay server for cross-platform synchronization (PC/Mobile).
 
-### 🖥️ Native Chat Client (`src/apps/chat.c`)
-- **Real-Time Polling** — Kernel-level NIC polling ensures background messages are received instantly.
-- **JSON Protocol** — Utilizes a newline-delimited JSON protocol for robust, non-blocking communication.
-- **Smart Parsing** — Hand-written JSON parser handles varying server-side formatting gracefully.
+### 🖥️ Communication Architecture
+
+The following diagram illustrates how PureOS achieves real-time bidirectional communication by bridging raw TCP sockets to modern Web technologies through the Python relay:
+
+```mermaid
+graph TD
+    subgraph POS["💿 PureOS (Guest)"]
+        PHN["📞 Phone App<br>(Capture/Stream)"]
+        CHT["🐦 Chat App<br>(JSON Exchange)"]
+        TCP_S["🔌 TCP Stack<br>(Multi-Conn)"]
+    end
+
+    subgraph RLY["🐍 Relay Server (Host)"]
+        BRIDGE["TCP-to-WS Bridge<br>(relay.py)"]
+        SRV["Web Server<br>(Aiohttp)"]
+    end
+
+    subgraph WEB["🌐 Web Client (External)"]
+        DASH["Kabutar Dashboard<br>(JS/HTML)"]
+        AUD["Web Audio API<br>(Jitter Buffer)"]
+    end
+
+    %% Audio Flow
+    PHN <-->|Raw PCM Over TCP| BRIDGE
+    BRIDGE <-->|Base64 Over WebSockets| AUD
+    
+    %% Chat Flow
+    CHT <-->|JSON Over TCP| BRIDGE
+    BRIDGE <-->|JSON Over WebSockets| DASH
+
+    %% Styling
+    style POS fill:#1d3557,color:#fff
+    style RLY fill:#457b9d,color:#fff
+    style WEB fill:#a8dadc,color:#000
+    style TCP_S fill:#e63946,color:#fff
+```
 
 ### 🐍 Python Relay Server (`server/relay.py`)
 - **Unified Port** — Serving both the web dashboard and WebSocket messaging on a single port (7862) for easy Ngrok/Cloud deployment.
