@@ -10,6 +10,10 @@ static es1370_device_t audio_dev;
 
 #define DMA_BUFFER_SIZE 16384
 static uint8_t *dma_buffer = 0;
+static uint8_t *adc_dma_buffer = 0;
+static uint32_t last_adc_pos = 0;
+static int capture_bits = 8;
+static int capture_channels = 1;
 
 void es1370_handler(registers_t *regs) {
   (void)regs;
@@ -40,6 +44,13 @@ void es1370_init(uint32_t io_base, uint8_t irq) {
   }
   memset(dma_buffer, 0, DMA_BUFFER_SIZE);
 
+  adc_dma_buffer = (uint8_t *)kmalloc(DMA_BUFFER_SIZE);
+  if (!adc_dma_buffer) {
+    print_serial("ES1370: Failed to allocate ADC DMA buffer\n");
+  } else {
+    memset(adc_dma_buffer, 0, DMA_BUFFER_SIZE);
+  }
+
   // 3. Set up DMA for DAC2 (Page 1)
   outl(io_base + ES1370_REG_MEM_PAGE, 1); // Page 1 = DAC2
   outl(io_base + ES1370_REG_DAC2_FRAMEADR, (uint32_t)(uintptr_t)dma_buffer);
@@ -59,17 +70,19 @@ void es1370_init(uint32_t io_base, uint8_t irq) {
   sctrl |= SCTRL_P2_S_EB;     // Enable DAC2
   sctrl &= ~SCTRL_P2_FORMAT_16BIT;
   sctrl &= ~SCTRL_P2_FORMAT_STEREO;
+  // Explicitly disable interrupts to prevent storm since we're polling
+  sctrl &= ~((1 << 21) | (1 << 19) | (1 << 17)); // P2_INT_EN, R1_INT_EN, P1_INT_EN
   outl(io_base + ES1370_REG_SERIAL_CTRL, sctrl);
 
   // 6. Register interrupt handler
-  register_interrupt_handler(irq, (isr_t)es1370_handler);
+  register_interrupt_handler(32 + irq, (isr_t)es1370_handler);
 
   print_serial("ES1370: Initialized at 0x");
   char buf[16];
   k_itoa_hex(audio_dev.io_base, buf);
   print_serial(buf);
   print_serial(" IRQ ");
-  k_itoa(audio_dev.irq, buf);
+  k_itoa(32 + audio_dev.irq, buf);
   print_serial(buf);
   print_serial("\n");
 }
@@ -187,4 +200,104 @@ void es1370_stop(void) {
   outl(audio_dev.io_base + ES1370_REG_CONTROL, ctrl);
 
   print_serial("ES1370: Playback stopped\n");
+}
+
+void es1370_start_capture(uint32_t sample_rate, int bits, int channels) {
+  if (!adc_dma_buffer) return;
+
+  capture_bits = bits;
+  capture_channels = channels;
+  last_adc_pos = 0;
+
+  print_serial("ES1370: Starting audio capture (");
+  char b[16];
+  k_itoa(sample_rate, b); print_serial(b); print_serial("Hz, ");
+  k_itoa(bits, b); print_serial(b); print_serial("bit, ");
+  k_itoa(channels, b); print_serial(b); print_serial("ch)...\n");
+
+  uint32_t srsel;
+  if (sample_rate <= 7000) srsel = CTRL_WTSRSEL_5KHZ;
+  else if (sample_rate <= 16000) srsel = CTRL_WTSRSEL_11KHZ;
+  else if (sample_rate <= 33000) srsel = CTRL_WTSRSEL_22KHZ;
+  else srsel = CTRL_WTSRSEL_44KHZ;
+
+  uint32_t ctrl = inl(audio_dev.io_base + ES1370_REG_CONTROL);
+  ctrl &= ~0x3000;
+  ctrl |= srsel;
+  ctrl |= CTRL_ADC_EN;
+  outl(audio_dev.io_base + ES1370_REG_CONTROL, ctrl);
+
+  uint32_t sctrl = inl(audio_dev.io_base + ES1370_REG_SERIAL_CTRL);
+  sctrl &= ~SCTRL_R1_PAUSE;
+  sctrl |= SCTRL_R1_LOOP_SEL;
+  sctrl |= SCTRL_R1_S_EB;
+
+  if (bits == 16) sctrl |= SCTRL_R1_FORMAT_16BIT;
+  else sctrl &= ~SCTRL_R1_FORMAT_16BIT;
+
+  if (channels == 2) sctrl |= SCTRL_R1_FORMAT_STEREO;
+  else sctrl &= ~SCTRL_R1_FORMAT_STEREO;
+
+  outl(audio_dev.io_base + ES1370_REG_SERIAL_CTRL, sctrl);
+
+  outl(audio_dev.io_base + ES1370_REG_ADC_FRAMEADR, (uint32_t)(uintptr_t)adc_dma_buffer);
+  
+  uint32_t frame_size = ((bits == 16) ? 2 : 1) * channels;
+  uint32_t frame_count = (DMA_BUFFER_SIZE / frame_size);
+  outl(audio_dev.io_base + ES1370_REG_ADC_FRAMECNT, frame_count - 1);
+}
+
+void es1370_stop_capture(void) {
+  if (!audio_dev.io_base) return;
+
+  uint32_t sctrl = inl(audio_dev.io_base + ES1370_REG_SERIAL_CTRL);
+  sctrl |= SCTRL_R1_PAUSE;
+  outl(audio_dev.io_base + ES1370_REG_SERIAL_CTRL, sctrl);
+
+  uint32_t ctrl = inl(audio_dev.io_base + ES1370_REG_CONTROL);
+  ctrl &= ~CTRL_ADC_EN;
+  outl(audio_dev.io_base + ES1370_REG_CONTROL, ctrl);
+
+  print_serial("ES1370: Capture stopped\n");
+}
+
+int es1370_read_capture(uint8_t *buffer, uint32_t max_size) {
+  if (!adc_dma_buffer) return 0;
+  
+  uint32_t frame_size = ((capture_bits == 16) ? 2 : 1) * capture_channels;
+  uint32_t frames_total = DMA_BUFFER_SIZE / frame_size;
+  uint32_t scount = inl(audio_dev.io_base + ES1370_REG_ADC_SCOUNT) & 0xFFFF;
+  
+  uint32_t current_frame = frames_total - scount - 1; 
+  if (current_frame >= frames_total) current_frame = 0;
+  
+  uint32_t current_pos = current_frame * frame_size;
+  
+  
+  if (current_pos == last_adc_pos) return 0;
+  
+  // print_serial("D"); 
+  
+  uint32_t available = 0;
+  if (current_pos > last_adc_pos) {
+      available = current_pos - last_adc_pos;
+  } else {
+      available = DMA_BUFFER_SIZE - last_adc_pos + current_pos;
+  }
+  
+  if (available > max_size) available = max_size;
+  
+  if (current_pos > last_adc_pos) {
+      memcpy(buffer, adc_dma_buffer + last_adc_pos, available);
+  } else {
+      uint32_t part1 = DMA_BUFFER_SIZE - last_adc_pos;
+      if (part1 > available) part1 = available;
+      memcpy(buffer, adc_dma_buffer + last_adc_pos, part1);
+      if (part1 < available) {
+          memcpy(buffer + part1, adc_dma_buffer, available - part1);
+      }
+  }
+  
+  last_adc_pos = (last_adc_pos + available) % DMA_BUFFER_SIZE;
+  return available;
 }

@@ -424,17 +424,15 @@ void desktop_task() {
       mouse_moved = 0;
       redraw_pending = 0;
       ui_dirty = 0;
+    }
 
-      // Update System Monitor
-      extern window_t *sysmon_win;
-      extern void sysmon_update(window_t * win);
-      if (sysmon_win)
-        sysmon_update(sysmon_win);
-      
-      extern window_t *chat_win;
-      extern void chat_update(window_t *win);
-      if (chat_win)
-        chat_update(chat_win);
+    if (tick_elapsed) {
+      extern window_t *sysmon_win, *chat_win, *phone_win, *recorder_win;
+      extern void sysmon_update(window_t *), chat_update(window_t *), phone_update(window_t *), recorder_update(window_t *);
+      if (sysmon_win) sysmon_update(sysmon_win);
+      if (chat_win) chat_update(chat_win);
+      if (phone_win) phone_update(phone_win);
+      if (recorder_win) recorder_update(recorder_win);
     }
 
     videoplayer_update();

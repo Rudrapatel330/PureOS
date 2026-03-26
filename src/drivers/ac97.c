@@ -18,6 +18,7 @@ static ac97_bd_t *ac97_pi_bdl = 0;
 
 #define AC97_DMA_BUF_COUNT 32
 #define AC97_DMA_BUF_SIZE  16384
+#define AC97_PI_BUF_SIZE   1024   // Smaller capture buffers for low-latency voice
 static uint8_t *ac97_pi_buffers[AC97_DMA_BUF_COUNT];
 static int ac97_pi_last_civ = 0;
 
@@ -113,9 +114,9 @@ void ac97_init(uint32_t nambar, uint32_t nabmbar, uint8_t irq) {
     ac97_pi_bdl = (ac97_bd_t *)kmalloc_ap(AC97_BDL_ENTRIES * sizeof(ac97_bd_t), 0);
 
     for (int i = 0; i < AC97_DMA_BUF_COUNT; i++) {
-        ac97_pi_buffers[i] = (uint8_t *)kmalloc(AC97_DMA_BUF_SIZE);
+        ac97_pi_buffers[i] = (uint8_t *)kmalloc(AC97_PI_BUF_SIZE);
         ac97_pi_bdl[i].addr = (uint32_t)(uintptr_t)ac97_pi_buffers[i];
-        ac97_pi_bdl[i].length = AC97_DMA_BUF_SIZE / 2;
+        ac97_pi_bdl[i].length = AC97_PI_BUF_SIZE / 2;
         ac97_pi_bdl[i].flags = 0x8000;
     }
 
@@ -126,19 +127,67 @@ void ac97_init(uint32_t nambar, uint32_t nabmbar, uint8_t irq) {
 void ac97_start_capture(void *buffer, uint32_t size) {
     (void)buffer; (void)size;
     ac97_pi_last_civ = 0;
-    outb(ac97_nabmbar + AC97_PI_CR, 0x02); // Reset
+    
+    // Reset the PCM-In DMA engine
+    outb(ac97_nabmbar + AC97_PI_CR, 0x02);
+    for(int i=0; i<1000; i++) inb(0x80);
+    
+    // Clear reset bit explicitly
+    outb(ac97_nabmbar + AC97_PI_CR, 0x00);
     for(int i=0; i<200; i++) inb(0x80);
+    
+    // Clear any pending status bits
+    outw(ac97_nabmbar + AC97_PI_SR, 0x1E);
+    
+    // Set BDL base address
     outl(ac97_nabmbar + AC97_PI_BDBA, (uint32_t)(uintptr_t)ac97_pi_bdl);
+    
+    // Set Last Valid Index to wrap around all buffers
     outb(ac97_nabmbar + AC97_PI_LVI, AC97_DMA_BUF_COUNT - 1);
-    outb(ac97_nabmbar + AC97_PI_CR, 0x01 | 0x10); 
+    
+    // Start DMA: Run + IOCE (interrupt on completion enable)
+    outb(ac97_nabmbar + AC97_PI_CR, 0x01 | 0x10);
+    
+    // Debug: print state after start
+    char buf[16];
+    uint8_t civ = inb(ac97_nabmbar + AC97_PI_CIV);
+    uint8_t cr = inb(ac97_nabmbar + AC97_PI_CR);
+    uint16_t sr = inw(ac97_nabmbar + AC97_PI_SR);
+    print_serial("AC97 PI: Start Capture. CR=0x");
+    k_itoa_hex(cr, buf); print_serial(buf);
+    print_serial(" SR=0x");
+    k_itoa_hex(sr, buf); print_serial(buf);
+    print_serial(" CIV=");
+    k_itoa(civ, buf); print_serial(buf);
+    print_serial(" LVI=");
+    k_itoa(AC97_DMA_BUF_COUNT - 1, buf); print_serial(buf);
+    print_serial(" BDL=0x");
+    k_itoa_hex((uint32_t)(uintptr_t)ac97_pi_bdl, buf); print_serial(buf);
+    print_serial("\n");
 }
+
+static int ac97_capture_dbg_count = 0;
 
 uint32_t ac97_read_capture(void *buffer, uint32_t size) {
     uint8_t civ = inb(ac97_nabmbar + AC97_PI_CIV);
+    
+    // Debug print every 200 calls to see if DMA is advancing
+    if (ac97_capture_dbg_count++ % 200 == 0) {
+        char buf[16];
+        uint16_t sr = inw(ac97_nabmbar + AC97_PI_SR);
+        print_serial("AC97 PI poll: CIV=");
+        k_itoa(civ, buf); print_serial(buf);
+        print_serial(" last=");
+        k_itoa(ac97_pi_last_civ, buf); print_serial(buf);
+        print_serial(" SR=0x");
+        k_itoa_hex(sr, buf); print_serial(buf);
+        print_serial("\n");
+    }
+    
     if (civ == ac97_pi_last_civ) return 0;
     
     uint8_t *src = ac97_pi_buffers[ac97_pi_last_civ];
-    uint32_t to_copy = (size < AC97_DMA_BUF_SIZE) ? size : AC97_DMA_BUF_SIZE;
+    uint32_t to_copy = (size < AC97_PI_BUF_SIZE) ? size : AC97_PI_BUF_SIZE;
     memcpy(buffer, src, to_copy);
     
     ac97_pi_last_civ = (ac97_pi_last_civ + 1) % AC97_DMA_BUF_COUNT;
@@ -150,31 +199,90 @@ void ac97_stop_capture() {
     outb(ac97_nabmbar + AC97_PI_CR, 0); 
 }
 
-void ac97_play_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint8_t bits, uint8_t channels) {
+// ============== STREAMING PLAYBACK RING BUFFER ==============
+#define AC97_PO_RING_SIZE  (48000 * 2 * 2)  // ~1 second ring: 48kHz * 2ch * 16bit
+static uint8_t ac97_po_ring[AC97_PO_RING_SIZE] __attribute__((aligned(4096)));
+static volatile uint32_t ac97_po_write_pos = 0;
+static int ac97_po_running = 0;
+
+// Rebuild BDL to map the entire ring buffer, split into 32 entries
+static void ac97_po_setup_bdl(void) {
+    uint32_t chunk_size = AC97_PO_RING_SIZE / AC97_BDL_ENTRIES;
+    for (int i = 0; i < AC97_BDL_ENTRIES; i++) {
+        ac97_po_bdl[i].addr = (uint32_t)(uintptr_t)(ac97_po_ring + i * chunk_size);
+        ac97_po_bdl[i].length = chunk_size / 2;  // in 16-bit samples
+        ac97_po_bdl[i].flags = 0x8000;           // IOC
+    }
+}
+
+void ac97_stream_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint8_t bits, uint8_t channels) {
     (void)sample_rate; (void)bits; (void)channels;
     
-    outb(ac97_nabmbar + AC97_PO_CR, 0x02); // Reset
-    for(int i=0; i<200; i++) inb(0x80);
+    const uint8_t *src = (const uint8_t *)data;
     
-    uint32_t offset = 0;
-    int entry = 0;
-    // Map as much as we can into BDL entries (up to 2MB with 32 entries of 64kb each)
-    while (offset < size && entry < AC97_BDL_ENTRIES) {
-        uint32_t chunk = (size - offset > 65534) ? 65534 : (size - offset);
-        ac97_po_bdl[entry].addr = (uint32_t)(uintptr_t)((uint8_t*)data + offset);
-        ac97_po_bdl[entry].length = chunk / 2;
-        ac97_po_bdl[entry].flags = 0x8000;
-        offset += chunk;
-        entry++;
+    // Copy data into ring buffer (wrap around)
+    for (uint32_t i = 0; i < size; i++) {
+        ac97_po_ring[ac97_po_write_pos] = src[i];
+        ac97_po_write_pos = (ac97_po_write_pos + 1) % AC97_PO_RING_SIZE;
     }
     
-    if (entry > 0) {
+    // Start DMA if not already running
+    if (!ac97_po_running) {
+        ac97_po_setup_bdl();
+        
+        outb(ac97_nabmbar + AC97_PO_CR, 0x02); // Reset
+        for(int i=0; i<500; i++) inb(0x80);
+        outb(ac97_nabmbar + AC97_PO_CR, 0x00); // Clear reset
+        for(int i=0; i<200; i++) inb(0x80);
+        outw(ac97_nabmbar + AC97_PO_SR, 0x1E); // Clear status
+        
         outl(ac97_nabmbar + AC97_PO_BDBA, (uint32_t)(uintptr_t)ac97_po_bdl);
-        outb(ac97_nabmbar + AC97_PO_LVI, entry - 1);
-        outb(ac97_nabmbar + AC97_PO_CR, 0x01 | 0x10); 
-        print_serial("AC97: Playback Start. Entries: ");
-        char buf[8]; k_itoa(entry, buf); print_serial(buf); print_serial("\n");
+        outb(ac97_nabmbar + AC97_PO_LVI, AC97_BDL_ENTRIES - 1);
+        outb(ac97_nabmbar + AC97_PO_CR, 0x01 | 0x10); // Run + IOCE
+        ac97_po_running = 1;
+        print_serial("AC97: Streaming playback started\n");
     }
+    
+    // Keep LVI ahead so DMA never stops
+    outb(ac97_nabmbar + AC97_PO_LVI, AC97_BDL_ENTRIES - 1);
+}
+
+void ac97_play_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint8_t bits, uint8_t channels) {
+    (void)sample_rate; (void)bits; (void)channels;
+    ac97_po_running = 0; // Mutually exclusive with streaming
+
+    uint32_t total_samples = size / 2; // assuming 16-bit
+    uint32_t samples_remaining = total_samples;
+    const uint16_t *src_ptr = (const uint16_t *)data;
+    int bdl_idx = 0;
+
+    while (samples_remaining > 0 && bdl_idx < AC97_BDL_ENTRIES) {
+        uint32_t chunk_samples = samples_remaining;
+        if (chunk_samples > 65535) chunk_samples = 65535;
+
+        ac97_po_bdl[bdl_idx].addr = (uint32_t)(uintptr_t)src_ptr;
+        ac97_po_bdl[bdl_idx].length = chunk_samples;
+        
+        samples_remaining -= chunk_samples;
+        src_ptr += chunk_samples;
+        
+        if (samples_remaining == 0) {
+            ac97_po_bdl[bdl_idx].flags = 0x8000; // IOC for last entry
+        } else {
+            ac97_po_bdl[bdl_idx].flags = 0;
+        }
+        bdl_idx++;
+    }
+
+    outb(ac97_nabmbar + AC97_PO_CR, 0x02); // Reset
+    for(int i=0; i<500; i++) inb(0x80);
+    outb(ac97_nabmbar + AC97_PO_CR, 0x00); // Clear reset
+    for(int i=0; i<200; i++) inb(0x80);
+    outw(ac97_nabmbar + AC97_PO_SR, 0x1E); // Clear status
+
+    outl(ac97_nabmbar + AC97_PO_BDBA, (uint32_t)(uintptr_t)ac97_po_bdl);
+    outb(ac97_nabmbar + AC97_PO_LVI, bdl_idx - 1);
+    outb(ac97_nabmbar + AC97_PO_CR, 0x01 | 0x10); // Run + IOCE
 }
 
 void ac97_get_playback_status(uint8_t *civ, uint16_t *picb, uint16_t *sr) {
@@ -187,4 +295,18 @@ int ac97_is_playback_done(void) {
     uint16_t sr = inw(ac97_nabmbar + AC97_PO_SR);
     // DCH (halted) + CELV (current equals last valid) = playback finished
     return (sr & (AC97_SR_DCH | AC97_SR_CELV)) == (AC97_SR_DCH | AC97_SR_CELV);
+}
+
+void ac97_stop_playback(void) {
+    if (ac97_po_running) {
+        // Stop the DMA engine
+        outb(ac97_nabmbar + AC97_PO_CR, 0); 
+        ac97_po_running = 0;
+        
+        // Clear ring buffer so we don't play stale audio later
+        memset(ac97_po_ring, 0, AC97_PO_RING_SIZE);
+        ac97_po_write_pos = 0;
+        
+        print_serial("AC97: Streaming playback stopped\n");
+    }
 }

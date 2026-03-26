@@ -1,6 +1,7 @@
 #include "pci.h"
 #include "../kernel/string.h"
 #include "ahci.h"
+#include "ac97.h"
 #include "es1370.h"
 #include "ports.h"
 #include "usb/uhci.h"
@@ -26,6 +27,27 @@ uint32_t pci_config_read_dword(uint8_t bus, uint8_t slot, uint8_t func,
    * dword */
   tmp = inl(PCI_CONFIG_DATA);
   return tmp;
+}
+
+void pci_config_write_dword(uint8_t bus, uint8_t slot, uint8_t func,
+                            uint8_t offset, uint32_t data) {
+  uint32_t address = (uint32_t)((((uint32_t)bus) << 16) | (((uint32_t)slot) << 11) |
+                                (((uint32_t)func) << 8) | (offset & 0xfc) |
+                                ((uint32_t)0x80000000));
+  outl(PCI_CONFIG_ADDRESS, address);
+  outl(PCI_CONFIG_DATA, data);
+}
+
+void pci_config_write_word(uint8_t bus, uint8_t slot, uint8_t func,
+                           uint8_t offset, uint16_t data) {
+  uint32_t address = (uint32_t)((((uint32_t)bus) << 16) | (((uint32_t)slot) << 11) |
+                                (((uint32_t)func) << 8) | (offset & 0xfc) |
+                                ((uint32_t)0x80000000));
+  outl(PCI_CONFIG_ADDRESS, address);
+  // We need to read-modify-write for word access usually, or just use outw to the data port
+  // but let's do the standard shift logic for safety or just outl the mask.
+  // Actually on x86 PCI, outw to PCI_CONFIG_DATA + (offset & 2) works.
+  outw(PCI_CONFIG_DATA + (offset & 2), data);
 }
 
 uint16_t pci_config_read_word(uint8_t bus, uint8_t slot, uint8_t func,
@@ -93,16 +115,49 @@ void pci_check_device(uint8_t bus, uint8_t device, uint8_t function) {
     es1370_init(io_base, irq);
   }
 
+  // AC97 Audio (Vendor 0x8086, Device 0x2415 for ICH)
+  if (vendorID == 0x8086 && deviceID == 0x2415) {
+    print_serial(" [AC97 Audio DETECTED]");
+    // AC97 uses BAR0 for Mixer and BAR1 for Bus Master
+    uint32_t bar0 = pci_config_read_dword(bus, device, function, 0x10);
+    uint32_t bar1 = pci_config_read_dword(bus, device, function, 0x14);
+    uint32_t nambar = bar0 & 0xFFFFFFFC;
+    uint32_t nabmbar = bar1 & 0xFFFFFFFC;
+    uint8_t irq = (uint8_t)(pci_config_read_word(bus, device, function, 0x3C) & 0xFF);
+    
+    // Enable Bus Mastering
+    uint16_t cmd = pci_config_read_word(bus, device, function, 0x04);
+    cmd |= 0x07; // I/O, Mem, Master
+    pci_config_write_word(bus, device, function, 0x04, cmd);
+    
+    ac97_init(nambar, nabmbar, irq);
+  }
+
   // USB Controller (Class 0C, Subclass 03)
   if ((classCode >> 8) == 0x0C && (classCode & 0xFF) == 0x03) {
     uint8_t progIF =
         (uint8_t)((pci_config_read_word(bus, device, function, 8) >> 8) & 0xFF);
+
+    // Enable Memory Space, I/O Space, and Bus Mastering (PCI Command Register Offset 0x04)
+    uint16_t cmd = pci_config_read_word(bus, device, function, 0x04);
+    cmd |= 0x07; // Bit 0 (I/O), 1 (Mem), 2 (Master)
+    pci_config_write_word(bus, device, function, 0x04, cmd);
+
     if (progIF == 0x00) { // UHCI
       print_serial(" [USB UHCI Controller DETECTED]");
       uint32_t bar4 = pci_config_read_dword(bus, device, function, 0x20);
       if (bar4 & 1) { // I/O Space
         uhci_init(bar4 & 0xFFFFFFFC);
       }
+    } else if (progIF == 0x10) { // OHCI
+      print_serial(" [USB OHCI Controller DETECTED]");
+      uint32_t bar0 = pci_config_read_dword(bus, device, function, 0x10);
+      if (!(bar0 & 1)) { // Memory Space
+        extern void ohci_init(uintptr_t base_addr);
+        ohci_init(bar0 & 0xFFFFFFF0);
+      }
+    } else if (progIF == 0x20) { // EHCI
+      print_serial(" [USB EHCI Controller DETECTED - (High Speed but NO DRIVER)]");
     }
   }
 

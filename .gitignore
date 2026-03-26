@@ -47,3 +47,7 @@ nul
 tools/
 src/fs/wallpaper_png_data.h
 
+# Node and other server artifacts
+server/node_modules/
+server/package-lock.json
+

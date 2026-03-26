@@ -46,6 +46,10 @@
 #define SCTRL_P2_FORMAT_16BIT (1 << 14)
 #define SCTRL_P2_FORMAT_MONO (0 << 15)
 #define SCTRL_P2_FORMAT_STEREO (1 << 15)
+#define SCTRL_R1_FORMAT_8BIT (0 << 16)
+#define SCTRL_R1_FORMAT_16BIT (1 << 16)
+#define SCTRL_R1_FORMAT_MONO (0 << 17)
+#define SCTRL_R1_FORMAT_STEREO (1 << 17)
 
 // Control Register Bits
 #define CTRL_ADC_EN (1 << 0)
@@ -80,5 +84,8 @@ void es1370_play_pcm(const uint8_t *data, uint32_t size, uint32_t sample_rate,
                      int bits, int channels);
 void es1370_set_volume(uint8_t left, uint8_t right);
 void es1370_stop(void);
+void es1370_start_capture(uint32_t sample_rate, int bits, int channels);
+void es1370_stop_capture(void);
+int es1370_read_capture(uint8_t *buffer, uint32_t max_size);
 
 #endif

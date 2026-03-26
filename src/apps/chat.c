@@ -117,7 +117,7 @@ static void chat_process_packet(window_t *win, const char *buf) {
     if (s->history_count >= MAX_CHAT_HISTORY) return;
 
     // Safer JSON-ish parsing
-    const char *text_key = "\"text\"";
+    const char *text_key = "\"message\"";
     const char *from_key = "\"from\"";
     
     const char *text_ptr = strstr(buf, text_key);
@@ -127,7 +127,7 @@ static void chat_process_packet(window_t *win, const char *buf) {
         chat_msg_t *m = &s->history[s->history_count++];
         
         // Find opening quote for Text
-        text_ptr += 6; // skip "text"
+        text_ptr += 9; // skip "message"
         while (*text_ptr && *text_ptr != ':') text_ptr++; // find :
         if (*text_ptr == ':') text_ptr++;
         while (*text_ptr && *text_ptr != '\"') text_ptr++; // find opening "

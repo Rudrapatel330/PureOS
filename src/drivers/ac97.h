@@ -59,7 +59,9 @@ uint32_t ac97_read_capture(void *buffer, uint32_t size);
 void ac97_stop_capture();
 
 void ac97_play_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint8_t bits, uint8_t channels);
+void ac97_stream_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint8_t bits, uint8_t channels);
 void ac97_get_playback_status(uint8_t *civ, uint16_t *picb, uint16_t *sr);
 int ac97_is_playback_done(void);
+void ac97_stop_playback(void);
 
 #endif

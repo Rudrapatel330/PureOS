@@ -7,8 +7,8 @@ extern uint32_t get_timer_ticks(void);
 extern void kernel_poll_events(void);
 extern void k_itoa(int, char *);
 
-// Single global TCP connection
-static tcp_conn_t *active_conn = 0;
+#define MAX_TCP_CONNS 4
+static tcp_conn_t *active_conns[MAX_TCP_CONNS] = {0};
 static uint16_t local_port_counter = 49152; // Ephemeral port range
 
 // Helper to flush any pending packets in the NIC
@@ -129,7 +129,17 @@ int tcp_connect(tcp_conn_t *conn, uint32_t ip, uint16_t port) {
   conn->rx_len = 0;
   conn->rx_ready = 0;
 
-  active_conn = conn;
+  // Find a free slot
+  int slot = -1;
+  for (int i = 0; i < MAX_TCP_CONNS; i++) {
+    if (!active_conns[i]) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot < 0) return -1; // Max connections reached
+  
+  active_conns[slot] = conn;
 
   uint32_t start = get_timer_ticks();
   uint32_t last_syn = 0;
@@ -161,16 +171,18 @@ int tcp_connect(tcp_conn_t *conn, uint32_t ip, uint16_t port) {
 
     if (conn->error) {
       print_serial("TCP: Connection error\n");
-      if (active_conn == conn)
-        active_conn = 0;
+      for (int i = 0; i < MAX_TCP_CONNS; i++) {
+        if (active_conns[i] == conn) active_conns[i] = 0;
+      }
       return -1;
     }
   }
 
   print_serial("TCP: Connection timeout\n");
   conn->state = TCP_STATE_CLOSED;
-  if (active_conn == conn)
-    active_conn = 0;
+  for (int i = 0; i < MAX_TCP_CONNS; i++) {
+    if (active_conns[i] == conn) active_conns[i] = 0;
+  }
   return -1;
 }
 
@@ -319,8 +331,9 @@ void tcp_close(tcp_conn_t *conn) {
 
   conn->state = TCP_STATE_CLOSED;
   conn->connected = 0;
-  if (active_conn == conn)
-    active_conn = 0;
+  for (int i = 0; i < MAX_TCP_CONNS; i++) {
+    if (active_conns[i] == conn) active_conns[i] = 0;
+  }
   print_serial("TCP: Connection closed\n");
 }
 
@@ -328,19 +341,19 @@ void tcp_close(tcp_conn_t *conn) {
 void tcp_receive(uint32_t src_ip, const uint8_t *data, uint16_t len) {
   if (len < sizeof(tcp_header_t))
     return;
-  if (!active_conn)
-    return;
-
   const tcp_header_t *tcp = (const tcp_header_t *)data;
-  tcp_conn_t *conn = active_conn;
-
-  // Check if this segment is for our active connection
-  if (src_ip != conn->remote_ip || ntohs(tcp->src_port) != conn->remote_port ||
-      ntohs(tcp->dest_port) != conn->local_port) {
-    // Optional: print details for skipped packets to debug
-    // if (ntohs(tcp->dest_port) == conn->local_port) { ... }
-    return;
+  tcp_conn_t *conn = 0;
+  for (int i = 0; i < MAX_TCP_CONNS; i++) {
+    if (active_conns[i] && 
+        active_conns[i]->remote_ip == src_ip && 
+        active_conns[i]->remote_port == ntohs(tcp->src_port) &&
+        active_conns[i]->local_port == ntohs(tcp->dest_port)) {
+      conn = active_conns[i];
+      break;
+    }
   }
+  
+  if (!conn) return;
 
   int data_offset = (tcp->data_offset >> 4) * 4;
   const uint8_t *payload = data + data_offset;

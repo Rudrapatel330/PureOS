@@ -19,6 +19,15 @@
 #define USB_DESC_STRING 0x03
 #define USB_DESC_INTERFACE 0x04
 #define USB_DESC_ENDPOINT 0x05
+#define USB_DESC_INTERFACE_ASSOCIATION 0x0B
+
+// UVC Specific Descriptor Types
+#define UVC_CS_UNDEFINED 0x20
+#define UVC_CS_DEVICE 0x21
+#define UVC_CS_CONFIGURATION 0x22
+#define UVC_CS_STRING 0x23
+#define UVC_CS_INTERFACE 0x24
+#define UVC_CS_ENDPOINT 0x25
 
 // Device Descriptor
 typedef struct {
@@ -37,6 +46,41 @@ typedef struct {
   uint8_t serial_str_idx;
   uint8_t num_configurations;
 } __attribute__((packed)) usb_device_desc_t;
+
+// Configuration Descriptor
+typedef struct {
+  uint8_t length;
+  uint8_t type;
+  uint16_t total_length;
+  uint8_t num_interfaces;
+  uint8_t configuration_value;
+  uint8_t configuration_str_idx;
+  uint8_t attributes;
+  uint8_t max_power;
+} __attribute__((packed)) usb_config_desc_t;
+
+// Interface Descriptor
+typedef struct {
+  uint8_t length;
+  uint8_t type;
+  uint8_t interface_number;
+  uint8_t alternate_setting;
+  uint8_t num_endpoints;
+  uint8_t interface_class;
+  uint8_t interface_subclass;
+  uint8_t interface_protocol;
+  uint8_t interface_str_idx;
+} __attribute__((packed)) usb_interface_desc_t;
+
+// Endpoint Descriptor
+typedef struct {
+  uint8_t length;
+  uint8_t type;
+  uint8_t endpoint_address;
+  uint8_t attributes;
+  uint16_t max_packet_size;
+  uint8_t interval;
+} __attribute__((packed)) usb_endpoint_desc_t;
 
 // Setup Packet (8 bytes)
 typedef struct {
@@ -59,6 +103,9 @@ typedef struct usb_hcd {
   int (*start_interrupt_in)(struct usb_device *dev, uint8_t endpoint,
                             void *buffer, uint16_t length,
                             void (*callback)(uint8_t *data, int len));
+  int (*start_isochronous_in)(struct usb_device *dev, uint8_t endpoint,
+                             void *buffer, uint16_t length,
+                             void (*callback)(uint8_t *data, int len));
   void (*poll)(struct usb_hcd *hcd);
   void (*reset_port)(struct usb_hcd *hcd, uint8_t port);
 } usb_hcd_t;
@@ -70,6 +117,8 @@ typedef struct usb_device {
   uint32_t speed;
   usb_hcd_t *hcd;
   usb_device_desc_t descriptor;
+  usb_config_desc_t *config;
+  void *driver_data;
 } usb_device_t;
 
 void usb_init();

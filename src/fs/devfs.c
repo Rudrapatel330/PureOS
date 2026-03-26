@@ -2,11 +2,11 @@
 #include "../kernel/heap.h"
 #include "../kernel/random.h"
 #include "../kernel/string.h"
-
+#include "../drivers/camera.h"
 
 static vfs_driver_t devfs_driver;
 static vfs_node_t *devfs_root = 0;
-static vfs_node_t *devfs_nodes[3]; // null, zero, random
+static vfs_node_t *devfs_nodes[4]; // null, zero, random, video0
 
 static int devfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
                       uint8_t *buffer) {
@@ -20,6 +20,21 @@ static int devfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
   } else if (strcmp(node->name, "random") == 0) {
     get_entropy(buffer, size);
     return size;
+  } else if (strcmp(node->name, "video0") == 0) {
+    camera_ctx_t *ctx = camera_get_ctx();
+    if (!ctx || !ctx->is_active) return -1;
+    
+    uint32_t frame_size = ctx->width * ctx->height * 4;
+    // For video devices, we often treat reads as frame-based or linear.
+    // If offset is greater than frame size, wrap or return EOF.
+    // Here we treat it as a linear "file" of one frame.
+    if (offset >= frame_size) return 0;
+    
+    uint32_t to_read = size;
+    if (offset + to_read > frame_size) to_read = frame_size - offset;
+    
+    memcpy(buffer, ((uint8_t *)ctx->frame_buffer) + offset, to_read);
+    return to_read;
   }
   return -1;
 }
@@ -42,7 +57,7 @@ static int devfs_write(vfs_node_t *node, uint32_t offset, uint32_t size,
 
 static vfs_node_t *devfs_readdir(vfs_node_t *node, uint32_t index) {
   (void)node; // root
-  if (index < 3) {
+  if (index < 4) {
     return devfs_nodes[index];
   }
   return 0;
@@ -50,7 +65,7 @@ static vfs_node_t *devfs_readdir(vfs_node_t *node, uint32_t index) {
 
 static vfs_node_t *devfs_finddir(vfs_node_t *node, char *name) {
   (void)node;
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 4; i++) {
     if (strcmp(devfs_nodes[i]->name, name) == 0) {
       vfs_node_t *ret = kmalloc(sizeof(vfs_node_t));
       memcpy(ret, devfs_nodes[i], sizeof(vfs_node_t));
@@ -91,6 +106,7 @@ void devfs_init(void) {
   devfs_nodes[0] = create_dev_node("null");
   devfs_nodes[1] = create_dev_node("zero");
   devfs_nodes[2] = create_dev_node("random");
+  devfs_nodes[3] = create_dev_node("video0");
 
   // Mount at /dev
   vfs_mount("/dev", devfs_root);

@@ -145,17 +145,18 @@ void recorder_update(void *w) {
     recorder_app_t *s = get_state(win);
 
     if (s->state == STATE_RECORDING) {
-        uint32_t max_to_read = RECORDER_BUFFER_SIZE - s->current_size;
-        if (max_to_read > 0) {
-            int r = ac97_read_capture(s->buffer + s->current_size, max_to_read);
-            if (r > 0) {
-                s->current_size += r;
+        while (1) {
+            uint32_t max_to_read = RECORDER_BUFFER_SIZE - s->current_size;
+            if (max_to_read == 0) {
+                // Buffer full
+                ac97_stop_capture();
+                s->state = STATE_IDLE;
                 win->needs_redraw = 1;
+                break;
             }
-        } else {
-            // Buffer full
-            ac97_stop_capture();
-            s->state = STATE_IDLE;
+            int r = ac97_read_capture(s->buffer + s->current_size, max_to_read);
+            if (r <= 0) break;
+            s->current_size += r;
             win->needs_redraw = 1;
         }
     } else if (s->state == STATE_PLAYING) {

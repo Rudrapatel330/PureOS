@@ -304,7 +304,8 @@ typedef enum {
   APP_PDFREADER = 10,
   APP_CAMERA = 11,
   APP_PHOTOS = 12,
-  APP_MAIL = 13
+  APP_MAIL = 13,
+  APP_RECORDER = 14
 } app_type_t;
 
 icon_t icons[MAX_ICONS];
@@ -354,6 +355,7 @@ void desktop_init() {
   desktop_add_icon(120, 330, "Photos", APP_PHOTOS, 0xE91E63);
   desktop_add_icon(120, 405, "Mail", APP_MAIL, 0x00AADD);
   desktop_add_icon(120, 480, "Camera", APP_CAMERA, 0x444444);
+  desktop_add_icon(210, 30, "Recorder", APP_RECORDER, 0xFF4400);
 
   // Initial draw to populate valid cache
   desktop_draw();
@@ -568,6 +570,20 @@ void draw_icon(int x, int y, int type, uint32_t *target) {
     draw_rect_f(x + 22, y + 15, 2, 2, 0xFFFFFFFF, target);   // Reflection
     // Flash
     draw_rect_f(x + 7, y + 12, 4, 3, 0xFF666666, target);
+    break;
+  case APP_RECORDER:
+    // Modern Microphone Icon
+    draw_rect_f(x + 10, y + 5, 20, 25, 0xFF333333, target); // Mic body
+    draw_rect_f(x + 12, y + 7, 16, 21, 0xFF555555, target); // Grill
+    // Grill lines
+    for (int i = 0; i < 5; i++) {
+        draw_rect_f(x + 14, y + 10 + i * 4, 12, 1, 0xFF111111, target);
+    }
+    // Stand
+    draw_rect_f(x + 18, y + 30, 4, 6, 0xFF888888, target);
+    draw_rect_f(x + 12, y + 36, 16, 2, 0xFF999999, target);
+    // Red indicator dot
+    draw_rect_f(x + 28, y + 8, 4, 4, 0xFFFF0000, target);
     break;
   } // end switch
 } // end draw_icon
