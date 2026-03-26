@@ -170,6 +170,28 @@ PureOS ships with **15+ native desktop applications**, all built directly into t
 | 📄 **PDF Reader** | Full-featured PDF viewer powered by a native port of the **MuPDF** library — renders real PDF documents with fonts, images, and vector graphics |
 | 🎙️ **Voice Recorder** | Audio recording app with AC97 PCM capture, real-time waveform visualization, and high-fidelity playback through the restored AC97 DMA engine |
 
+#### 🎙️ Voice Recorder Architecture
+The recorder interacts directly with the AC97 hardware through a high-performance DMA-backed capture system:
+
+```mermaid
+graph LR
+    MIC((🎤 Mic)) -->|Analog| CODEC[AC97 Codec]
+    CODEC -->|PCM Audio| DMA_IN[DMA PCM-In]
+    DMA_IN -->|Interrupt| KRN[Kernel Driver]
+    KRN -->|Copy| BUF[2MB App Buffer]
+    
+    BUF -->|Visualization| WAVE[UI Waveform]
+    
+    BUF -->|Playback Request| DMA_OUT[DMA PCM-Out]
+    DMA_OUT -->|Samples| CODEC
+    CODEC -->|Analog| SPK((🔊 Speaker))
+
+    style MIC fill:#e63946,color:#fff
+    style SPK fill:#1d3557,color:#fff
+    style BUF fill:#a8dadc,color:#000
+    style CODEC fill:#457b9d,color:#fff
+```
+
 ### Internet & Communication
 | App | Description |
 |---|---|
