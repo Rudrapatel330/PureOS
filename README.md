@@ -168,6 +168,7 @@ PureOS ships with **15+ native desktop applications**, all built directly into t
 | 🖼️ **Photos** | Image viewer supporting BMP and PNG formats with zoom and navigation |
 | 🎬 **Video Player** | Embedded MPEG video playback with frame decoding and audio sync |
 | 📄 **PDF Reader** | Full-featured PDF viewer powered by a native port of the **MuPDF** library — renders real PDF documents with fonts, images, and vector graphics |
+| 🎙️ **Voice Recorder** | Audio recording app with AC97 PCM capture, real-time waveform visualization, duration/size tracking, and instant playback through the AC97 DMA engine |
 
 ### Internet & Communication
 | App | Description |
@@ -366,7 +367,7 @@ graph TB
 | **Input** | PS/2 Keyboard (scancode translation, shift/caps), PS/2 Mouse (movement + buttons) |
 | **Storage** | ATA PIO, AHCI (SATA) |
 | **Network** | AMD PCnet-PCI II, NE2000 (Realtek 8029) |
-| **Audio** | Ensoniq ES1370 (AudioPCI), WAV file decoder and playback |
+| **Audio** | Intel AC97 codec (recording & playback via DMA), Ensoniq ES1370 (AudioPCI), WAV file decoder and playback |
 | **USB** | UHCI host controller, USB device enumeration |
 | **System** | PCI bus enumeration, PIT timer, RTC real-time clock, PC speaker, ACPI, APIC, SMP multi-core |
 
