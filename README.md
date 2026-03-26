@@ -168,7 +168,7 @@ PureOS ships with **15+ native desktop applications**, all built directly into t
 | 🖼️ **Photos** | Image viewer supporting BMP and PNG formats with zoom and navigation |
 | 🎬 **Video Player** | Embedded MPEG video playback with frame decoding and audio sync |
 | 📄 **PDF Reader** | Full-featured PDF viewer powered by a native port of the **MuPDF** library — renders real PDF documents with fonts, images, and vector graphics |
-| 🎙️ **Voice Recorder** | Audio recording app with AC97 PCM capture, real-time waveform visualization, duration/size tracking, and instant playback through the AC97 DMA engine |
+| 🎙️ **Voice Recorder** | Audio recording app with AC97 PCM capture, real-time waveform visualization, and high-fidelity playback through the restored AC97 DMA engine |
 
 ### Internet & Communication
 | App | Description |
@@ -176,6 +176,7 @@ PureOS ships with **15+ native desktop applications**, all built directly into t
 | 🌐 **Web Browser** | Built-in web browser with custom HTML/DOM parser, CSS engine, JavaScript interpreter, and layout renderer — connects over raw TCP sockets |
 | 📧 **Mail Client** | Full SMTP email client that can send real emails through Gmail — see [Email Setup Guide](#-email-setup-guide) below |
 | 🐦 **PureChat** | Real-time bidirectional chat client with newline-delimited JSON protocol and kernel-level network polling |
+| 📞 **Phone** | Real-time voice calling app with 48kHz bidirectional streaming, 170ms audio chunking, and jitter-buffered playback |
 
 ---
 
@@ -239,7 +240,7 @@ graph TB
 | **IPv4** | Full IP packet routing, header checksum, fragmentation support |
 | **DHCP** | Automatic IP address, subnet, gateway and DNS configuration |
 | **UDP** | Connectionless datagram transport for DNS and DHCP |
-| **TCP** | Full implementation: 3-way handshake, sequence tracking, ACK management, retransmission, connection teardown |
+| **TCP** | Upgraded implementation: Support for **4 concurrent connections**, 3-way handshake, sequence tracking, ACK management, retransmission, and non-blocking draining |
 | **DNS** | Domain name resolution with query building and response parsing |
 | **HTTP 1.1** | GET/POST requests, header parsing, chunked transfer decoding |
 | **TLS 1.2** | Secure encrypted connections via an integrated **BearSSL** library port (RSA, AES, SHA-256, X.509 certificates) |
