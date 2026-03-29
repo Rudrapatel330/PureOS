@@ -5,6 +5,9 @@
 #include "../net/net.h"
 #include "../drivers/ac97.h"
 
+extern void print_serial(const char *str);
+extern void k_itoa(int n, char *s);
+
 static const char b64table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static int b64_encode(const uint8_t *src, int len, char *dst) {
@@ -40,14 +43,19 @@ static int b64_rev(char c) {
 static int b64_decode(const char *src, int len, uint8_t *dst) {
     int i = 0, j = 0;
     while (i < len) {
-        if (src[i] == '=') break;
-        uint32_t a = b64_rev(src[i++]);
-        uint32_t b = i < len && src[i] != '=' ? b64_rev(src[i++]) : 0;
-        uint32_t c = i < len && src[i] != '=' ? b64_rev(src[i++]) : 0;
-        uint32_t d = i < len && src[i] != '=' ? b64_rev(src[i++]) : 0;
-        dst[j++] = (a << 2) | (b >> 4);
-        if (i <= len && src[i - 2] != '=') dst[j++] = (b << 4) | (c >> 2);
-        if (i <= len && src[i - 1] != '=') dst[j++] = (c << 6) | d;
+        uint32_t a = (i < len && src[i] != '=') ? b64_rev(src[i++]) : 0;
+        uint32_t b = (i < len && src[i] != '=') ? b64_rev(src[i++]) : 0;
+        uint32_t c = (i < len && src[i] != '=') ? b64_rev(src[i++]) : 0;
+        uint32_t d = (i < len && src[i] != '=') ? b64_rev(src[i++]) : 0;
+
+        if (i > 0) {
+            dst[j++] = (a << 2) | (b >> 4);
+            if (i >= 3 && src[i-2] != '=') dst[j++] = (b << 4) | (c >> 2);
+            if (i >= 4 && src[i-1] != '=') dst[j++] = (c << 6) | d;
+        }
+        
+        // If we hit padding, skip to next 4-char block
+        while (i < len && src[i] == '=') i++;
     }
     return j;
 }
@@ -84,17 +92,22 @@ typedef struct {
     uint32_t server_ip;
     call_state_t state;
     
-    uint8_t mic_buf[1024];
-    uint8_t mono_buf[8192];
-    uint8_t rx_json_buf[32768];
+    // Networking & Parsing (Lazy memmove support)
+    uint8_t rx_json_buf[65536]; 
     int rx_json_len;
+    int rx_json_idx;
     
-    // RX audio buffers moved off stack to prevent overflow
-    uint8_t rx_pcm_mono[16384];
+    // Audio Buffers
+    uint8_t mic_buf[1024];
+    uint8_t mono_buf[8192]; 
     int16_t rx_stereo_buf[16384];
-    
-    uint8_t mic_accum[16384]; // ~170ms stereo audio chunk
+    uint8_t mic_accum[8192];
     int mic_accum_len;
+    
+    // Pre-allocated scratchpads
+    char b64_send_buf[12000]; 
+    char packet_send_buf[16384];
+    uint8_t pcm_decode_buf[16384];
 } phone_state_t;
 
 static phone_state_t* get_state(window_t* win) {
@@ -149,45 +162,45 @@ static void phone_draw(window_t *win) {
     }
 }
 
-static void phone_process_packet(window_t *win, const char *buf) {
-    phone_state_t *s = get_state(win);
+static void phone_process_packet(window_t* win, const char* json) {
+    phone_state_t* s = get_state(win);
     
-    if (strstr(buf, "\"type\":\"call_request\"")) {
+    if (strstr(json, "\"type\":\"call_request\"")) {
         char from[32];
-        get_json_val(buf, "from", from, 32);
+        get_json_val(json, "from", from, 32);
         if (s->state == CALL_STATE_IDLE) {
             strcpy(s->target_username, from);
             s->state = CALL_STATE_RINGING;
         }
-    } else if (strstr(buf, "\"type\":\"call_accept\"")) {
+    } else if (strstr(json, "\"type\":\"call_accept\"")) {
         if (s->state == CALL_STATE_CALLING) {
             s->state = CALL_STATE_INCALL;
             ac97_start_capture(NULL, 0);
         }
-    } else if (strstr(buf, "\"type\":\"call_reject\"") || strstr(buf, "\"type\":\"call_end\"")) {
+    } else if (strstr(json, "\"type\":\"call_reject\"") || strstr(json, "\"type\":\"call_end\"")) {
         s->state = CALL_STATE_IDLE;
         ac97_stop_capture();
         ac97_stop_playback();
-    } else if (strstr(buf, "\"type\":\"audio\"")) {
+    } else if (strstr(json, "\"type\":\"audio\"")) {
         if (s->state == CALL_STATE_INCALL) {
-            char *d = strstr((char*)buf, "\"data\":\"");
-            if (d) {
-                d += 8;
-                char *end = strchr(d, '"');
+            const char *data = strstr(json, "\"data\":\"");
+            if (data) {
+                data += 8;
+                char *end = strchr(data, '"');
                 if (end) {
                     *end = 0;
-                    int plen = b64_decode(d, end - d, s->rx_pcm_mono);
+                    int plen = b64_decode(data, strlen(data), s->pcm_decode_buf);
+                    *end = '"';
+                    
                     if (plen > 0) {
-                        // Upmix mono to stereo for AC97
-                        int16_t *mono = (int16_t *)s->rx_pcm_mono;
+                        int16_t *mono = (int16_t *)s->pcm_decode_buf;
                         int mono_samples = plen / 2;
-                        
-                        // Prevent overflow
-                        if (mono_samples > 16384) mono_samples = 16384;
-                        
+                        if (mono_samples > 8192) mono_samples = 8192;
+
                         for (int i = 0; i < mono_samples; i++) {
-                            s->rx_stereo_buf[i * 2] = mono[i];     // Left
-                            s->rx_stereo_buf[i * 2 + 1] = mono[i]; // Right
+                            int16_t sample = mono[i];
+                            s->rx_stereo_buf[i * 2] = sample;
+                            s->rx_stereo_buf[i * 2 + 1] = sample;
                         }
                         ac97_stream_pcm((uint8_t*)s->rx_stereo_buf, mono_samples * 4, 48000, 16, 2);
                     }
@@ -207,96 +220,103 @@ void phone_update(void *w) {
         if (tcp_connect(&s->conn, s->server_ip, 7860) == 0) {
             s->connected = 1;
             char auth[128];
-            strcpy(auth, "{\"type\":\"auth\",\"username\":\"PureOS_User\"} \n");
+            strcpy(auth, "{\"type\":\"auth\",\"username\":\"PureOS_Phone\"} \n");
             tcp_send(&s->conn, auth, strlen(auth));
+            s->rx_json_idx = 0;
+            s->rx_json_len = 0;
         }
         s->connecting = 0;
         win->needs_redraw = 1;
     }
 
     if (s->connected) {
-        char buf[512];
-        while (s->conn.rx_ready) {
-            int n = tcp_recv(&s->conn, buf, 511);
-            if (n == 0) break; // No more data available right now
+        extern int pcnet_poll(uint8_t *buf, uint16_t *len_out);
+        extern void net_receive(const uint8_t *packet, uint16_t len);
+        
+        int work_done = 0;
+        int max_work = 24; 
+        
+        while (work_done < max_work) {
+            int activity = 0;
             
-            if (n > 0) {
-                buf[n] = 0;
-                if (s->rx_json_len + n < sizeof(s->rx_json_buf)) {
-                    memcpy(s->rx_json_buf + s->rx_json_len, buf, n);
+            // 1. Poll NIC (Priority) - 4 polls to keep up with audio packets
+            for (int p = 0; p < 4; p++) {
+                static uint8_t phone_poll_buf[1600];
+                uint16_t plen;
+                if (pcnet_poll(phone_poll_buf, &plen)) {
+                    net_receive(phone_poll_buf, plen);
+                    activity = 1;
+                }
+            }
+            
+            // 2. Drain TCP with safety margin
+            if (s->conn.rx_ready && s->rx_json_len < (int)sizeof(s->rx_json_buf) - 2048) {
+                int n = tcp_recv(&s->conn, s->rx_json_buf + s->rx_json_len, 
+                                 sizeof(s->rx_json_buf) - s->rx_json_len - 1);
+                if (n > 0) {
                     s->rx_json_len += n;
                     s->rx_json_buf[s->rx_json_len] = 0;
-                    
-                    char *lines = (char*)s->rx_json_buf;
-                    char *nl;
-                    while ((nl = strchr(lines, '\n')) != 0) {
-                        *nl = 0;
-                        phone_process_packet(win, lines);
-                        lines = nl + 1;
-                    }
-                    
-                    int remain = s->rx_json_len - (lines - (char*)s->rx_json_buf);
-                    if (remain > 0) {
-                        memmove(s->rx_json_buf, lines, remain);
-                        s->rx_json_len = remain;
-                    } else {
-                        s->rx_json_len = 0;
-                    }
-                } else {
-                    // Buffer full without newline? Discard to prevent deadlock
-                    s->rx_json_len = 0;
+                    activity = 1;
+                } else if (n < 0) {
+                    s->connected = 0;
+                    return;
                 }
-            } else if (n < 0) {
-                s->connected = 0;
-                s->state = CALL_STATE_IDLE;
-                ac97_stop_capture();
-                ac97_stop_playback();
-                win->needs_redraw = 1;
-                break;
             }
-        }
-    }
-
-    if (s->state == CALL_STATE_INCALL && s->connected) {
-        while (1) {
-            int r = ac97_read_capture(s->mic_buf, 1024);
-            if (r <= 0) break;
             
-            // Append to accumulator
-            int to_copy = r;
-            if (s->mic_accum_len + to_copy > sizeof(s->mic_accum)) {
-                to_copy = sizeof(s->mic_accum) - s->mic_accum_len;
-            }
-            memcpy(s->mic_accum + s->mic_accum_len, s->mic_buf, to_copy);
-            s->mic_accum_len += to_copy;
-            
-            // Send when accumulated chunk is full
-            if (s->mic_accum_len == sizeof(s->mic_accum)) {
-                // Downsample accumulated stereo to mono
-                int16_t *stereo = (int16_t *)s->mic_accum;
-                int16_t *mono = (int16_t *)s->mono_buf;
-                int stereo_samples = sizeof(s->mic_accum) / 4;
-                for (int i = 0; i < stereo_samples; i++) {
-                    mono[i] = (stereo[i * 2] / 2) + (stereo[i * 2 + 1] / 2);
+            // 3. Process ALL available JSON packets (drain before mic work)
+            for (int pkt = 0; pkt < 8; pkt++) {
+                char *lines = (char*)s->rx_json_buf + s->rx_json_idx;
+                char *nl = strchr(lines, '\n');
+                if (!nl) break;
+                *nl = 0;
+                phone_process_packet(win, lines);
+                s->rx_json_idx = (nl + 1) - (char*)s->rx_json_buf;
+                activity = 1;
+                
+                // Pack only when needed (Lazy compaction)
+                if (s->rx_json_idx > 32768) {
+                    int remain = s->rx_json_len - s->rx_json_idx;
+                    if (remain > 0) memmove(s->rx_json_buf, s->rx_json_buf + s->rx_json_idx, remain);
+                    s->rx_json_len = remain;
+                    s->rx_json_idx = 0;
+                    s->rx_json_buf[s->rx_json_len] = 0;
                 }
-                int mono_bytes = stereo_samples * 2;
-                
-                char b64[16384]; // large enough for base64 of 8KB
-                b64_encode(s->mono_buf, mono_bytes, b64);
-                
-                // Construct JSON packet
-                char packet[18000]; // large enough for JSON + 11KB base64
-                strcpy(packet, "{\"type\":\"audio\",\"from\":\"PureOS_User\",\"to\":\"");
-                strcat(packet, s->target_username);
-                strcat(packet, "\",\"data\":\"");
-                strcat(packet, b64);
-                strcat(packet, "\"} \n");
-                
-                tcp_send(&s->conn, packet, strlen(packet));
-                
-                // Reset accumulator
-                s->mic_accum_len = 0;
             }
+            if (s->rx_json_len - s->rx_json_idx > 32768) {
+                // Gap recovery: discard 16KB if stuck
+                s->rx_json_idx += 16384; 
+                activity = 1;
+            }
+            
+            // 4. Send exactly ONE mic chunk
+            if (s->state == CALL_STATE_INCALL) {
+                int r_mic = ac97_read_capture(s->mic_buf, 1024);
+                if (r_mic > 0) {
+                    activity = 1;
+                    int16_t *samples = (int16_t *)s->mic_buf;
+                    int stereo_frames = r_mic / 4; // each frame = 2 samples (L+R) = 4 bytes
+                    for (int i = 0; i < stereo_frames; i++) {
+                        // Extract left channel only from stereo pairs
+                        int16_t sample = samples[i * 2];
+                        s->mic_accum[s->mic_accum_len++] = (uint8_t)(sample & 0xFF);
+                        s->mic_accum[s->mic_accum_len++] = (uint8_t)((sample >> 8) & 0xFF);
+                        
+                        if (s->mic_accum_len >= 2048) {
+                            b64_encode(s->mic_accum, s->mic_accum_len, s->b64_send_buf);
+                            strcpy(s->packet_send_buf, "{\"type\":\"audio\",\"to\":\"");
+                            strcat(s->packet_send_buf, s->target_username);
+                            strcat(s->packet_send_buf, "\",\"data\":\"");
+                            strcat(s->packet_send_buf, s->b64_send_buf);
+                            strcat(s->packet_send_buf, "\"} \n");
+                            tcp_send(&s->conn, s->packet_send_buf, strlen(s->packet_send_buf));
+                            s->mic_accum_len = 0;
+                        }
+                    }
+                }
+            }
+            
+            if (!activity) break;
+            work_done++;
         }
     }
 }
@@ -333,7 +353,7 @@ static void phone_on_mouse(void *w, int x, int y, int buttons) {
     if (s->state == CALL_STATE_IDLE) {
         if (x >= cx - 40 && x <= cx + 40 && y >= cy + 10 && y <= cy + 50) {
             char packet[128];
-            strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_User\",\"to\":\"");
+            strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
             strcat(packet, s->target_username);
             strcat(packet, "\"} \n");
             tcp_send(&s->conn, packet, strlen(packet));
@@ -343,7 +363,7 @@ static void phone_on_mouse(void *w, int x, int y, int buttons) {
     } else if (s->state == CALL_STATE_CALLING || s->state == CALL_STATE_INCALL) {
         if (x >= cx - 40 && x <= cx + 40 && y >= cy + 20 && y <= cy + 60) {
             char packet[128];
-            strcpy(packet, "{\"type\":\"call_end\",\"from\":\"PureOS_User\",\"to\":\"");
+            strcpy(packet, "{\"type\":\"call_end\",\"from\":\"PureOS_Phone\",\"to\":\"");
             strcat(packet, s->target_username);
             strcat(packet, "\"} \n");
             tcp_send(&s->conn, packet, strlen(packet));
@@ -355,7 +375,7 @@ static void phone_on_mouse(void *w, int x, int y, int buttons) {
     } else if (s->state == CALL_STATE_RINGING) {
         if (x >= cx - 90 && x <= cx - 10 && y >= cy + 20 && y <= cy + 60) {
             char packet[128];
-            strcpy(packet, "{\"type\":\"call_accept\",\"from\":\"PureOS_User\",\"to\":\"");
+            strcpy(packet, "{\"type\":\"call_accept\",\"from\":\"PureOS_Phone\",\"to\":\"");
             strcat(packet, s->target_username);
             strcat(packet, "\"} \n");
             tcp_send(&s->conn, packet, strlen(packet));
@@ -365,7 +385,7 @@ static void phone_on_mouse(void *w, int x, int y, int buttons) {
         }
         else if (x >= cx + 10 && x <= cx + 90 && y >= cy + 20 && y <= cy + 60) {
             char packet[128];
-            strcpy(packet, "{\"type\":\"call_reject\",\"from\":\"PureOS_User\",\"to\":\"");
+            strcpy(packet, "{\"type\":\"call_reject\",\"from\":\"PureOS_Phone\",\"to\":\"");
             strcat(packet, s->target_username);
             strcat(packet, "\"} \n");
             tcp_send(&s->conn, packet, strlen(packet));
@@ -389,6 +409,7 @@ void phone_on_close(void *w) {
     }
     phone_win = 0;
     kfree(s);
+    win->user_data = 0;
 }
 
 void phone_init(void) {

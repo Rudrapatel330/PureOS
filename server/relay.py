@@ -132,7 +132,10 @@ async def handle_index(request):
     
     // Web Audio specific
     let audioCtx = null;
-    let pcmNode = null;
+    let micStream = null;
+    let micSource = null;
+    let micWorklet = null;
+    let micFallback = null;
     let isCalling = false;
 
     w.onopen=()=>{ 
@@ -166,7 +169,7 @@ async def handle_index(request):
     function s(){ 
         const t=i.value.trim(); 
         if(!t)return; 
-        w.send(JSON.stringify({type:"chat",from:"Android_User",to:"PureOS_User",message:t})); 
+        w.send(JSON.stringify({type:"chat",from:"Android_User",to:"PureOS_Phone",message:t})); 
         i.value=""; 
         a("Me", t, "self");
     }
@@ -180,6 +183,21 @@ async def handle_index(request):
     }
 
     function jp(s){ try { return JSON.parse(s); } catch(e){ return null; } }
+
+    // Helper: convert Float32 PCM to base64-encoded Int16 PCM
+    function floatToPcm16Base64(floatData) {
+        const pcm16 = new Int16Array(floatData.length);
+        for (let j = 0; j < floatData.length; j++) {
+            let s = Math.max(-1, Math.min(1, floatData[j]));
+            pcm16[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        const u8 = new Uint8Array(pcm16.buffer);
+        let binary = '';
+        for (let j = 0; j < u8.byteLength; j++) {
+            binary += String.fromCharCode(u8[j]);
+        }
+        return btoa(binary);
+    }
 
     // Audio Calling Logic
     function setupCallUI() {
@@ -198,18 +216,18 @@ async def handle_index(request):
 
     function startCall() {
         a("System", "Calling...", "self");
-        w.send(JSON.stringify({type:"call_request", to:"PureOS_User"}));
+        w.send(JSON.stringify({type:"call_request", to:"PureOS_Phone"}));
         document.getElementById("callBtn").innerText = "Calling...";
     }
 
     function acceptCall() {
-        w.send(JSON.stringify({type:"call_accept", to:"PureOS_User"}));
+        w.send(JSON.stringify({type:"call_accept", to:"PureOS_Phone"}));
         setupCallUI();
         startAudioCapture();
     }
 
     function endCall() {
-        w.send(JSON.stringify({type:"call_end", to:"PureOS_User"}));
+        w.send(JSON.stringify({type:"call_end", to:"PureOS_Phone"}));
         resetCallUI();
         stopAudioCapture();
     }
@@ -219,33 +237,76 @@ async def handle_index(request):
         if(audioCtx.state === 'suspended') await audioCtx.resume();
 
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
-            const source = audioCtx.createMediaStreamSource(stream);
-            
-            pcmNode = audioCtx.createScriptProcessor(8192, 1, 1);
-            pcmNode.onaudioprocess = function(e) {
-                if (!isCalling) return;
-                const inputData = e.inputBuffer.getChannelData(0);
-                const pcm16 = new Int16Array(inputData.length);
-                for (let i = 0; i < inputData.length; i++) {
-                    let s = Math.max(-1, Math.min(1, inputData[i]));
-                    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            micStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                },
+                video: false
+            });
+            micSource = audioCtx.createMediaStreamSource(micStream);
+
+            // Try AudioWorklet first (runs on dedicated audio thread — no main-thread glitches)
+            let useWorklet = false;
+            if (audioCtx.audioWorklet) {
+                try {
+                    const workletCode = `
+                        class MicProcessor extends AudioWorkletProcessor {
+                            constructor() { super(); this._buf = []; }
+                            process(inputs) {
+                                const ch = inputs[0] && inputs[0][0];
+                                if (!ch) return true;
+                                for (let i = 0; i < ch.length; i++) this._buf.push(ch[i]);
+                                while (this._buf.length >= 1024) {
+                                    this.port.postMessage(new Float32Array(this._buf.splice(0, 1024)));
+                                }
+                                return true;
+                            }
+                        }
+                        registerProcessor('mic-processor', MicProcessor);
+                    `;
+                    const blob = new Blob([workletCode], {type: 'application/javascript'});
+                    const url = URL.createObjectURL(blob);
+                    await audioCtx.audioWorklet.addModule(url);
+                    URL.revokeObjectURL(url);
+
+                    micWorklet = new AudioWorkletNode(audioCtx, 'mic-processor');
+                    micWorklet.port.onmessage = (ev) => {
+                        if (!isCalling) return;
+                        w.send(JSON.stringify({
+                            type: "audio", to: "PureOS_Phone",
+                            data: floatToPcm16Base64(ev.data)
+                        }));
+                    };
+                    micSource.connect(micWorklet);
+                    // Do NOT connect to destination — that would echo mic back to speakers
+                    useWorklet = true;
+                    console.log("Mic: using AudioWorklet (1024 samples)");
+                } catch(we) {
+                    console.warn("AudioWorklet failed, falling back:", we);
                 }
-                const u8 = new Uint8Array(pcm16.buffer);
-                let binary = '';
-                for (let i = 0; i < u8.byteLength; i++) {
-                    binary += String.fromCharCode(u8[i]);
-                }
-                w.send(JSON.stringify({
-                    type: "audio",
-                    to: "PureOS_User",
-                    data: btoa(binary)
-                }));
-            };
-            source.connect(pcmNode);
-            pcmNode.connect(audioCtx.destination);
-            // Save stream to stop later
-            pcmNode.stream = stream;
+            }
+
+            // Fallback: ScriptProcessor with 1024 buffer
+            if (!useWorklet) {
+                micFallback = audioCtx.createScriptProcessor(1024, 1, 1);
+                micFallback.onaudioprocess = function(e) {
+                    if (!isCalling) return;
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    w.send(JSON.stringify({
+                        type: "audio", to: "PureOS_Phone",
+                        data: floatToPcm16Base64(inputData)
+                    }));
+                };
+                micSource.connect(micFallback);
+                // ScriptProcessor needs a destination to fire, but use silent gain to prevent echo
+                const silentGain = audioCtx.createGain();
+                silentGain.gain.value = 0;
+                micFallback.connect(silentGain);
+                silentGain.connect(audioCtx.destination);
+                console.log("Mic: using ScriptProcessor fallback (1024 samples)");
+            }
         } catch(err) {
             console.error("Mic error:", err);
             a("System", "Microphone access denied", "other");
@@ -254,11 +315,10 @@ async def handle_index(request):
     }
 
     function stopAudioCapture() {
-        if(pcmNode) {
-            pcmNode.disconnect();
-            if(pcmNode.stream) pcmNode.stream.getTracks().forEach(t => t.stop());
-            pcmNode = null;
-        }
+        if(micWorklet) { micWorklet.disconnect(); micWorklet = null; }
+        if(micFallback) { micFallback.disconnect(); micFallback = null; }
+        if(micSource) { micSource.disconnect(); micSource = null; }
+        if(micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
         nextPlayTime = 0;
     }
 
@@ -284,10 +344,11 @@ async def handle_index(request):
             source.buffer = audioBuffer;
             source.connect(audioCtx.destination);
 
-            // Schedule chunks sequentially with a small jitter buffer
             const now = audioCtx.currentTime;
-            // Add a 150ms buffer to absorb network jitter
+            // Tighter jitter buffer: 150ms reset gap
             if (nextPlayTime < now) nextPlayTime = now + 0.15;
+            // Max-drift guard: don't schedule more than 500ms ahead
+            if (nextPlayTime > now + 0.5) nextPlayTime = now + 0.15;
             source.start(nextPlayTime);
             nextPlayTime += audioBuffer.duration;
         } catch(e) {}
