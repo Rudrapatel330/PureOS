@@ -493,6 +493,37 @@ graph TD
 - **TCP Bridge** — Bridging raw TCP sockets (Port 7860) from PureOS to modern WebSockets (Port 7861/7862).
 - **Premium Dashboard** — Modern, responsive web interface with a custom 'KABUTAR' splash screen and glassmorphic UI.
 
+### 📞 Voice Calling & Acoustic Echo Cancellation (AEC)
+
+PureOS features a highly optimized, full-duplex voice calling pipeline that bridges the OS natively to a web browser. To deliver a seamless experience comparable to WhatsApp or Discord, the architecture handles network jitter and acoustic feedback natively:
+
+```mermaid
+sequenceDiagram
+    participant Mic as 🎤 PureOS Mic
+    participant AEC as 🧠 SpeexDSP AEC
+    participant Net as 🌐 TCP / Relay
+    participant Web as 💻 Web Browser
+    participant Spk as 🔊 PureOS Speaker
+
+    Note over Mic, Spk: 🎙️ Outgoing Audio (PureOS -> Web)
+    Mic->>AEC: Capture PCM samples via AC97
+    AEC->>AEC: speex_echo_capture() (Cancels Echo)
+    AEC->>Net: Base64 Encoded Audio JSON
+    Net->>Web: WebSocket Broadcast
+    Web->>Web: 150ms Jitter Buffer via Web Audio API
+
+    Note over Mic, Spk: 🎧 Incoming Audio (Web -> PureOS)
+    Web->>Net: Float32 -> Int16 Base64 JSON
+    Net->>AEC: TCP Receive (32KB Compaction Buffer)
+    AEC->>AEC: speex_echo_playback() (Reference Signal)
+    AEC->>Spk: AC97 DMA Ring Buffer (2-second Catch-up)
+```
+
+**Key Engineering Highlights:**
+- **SpeexDSP Integration:** PureOS natively cross-compiles the Xiph `SpeexDSP` library using fixed-point math (`-DFIXED_POINT`). The OS captures the incoming audio reference and dynamically subtracts it from the microphone input in real-time, completely eliminating acoustic feedback.
+- **Jitter Buffers:** The web client maintains a strict `150ms` jitter buffer to absorb network latency spikes, while the AC97 driver on the OS side uses a 2-second streaming ring buffer with custom "catch-up" logic to gracefully handle network bursts without clicking.
+- **TCP Compaction:** Because rapid 20ms audio chunks flood the network, the OS TCP parser safely compacts the socket buffers dynamically, preventing buffer starvation and fragmentation.
+
 ---
 
 ## 📄 License
@@ -504,3 +535,4 @@ This project is licensed under the [MIT License](LICENSE).
 <div align="center">
   <b>Built with ❤️ from scratch — no Linux, no POSIX, no borrowed OS code.</b>
 </div>
+=
