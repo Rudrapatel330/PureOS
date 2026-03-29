@@ -4,6 +4,8 @@
 #include "../kernel/theme.h"
 #include "../net/net.h"
 #include "../drivers/ac97.h"
+#include "../lib/speexdsp/include/speex/speex_echo.h"
+#include "../lib/speexdsp/include/speex/speex_preprocess.h"
 
 extern void print_serial(const char *str);
 extern void k_itoa(int n, char *s);
@@ -108,7 +110,30 @@ typedef struct {
     char b64_send_buf[12000]; 
     char packet_send_buf[16384];
     uint8_t pcm_decode_buf[16384];
+
+    SpeexEchoState *echo_state;
+    SpeexPreprocessState *preprocess_state;
 } phone_state_t;
+
+static void phone_init_aec(phone_state_t *s) {
+    if (s->echo_state) return;
+    int sample_rate = 48000;
+    int frame_size = 1024;
+    int filter_length = 4800; // 100ms
+    s->echo_state = speex_echo_state_init(frame_size, filter_length);
+    speex_echo_ctl(s->echo_state, SPEEX_ECHO_SET_SAMPLING_RATE, &sample_rate);
+    s->preprocess_state = speex_preprocess_state_init(frame_size, sample_rate);
+    speex_preprocess_ctl(s->preprocess_state, SPEEX_PREPROCESS_SET_ECHO_STATE, s->echo_state);
+    int enable_ns = 1;
+    speex_preprocess_ctl(s->preprocess_state, SPEEX_PREPROCESS_SET_DENOISE, &enable_ns);
+    int enable_agc = 1;
+    speex_preprocess_ctl(s->preprocess_state, SPEEX_PREPROCESS_SET_AGC, &enable_agc);
+}
+
+static void phone_destroy_aec(phone_state_t *s) {
+    if (s->echo_state) { speex_echo_state_destroy(s->echo_state); s->echo_state = NULL; }
+    if (s->preprocess_state) { speex_preprocess_state_destroy(s->preprocess_state); s->preprocess_state = NULL; }
+}
 
 static phone_state_t* get_state(window_t* win) {
     return (phone_state_t*)win->user_data;
@@ -176,11 +201,13 @@ static void phone_process_packet(window_t* win, const char* json) {
         if (s->state == CALL_STATE_CALLING) {
             s->state = CALL_STATE_INCALL;
             ac97_start_capture(NULL, 0);
+            phone_init_aec(s);
         }
     } else if (strstr(json, "\"type\":\"call_reject\"") || strstr(json, "\"type\":\"call_end\"")) {
         s->state = CALL_STATE_IDLE;
         ac97_stop_capture();
         ac97_stop_playback();
+        phone_destroy_aec(s);
     } else if (strstr(json, "\"type\":\"audio\"")) {
         if (s->state == CALL_STATE_INCALL) {
             const char *data = strstr(json, "\"data\":\"");
@@ -196,6 +223,10 @@ static void phone_process_packet(window_t* win, const char* json) {
                         int16_t *mono = (int16_t *)s->pcm_decode_buf;
                         int mono_samples = plen / 2;
                         if (mono_samples > 8192) mono_samples = 8192;
+
+                        if (s->echo_state && mono_samples == 1024) {
+                            speex_echo_playback(s->echo_state, mono);
+                        }
 
                         for (int i = 0; i < mono_samples; i++) {
                             int16_t sample = mono[i];
@@ -302,7 +333,14 @@ void phone_update(void *w) {
                         s->mic_accum[s->mic_accum_len++] = (uint8_t)((sample >> 8) & 0xFF);
                         
                         if (s->mic_accum_len >= 2048) {
-                            b64_encode(s->mic_accum, s->mic_accum_len, s->b64_send_buf);
+                            if (s->echo_state) {
+                                int16_t processed[1024];
+                                speex_echo_capture(s->echo_state, (int16_t*)s->mic_accum, processed);
+                                speex_preprocess_run(s->preprocess_state, processed);
+                                b64_encode((uint8_t*)processed, 2048, s->b64_send_buf);
+                            } else {
+                                b64_encode(s->mic_accum, 2048, s->b64_send_buf);
+                            }
                             strcpy(s->packet_send_buf, "{\"type\":\"audio\",\"to\":\"");
                             strcat(s->packet_send_buf, s->target_username);
                             strcat(s->packet_send_buf, "\",\"data\":\"");
@@ -370,6 +408,7 @@ static void phone_on_mouse(void *w, int x, int y, int buttons) {
             s->state = CALL_STATE_IDLE;
             ac97_stop_capture();
             ac97_stop_playback();
+            phone_destroy_aec(s);
             win->needs_redraw = 1;
         }
     } else if (s->state == CALL_STATE_RINGING) {
@@ -381,6 +420,7 @@ static void phone_on_mouse(void *w, int x, int y, int buttons) {
             tcp_send(&s->conn, packet, strlen(packet));
             s->state = CALL_STATE_INCALL;
             ac97_start_capture(NULL, 0);
+            phone_init_aec(s);
             win->needs_redraw = 1;
         }
         else if (x >= cx + 10 && x <= cx + 90 && y >= cy + 20 && y <= cy + 60) {
@@ -403,6 +443,7 @@ void phone_on_close(void *w) {
     if (s->state == CALL_STATE_INCALL) {
         ac97_stop_capture();
         ac97_stop_playback();
+        phone_destroy_aec(s);
     }
     if (s->connected) {
         tcp_close(&s->conn);
