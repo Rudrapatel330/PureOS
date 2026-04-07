@@ -22,7 +22,7 @@ extern int ctrl_pressed;
 typedef struct {
   window_t *win;
   char buffer[8192];
-  char filename[32];
+  char filename[64];
   int scroll_y;
   int dialog_mode;
   int cursor_blink;
@@ -31,6 +31,10 @@ typedef struct {
   int selected_all;
   spinlock_irq_t lock;
   int was_btn;
+  FileInfo files[32];
+  int file_count;
+  char current_dir[128];
+  char full_path[160];
 } editor_app_t;
 
 static inline editor_app_t *get_editor(void *w) {
@@ -69,11 +73,17 @@ static void editor_draw(void *w) {
   winmgr_draw_text(win, 94, MENU_Y + 4, "New", theme->fg);
 
   /* Filename centered */
-  int fn_len = strlen(ed->filename);
+  char display_name[128];
+  if (strlen(ed->full_path) > 0) {
+      strcpy(display_name, ed->full_path);
+  } else {
+      strcpy(display_name, ed->filename);
+  }
+  int fn_len = strlen(display_name);
   int fn_x = (width - fn_len * 8) / 2;
   if (fn_x < 130)
     fn_x = 130;
-  winmgr_draw_text(win, fn_x, MENU_Y + 4, ed->filename, 0xFF6B737E);
+  winmgr_draw_text(win, fn_x, MENU_Y + 4, display_name, 0xFF6B737E);
 
   /* Text area - dark background */
   int text_h = height - TEXT_Y - STATUS_H;
@@ -203,41 +213,111 @@ static void editor_draw(void *w) {
   int total = strlen(ed->buffer);
   spinlock_irq_release(&ed->lock);
 
-  char sbuf[40];
-  strcpy(sbuf, "Chars: ");
+  char sbuf[160];
+  strcpy(sbuf, "File: ");
+  strcat(sbuf, ed->filename);
+  strcat(sbuf, " | Chars: ");
   char num[16];
   k_itoa(total, num);
   strcat(sbuf, num);
   winmgr_draw_text(win, 8, sy + 3, sbuf, theme->fg_secondary);
-  winmgr_draw_text(win, width - 80, sy + 3, ed->filename, theme->fg_secondary);
 
   /* Dialog overlay */
   if (ed->dialog_mode > 0) {
-    int dw = 260, dh = 100;
+    int dw = 400, dh = 320;
     int dx = (width - dw) / 2;
     int dy = (height - dh) / 2;
 
-    winmgr_fill_rect(win, dx + 2, dy + 2, dw, dh, 0xFF000000); // Shadow
+    winmgr_fill_rect(win, dx + 4, dy + 4, dw, dh, 0x80000000); // Shadow
     winmgr_fill_rect(win, dx, dy, dw, dh, theme->menu_bg);
     winmgr_draw_rect(win, dx, dy, dw, dh, theme->accent);
 
     const char *title = (ed->dialog_mode == 1) ? "Save As" : "Open File";
     winmgr_draw_text(win, dx + 10, dy + 8, title, theme->accent);
 
-    winmgr_fill_rect(win, dx + 10, dy + 30, dw - 20, 22, theme->input_bg);
-    winmgr_draw_rect(win, dx + 10, dy + 30, dw - 20, 22, theme->input_border);
-    winmgr_draw_text(win, dx + 14, dy + 34, ed->filename, theme->fg);
+    /* Directory label */
+    winmgr_draw_text(win, dx + 10, dy + 30, "Folder: ", theme->fg_secondary);
+    winmgr_draw_text(win, dx + 70, dy + 30, ed->current_dir, theme->fg);
+
+    /* File List Area */
+    int list_y = dy + 50;
+    int list_h = 180;
+    winmgr_fill_rect(win, dx + 10, list_y, dw - 20, list_h, theme->bg);
+    winmgr_draw_rect(win, dx + 10, list_y, dw - 20, list_h, theme->border);
+
+    /* Sort files: folders first, then files */
+    for (int i = 0; i < ed->file_count - 1; i++) {
+        for (int j = 0; j < ed->file_count - i - 1; j++) {
+            if (!ed->files[j].is_dir && ed->files[j+1].is_dir) {
+                FileInfo tmp = ed->files[j];
+                ed->files[j] = ed->files[j+1];
+                ed->files[j+1] = tmp;
+            }
+        }
+    }
+
+    for (int i = 0; i < ed->file_count && i < 12; i++) {
+        int fy = list_y + 5 + i * 14;
+        uint32_t col = theme->fg;
+        if (ed->files[i].is_dir) col = 0xFFE0C060; // Folder color
+        
+        char item_text[40];
+        if (ed->files[i].is_dir) strcpy(item_text, "> ");
+        else strcpy(item_text, "  ");
+        strcat(item_text, ed->files[i].name);
+        
+        winmgr_draw_text(win, dx + 15, fy, item_text, col);
+    }
+    
+    /* Target Path Preview */
+    char preview[160];
+    strcpy(preview, "Target: ");
+    strcat(preview, ed->current_dir);
+    if (preview[strlen(preview)-1] != '/') strcat(preview, "/");
+    strcat(preview, ed->filename);
+    winmgr_draw_text(win, dx + 10, dy + 225, preview, 0xFF00FF00); // Bright green
+
+    /* Filename input */
+    winmgr_draw_text(win, dx + 10, dy + 240, "File name:", theme->fg_secondary);
+    winmgr_fill_rect(win, dx + 10, dy + 256, dw - 20, 22, theme->input_bg);
+    winmgr_draw_rect(win, dx + 10, dy + 256, dw - 20, 22, theme->input_border);
+    winmgr_draw_text(win, dx + 14, dy + 260, ed->filename, theme->fg);
 
     if ((ed->cursor_blink / 15) % 2 == 0) {
       int cl = strlen(ed->filename);
-      winmgr_fill_rect(win, dx + 14 + cl * 8, dy + 32, 2, 16, theme->accent);
+      winmgr_fill_rect(win, dx + 14 + cl * 8, dy + 258, 2, 16, theme->accent);
     }
-
-    winmgr_draw_text(win, dx + 10, dy + 60, "Enter=OK  Esc=Cancel", theme->fg_secondary);
-
-    winmgr_fill_rect(win, dx + dw - 60, dy + 72, 50, 20, theme->accent);
-    winmgr_draw_text(win, dx + dw - 50, dy + 76, "OK", theme->button_text);
   }
+}
+
+static void editor_perform_dialog_action(window_t *win) {
+    editor_app_t *ed = get_editor(win);
+    if (!ed) return;
+
+    char full_path[160];
+    strcpy(full_path, ed->current_dir);
+    if (full_path[strlen(full_path)-1] != '/') strcat(full_path, "/");
+    strcat(full_path, ed->filename);
+
+    if (ed->dialog_mode == 1) { // Save
+        fs_write(full_path, (uint8_t *)ed->buffer, strlen(ed->buffer));
+        strcpy(ed->filename, full_path);
+        print_serial("EDITOR: Saved to ");
+        print_serial(full_path);
+        print_serial("\n");
+    } else if (ed->dialog_mode == 2) { // Open
+        char *fname = (char *)kmalloc(160);
+        if (fname) {
+            strcpy(fname, full_path);
+            msg_t m = {0};
+            m.type = MSG_USER + 1;
+            m.ptr = fname;
+            msg_send_to_name("Editor", &m);
+        }
+    }
+    ed->dialog_mode = 0;
+    ui_dirty = 1;
+    win->needs_redraw = 1;
 }
 
 static void editor_on_scroll(void *w, int direction) {
@@ -245,10 +325,9 @@ static void editor_on_scroll(void *w, int direction) {
   editor_app_t *ed = get_editor(win);
   if (!ed) return;
 
-  ed->scroll_y -= direction; // Scroll 1 line per notch for smooth feel
+  ed->scroll_y -= direction;
   if (ed->scroll_y < 0)
     ed->scroll_y = 0;
-  // TODO: Clamp max scroll if we know the line count
   ui_dirty = 1;
   win->needs_redraw = 1;
 }
@@ -261,19 +340,7 @@ static void editor_handle_input(window_t *win, char c) {
   if (ed->dialog_mode > 0) {
     int len = strlen(ed->filename);
     if (c == '\n' || c == '\r') {
-      if (ed->dialog_mode == 1) {
-        fs_write(ed->filename, (uint8_t *)ed->buffer, strlen(ed->buffer));
-      } else if (ed->dialog_mode == 2) {
-        char *fname = (char *)kmalloc(32);
-        if (fname) {
-          strcpy(fname, ed->filename);
-          msg_t m = {0};
-          m.type = MSG_USER + 1;
-          m.ptr = fname;
-          msg_send_to_name("Editor", &m);
-        }
-      }
-      ed->dialog_mode = 0;
+      editor_perform_dialog_action(win);
     } else if (c == 27) {
       ed->dialog_mode = 0;
     } else if (c == '\b') {
@@ -342,26 +409,47 @@ static void editor_on_mouse(void *w, int rx, int ry, int buttons) {
   ed->was_btn = 1;
 
   if (ed->dialog_mode > 0 && click) {
-    int dw = 260, dh = 100;
+    int dw = 400, dh = 320;
     int dx = (win->width - dw) / 2;
     int dy = (win->height - dh) / 2;
-    if (rx >= dx + dw - 60 && rx < dx + dw - 10 && ry >= dy + 72 &&
-        ry < dy + 92) {
-      if (ed->dialog_mode == 1)
-        fs_write(ed->filename, (uint8_t *)ed->buffer, strlen(ed->buffer));
-      else if (ed->dialog_mode == 2) {
-        char *fname = (char *)kmalloc(32);
-        if (fname) {
-          strcpy(fname, ed->filename);
-          msg_t m = {0};
-          m.type = MSG_USER + 1;
-          m.ptr = fname;
-          msg_send_to_name("Editor", &m);
+
+    /* Handle clicking on file entries */
+    int list_y = dy + 50;
+    if (rx >= dx + 10 && rx < dx + dw - 10 && ry >= list_y && ry < list_y + 180) {
+        int idx = (ry - list_y - 5) / 14;
+        if (idx >= 0 && idx < ed->file_count && idx < 12) {
+            if (ed->files[idx].is_dir) {
+                /* Enter directory (simplified: just append to path) */
+                if (strcmp(ed->files[idx].name, "..") == 0) {
+                    /* Go up */
+                    int len = strlen(ed->current_dir);
+                    if (len > 1) {
+                        for (int i = len - 1; i >= 0; i--) {
+                            if (ed->current_dir[i] == '/') {
+                                ed->current_dir[i] = (i == 0) ? '/' : 0;
+                                if (i == 0) ed->current_dir[1] = 0;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    if (ed->current_dir[strlen(ed->current_dir)-1] != '/') strcat(ed->current_dir, "/");
+                    strcat(ed->current_dir, ed->files[idx].name);
+                }
+                ed->file_count = fs_list_files(ed->current_dir, ed->files, 32);
+            } else {
+                /* Select file */
+                strcpy(ed->filename, ed->files[idx].name);
+            }
+            ui_dirty = 1;
+            win->needs_redraw = 1;
         }
-      }
-      ed->dialog_mode = 0;
-      ui_dirty = 1;
-      win->needs_redraw = 1;
+    }
+
+    /* OK button */
+    if (rx >= dx + dw - 60 && rx < dx + dw - 10 && ry >= dy + dh - 30 &&
+        ry < dy + dh - 10) {
+      editor_perform_dialog_action(win);
     }
     return;
   }
@@ -374,15 +462,26 @@ static void editor_on_mouse(void *w, int rx, int ry, int buttons) {
 
   if (ry >= MENU_Y && ry < MENU_Y + MENU_H && click) {
     if (rx >= 6 && rx < 48) {
-      ed->dialog_mode = 1;
+      if (strlen(ed->full_path) == 0) {
+        ed->dialog_mode = 1;
+        ed->file_count = fs_list_files(ed->current_dir, ed->files, 32);
+      } else {
+        int blen = strlen(ed->buffer);
+        fs_write(ed->full_path, (uint8_t *)ed->buffer, blen);
+        print_serial("EDITOR: Saved to ");
+        print_serial(ed->full_path);
+        print_serial("\n");
+      }
     } else if (rx >= 48 && rx < 90) {
       ed->dialog_mode = 2;
+      ed->file_count = fs_list_files(ed->current_dir, ed->files, 32);
     } else if (rx >= 90 && rx < 128) {
       spinlock_irq_acquire(&ed->lock);
       ed->buffer[0] = 0;
       ed->cursor_pos = 0;
       spinlock_irq_release(&ed->lock);
       strcpy(ed->filename, "untitled.txt");
+      ed->full_path[0] = 0;
       ed->scroll_y = 0;
     }
     ui_dirty = 1;
@@ -418,12 +517,20 @@ static void editor_on_key(void *w, int key, char ascii) {
           ui_dirty = 1;
           win->needs_redraw = 1;
       } else if (ascii == 's' || ascii == 'S') {
-          int blen = len;
-          spinlock_irq_release(&ed->lock);
-          fs_write(ed->filename, (uint8_t *)ed->buffer, blen);
-          ui_dirty = 1;
-          win->needs_redraw = 1;
-          return;
+          if (strlen(ed->full_path) == 0) {
+              ed->dialog_mode = 1;
+              ed->file_count = fs_list_files(ed->current_dir, ed->files, 32);
+          } else {
+              int blen = len;
+              spinlock_irq_release(&ed->lock);
+              fs_write(ed->full_path, (uint8_t *)ed->buffer, blen);
+              ui_dirty = 1;
+              win->needs_redraw = 1;
+              print_serial("EDITOR: Saved via Ctrl+S to ");
+              print_serial(ed->full_path);
+              print_serial("\n");
+              return;
+          }
       } else if (key == 0x4B) { // KEY_LEFT
           ed->selected_all = 0;
           while (ed->cursor_pos > 0 && ed->buffer[ed->cursor_pos - 1] == ' ') ed->cursor_pos--;
@@ -576,7 +683,7 @@ static void editor_on_close(void *w) {
 
 void editor_init(void) {
   print_serial("EDITOR: Calling winmgr_create_window\n");
-  window_t *win = winmgr_create_window(-1, -1, 900, 700, "Editor");
+  window_t *win = winmgr_create_window(-1, -1, 900, 700, "Editor v2.0");
   if (!win) return;
 
   editor_app_t *ed = (editor_app_t *)kmalloc(sizeof(editor_app_t));
@@ -588,6 +695,7 @@ void editor_init(void) {
   for (int i = 0; i < (int)sizeof(editor_app_t); i++) ((char *)ed)[i] = 0;
   ed->win = win;
   strcpy(ed->filename, "untitled.txt");
+  strcpy(ed->current_dir, "/");
   const char *welcome = "Welcome to PureOS multitasking!";
   strcpy(ed->buffer, welcome);
   ed->cursor_pos = strlen(welcome);
@@ -613,8 +721,13 @@ void editor_open_internal(window_t *win, const char *filename) {
   if (!ed || !filename || filename[0] == 0) return;
 
   int i = 0;
-  while (filename[i] && i < 31) { ed->filename[i] = filename[i]; i++; }
-  ed->filename[i] = 0;
+  while (filename[i] && i < 159) { ed->full_path[i] = filename[i]; i++; }
+  ed->full_path[i] = 0;
+
+  // Set short name for display
+  char *last_slash = strrchr(ed->full_path, '/');
+  if (last_slash) strcpy(ed->filename, last_slash + 1);
+  else strcpy(ed->filename, ed->full_path);
 
   ed_read_buf[0] = 0;
   int bytes = fs_read(ed->filename, ed_read_buf);
@@ -661,7 +774,7 @@ void editor_open(const char *filename) {
   }
   
   if (target) {
-    char *fname = (char *)kmalloc(32);
+    char *fname = (char *)kmalloc(128);
     if (fname) {
       strcpy(fname, filename);
       msg_t m = {0};

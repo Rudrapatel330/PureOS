@@ -44,6 +44,8 @@ typedef struct {
   int pinned[10];
   int num_pinned;
   int scroll_y, tz;
+  int mx, my;
+  int auto_hide_taskbar;
 } sstate_t;
 
 static void card(window_t *w, int x, int y, int cw, int h) {
@@ -64,10 +66,10 @@ static void draw_sb(window_t *w, sstate_t *s) {
   for (int i = 0; i < NP; i++) {
     int y = 56 + i * 28;
     if (s->page == i) {
-      winmgr_fill_rect(w, 4, y, SW - 8, 26, C2);
+      winmgr_fill_rect(w, 4, y, SW - 8, 26, 0xFF555555); // Solid gray selection
       winmgr_fill_rect(w, 2, y + 6, 3, 14, CA);
     } else if (s->hover == i)
-      winmgr_fill_rect(w, 4, y, SW - 8, 26, C2);
+      winmgr_fill_rect(w, 4, y, SW - 8, 26, 0xFF353535); // Opaque blended hover
     winmgr_draw_text(w, 16, y + 7, lb[i], s->page == i ? CW : CG);
   }
 }
@@ -182,6 +184,14 @@ static void pg_abt(window_t *w) {
   winmgr_draw_text(w, CX + 10, 136, "Arch: 64-bit", CG);
 }
 
+#define DRAW_HOVER(win, s, rx, ry, rw, rh, bg_col, hov_col) \
+  do { \
+    if ((s)->mx >= (rx) && (s)->mx < (rx) + (rw) && (s)->my >= (ry) && (s)->my < (ry) + (rh)) \
+      winmgr_fill_rect((win), (rx), (ry), (rw), (rh), (hov_col)); \
+    else \
+      winmgr_fill_rect((win), (rx), (ry), (rw), (rh), (bg_col)); \
+  } while(0)
+
 static void settings_draw(void *w) {
   window_t *win = (window_t *)w;
   sstate_t *s = (sstate_t *)win->user_data;
@@ -214,16 +224,29 @@ static void settings_draw(void *w) {
     cy += 30;
 
     // Aesthetic Settings Card
-    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
+    DRAW_HOVER(win, s, cx, cy, card_w, 45, theme->input_bg, 0xFF353545);
     winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
     winmgr_draw_text(win, cx + 15, cy + 15, "System Appearance", theme->fg);
     winmgr_draw_text(win, cx + card_w - 60, cy + 15, "Light >", theme->accent);
 
     cy += 60;
-    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
+    DRAW_HOVER(win, s, cx, cy, card_w, 45, theme->input_bg, 0xFF353545);
     winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
     winmgr_draw_text(win, cx + 15, cy + 15, "Wallpapers", theme->fg);
   } else if (s->page == PT) { // Taskbar
+    winmgr_draw_text(win, cx, cy, "Taskbar Behavior", theme->fg);
+    cy += 30;
+
+    // Auto-hide toggle
+    DRAW_HOVER(win, s, cx, cy, card_w, 45, theme->input_bg, 0xFF353545);
+    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + 15, "Auto-hide Taskbar", theme->fg);
+    winmgr_fill_rect(win, cx + card_w - 50, cy + 12, 40, 20,
+                     s->auto_hide_taskbar ? CA : 0xFFCCCCCC);
+    winmgr_fill_rect(win, cx + card_w - 50 + (s->auto_hide_taskbar ? 22 : 2), cy + 14, 16, 16,
+                     0xFFFFFFFF);
+
+    cy += 60;
     winmgr_draw_text(win, cx, cy, "Taskbar Apps", theme->fg);
     cy += 30;
 
@@ -252,7 +275,7 @@ static void settings_draw(void *w) {
     }
 
     // Apply button
-    winmgr_fill_rect(win, cx, cy + 10, 100, 30, CA);
+    DRAW_HOVER(win, s, cx, cy + 10, 100, 30, CA, 0xFF353545);
     winmgr_draw_text(win, cx + 30, cy + 18, "Apply", 0xFFFFFFFF);
 
   } else if (s->page == PC) { // Accounts
@@ -290,7 +313,7 @@ static void settings_draw(void *w) {
     }
 
     // Save button
-    winmgr_fill_rect(win, cx + 15, cy + 75, 80, 25, CA);
+    DRAW_HOVER(win, s, cx + 15, cy + 75, 80, 25, CA, 0xFF353545);
     winmgr_draw_text(win, cx + 38, cy + 82, "Save", 0xFFFFFFFF);
 
   } else if (s->page == PE) { // About
@@ -321,7 +344,7 @@ static void settings_draw(void *w) {
       uint32_t bg[] = {0xFF445566, 0xFF1A1A2E, 0xFFCCDDEE};
       const char *nm[] = {"Image", "Dark", "Light"};
       uint32_t br = (s->wp == i) ? CA : 0xFFCCCCCC;
-      winmgr_fill_rect(win, tx, ty, tw, th, bg[i]);
+      DRAW_HOVER(win, s, tx, ty, tw, th, bg[i], 0xFF353545);
       winmgr_draw_rect(win, tx - 1, ty - 1, tw + 2, th + 2, br);
       if (s->wp == i)
         winmgr_draw_rect(win, tx - 2, ty - 2, tw + 4, th + 4, br);
@@ -338,11 +361,10 @@ static void settings_draw(void *w) {
     winmgr_draw_text(win, cx + 15, cy + 15, "Color mode", theme->fg);
 
     int py = cy + 38, pw = 85;
-    winmgr_fill_rect(win, cx + 15, py, pw, 22, s->th == 0 ? CA : theme->button);
+    DRAW_HOVER(win, s, cx + 15, py, pw, 22, s->th == 0 ? CA : theme->button, 0xFF353545);
     winmgr_draw_text(win, cx + 33, py + 5, "Dark",
                      s->th == 0 ? 0xFFFFFFFF : theme->fg);
-    winmgr_fill_rect(win, cx + 15 + pw + 8, py, pw, 22,
-                     s->th == 1 ? CA : theme->button);
+    DRAW_HOVER(win, s, cx + 15 + pw + 8, py, pw, 22, s->th == 1 ? CA : theme->button, 0xFF353545);
     winmgr_draw_text(win, cx + 15 + pw + 30, py + 5, "Light",
                      s->th == 1 ? 0xFFFFFFFF : theme->fg);
 
@@ -367,7 +389,7 @@ static void settings_draw(void *w) {
     const char *fn[] = {"None", "Red", "Grn", "Yel"};
     for (int i = 0; i < 4; i++) {
       uint32_t bg = (s->filter == i) ? CA : theme->button;
-      winmgr_fill_rect(win, fx + i * 42, cy + 12, 38, 22, bg);
+      DRAW_HOVER(win, s, fx + i * 42, cy + 12, 38, 22, bg, 0xFF353545);
       winmgr_draw_text(win, fx + i * 42 + 4, cy + 17, fn[i],
                        (s->filter == i) ? 0xFFFFFFFF : theme->fg);
     }
@@ -402,7 +424,7 @@ static void settings_draw(void *w) {
 
     // Apply button (maps exactly to mx >= CX && mx <= CX + 90 && my >= 220 &&
     // my <= 246)
-    winmgr_fill_rect(win, cx, cy + 5, 90, 26, CA);
+    DRAW_HOVER(win, s, cx, cy + 5, 90, 26, CA, 0xFF353545);
     winmgr_draw_text(win, cx + 22, cy + 11, "Apply", 0xFFFFFFFF);
 
   } else if (s->page == PD) { // System
@@ -473,20 +495,20 @@ static void settings_draw(void *w) {
     strcat(tz_str, ms);
 
     winmgr_draw_text(win, cx + card_w - 140, cy + 15, tz_str, 0xFF666666);
-    winmgr_fill_rect(win, cx + card_w - 50, cy + 10, 20, 25, 0xFFE0E0E0);
+    DRAW_HOVER(win, s, cx + card_w - 50, cy + 10, 20, 25, 0xFFE0E0E0, 0xFF353545);
     winmgr_draw_text(win, cx + card_w - 44, cy + 16, "-", 0xFF333333);
-    winmgr_fill_rect(win, cx + card_w - 25, cy + 10, 20, 25, 0xFFE0E0E0);
+    DRAW_HOVER(win, s, cx + card_w - 25, cy + 10, 20, 25, 0xFFE0E0E0, 0xFF353545);
     winmgr_draw_text(win, cx + card_w - 18, cy + 16, "+", 0xFF333333);
 
     cy += 60;
     // Reset Positions Button
-    winmgr_fill_rect(win, cx, cy, 140, 26, 0xFFE0E0E0);
+    DRAW_HOVER(win, s, cx, cy, 140, 26, 0xFFE0E0E0, 0xFF353545);
     winmgr_draw_rect(win, cx, cy, 140, 26, 0xFFCCCCCC);
     winmgr_draw_text(win, cx + 15, cy + 6, "Reset Positions", 0xFF333333);
 
     cy += 50;
     // Apply button
-    winmgr_fill_rect(win, cx, cy + 5, 90, 26, CA);
+    DRAW_HOVER(win, s, cx, cy + 5, 90, 26, CA, 0xFF353545);
     winmgr_draw_text(win, cx + 22, cy + 11, "Apply", 0xFFFFFFFF);
   }
 }
@@ -502,6 +524,7 @@ static void apply_config(sstate_t *s) {
   global_config.show_clock_widget = s->show_clock;
   global_config.show_calendar_widget = s->show_calendar;
   global_config.timezone_offset_m = s->tz;
+  global_config.auto_hide_taskbar = s->auto_hide_taskbar;
  
   theme_set_mode(s->th);
 
@@ -529,6 +552,12 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
   static int lb = 0;
   int click = (buttons & 1) && !(lb & 1);
   lb = buttons;
+
+  if (s->mx != rx || s->my != ry) {
+    s->mx = rx;
+    s->my = ry;
+    win->needs_redraw = 1;
+  }
 
   if (click) {
     print_serial("SETTINGS: Click at ");
@@ -752,6 +781,17 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
   // Taskbar settings
   if (s->page == PT) {
     int cy = 70;
+    int card_w = win->width - CX - 20;
+
+    // Auto-hide
+    if (click && mx >= CX + card_w - 50 && mx <= CX + card_w - 10 &&
+        ry >= cy + 12 && ry <= cy + 32) {
+      s->auto_hide_taskbar = !s->auto_hide_taskbar;
+      win->needs_redraw = 1;
+    }
+    cy += 60;
+    cy += 30; // "Taskbar Apps" header
+
     for (int i = 0; i < 10; i++) {
       if (mx >= CX + cw - 50 && mx <= CX + cw - 10 && ry >= cy + 5 &&
           ry <= cy + 25) {
@@ -777,8 +817,7 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
           }
         }
         win->needs_redraw = 1;
-        break; // Only toggle one! Don't return from the entire function.
-      }
+      } // Removed break, because doing an action shouldn't skip further tests without 'return'
       cy += 35;
     }
     cy += 10;
@@ -881,6 +920,7 @@ void settings_init() {
   st->tz = global_config.timezone_offset_m;
   st->filter = global_config.icon_filter;
   st->bg_int = global_config.icon_bg_filter_intensity;
+  st->auto_hide_taskbar = global_config.auto_hide_taskbar;
   st->dragging_icon = 0;
   st->dragging_bg = 0;
   st->num_pinned = global_config.num_pinned;

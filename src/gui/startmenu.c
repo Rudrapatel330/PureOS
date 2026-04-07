@@ -49,6 +49,9 @@ extern void lockscreen_show();
 extern void pdfreader_init();
 extern void photos_init();
 extern void mail_app_init();
+extern void chat_init();
+extern void phone_init();
+extern void recorder_init();
 
 // --- Launch wrappers ---
 static void launch_term() {
@@ -103,6 +106,18 @@ static void launch_mail() {
   mail_app_init();
   menu_active = 0;
 }
+static void launch_chat() {
+  chat_init();
+  menu_active = 0;
+}
+static void launch_phone() {
+  phone_init();
+  menu_active = 0;
+}
+static void launch_recorder() {
+  recorder_init();
+  menu_active = 0;
+}
 
 // Pinned apps (shown in grid)
 static menu_item_t pinned_items[] = {
@@ -118,20 +133,26 @@ static menu_item_t pinned_items[] = {
     {"Lock", 0xFFE53935, launch_lock},
     {"PDF Reader", 0xFFCC3333, launch_pdfreader},
     {"Photos", 0xFFE91E63, launch_photos},
-    {"Mail", 0xFF00AADD, launch_mail}};
+    {"Mail", 0xFF00AADD, launch_mail},
+    {"Chat", 0xFF25D366, launch_chat},
+    {"Phone", 0xFF0078D4, launch_phone},
+    {"Recorder", 0xFFFF6600, launch_recorder}};
 #define PINNED_COUNT (sizeof(pinned_items) / sizeof(pinned_items[0]))
 
 // All apps alphabetical
 static menu_item_t all_apps_items[] = {
     {"Browser", 0xFF4FC3F7, launch_browser},
     {"Calculator", 0xFF00ADEF, launch_calc},
+    {"Chat", 0xFF25D366, launch_chat},
     {"Editor", 0xFF5B8BF5, launch_editor},
     {"Explorer", 0xFFFFC107, launch_files},
     {"Lock", 0xFFE53935, launch_lock},
     {"Mail", 0xFF00AADD, launch_mail},
     {"Paint", 0xFFFF6B6B, launch_paint},
     {"PDF Reader", 0xFFCC3333, launch_pdfreader},
+    {"Phone", 0xFF0078D4, launch_phone},
     {"Photos", 0xFFE91E63, launch_photos},
+    {"Recorder", 0xFFFF6600, launch_recorder},
     {"Settings", 0xFF607D8B, launch_settings},
     {"Task Mgr", 0xFF66BB6A, launch_taskmgr},
     {"Terminal", 0xFF38B764, launch_term},
@@ -139,6 +160,7 @@ static menu_item_t all_apps_items[] = {
 #define ALL_APPS_COUNT (sizeof(all_apps_items) / sizeof(all_apps_items[0]))
 
 static int startmenu_view_mode = 0;
+static int hovered_item = -1; // Index of hovered item (-1 = none)
 
 extern void print_serial(const char *);
 extern void compositor_invalidate_rect(int x, int y, int w, int h);
@@ -299,6 +321,37 @@ static void draw_app_icon(int x, int y, const char *name, uint32_t col,
       vga_draw_rect_surface(x + 24 - i, y + 10 + i, 2, 1, 0xFFCCCCCC, buffer,
                             MENU_W, MENU_H);
     }
+  } else if (strcmp(name, "Chat") == 0) {
+    // Speech bubble
+    vga_draw_rect_surface(x + 4, y + 6, 24, 16, 0xFFFFFFFF, buffer, MENU_W,
+                          MENU_H);
+    vga_draw_rect_surface(x + 6, y + 22, 6, 4, 0xFFFFFFFF, buffer, MENU_W,
+                          MENU_H);
+    // Text lines
+    vga_draw_rect_surface(x + 8, y + 10, 12, 2, 0xFF25D366, buffer, MENU_W,
+                          MENU_H);
+    vga_draw_rect_surface(x + 8, y + 15, 16, 2, 0xFF25D366, buffer, MENU_W,
+                          MENU_H);
+  } else if (strcmp(name, "Phone") == 0) {
+    // Phone handset
+    vga_draw_rect_surface(x + 8, y + 6, 6, 8, 0xFFFFFFFF, buffer, MENU_W,
+                          MENU_H);
+    vga_draw_rect_surface(x + 12, y + 12, 8, 4, 0xFFFFFFFF, buffer, MENU_W,
+                          MENU_H);
+    vga_draw_rect_surface(x + 18, y + 14, 6, 8, 0xFFFFFFFF, buffer, MENU_W,
+                          MENU_H);
+  } else if (strcmp(name, "Recorder") == 0) {
+    // Microphone
+    vga_draw_rect_surface(x + 12, y + 6, 8, 14, 0xFFFFFFFF, buffer, MENU_W,
+                          MENU_H);
+    // Stand
+    vga_draw_rect_surface(x + 15, y + 20, 2, 4, 0xFFCCCCCC, buffer, MENU_W,
+                          MENU_H);
+    vga_draw_rect_surface(x + 10, y + 24, 12, 2, 0xFFCCCCCC, buffer, MENU_W,
+                          MENU_H);
+    // Red dot
+    vga_draw_rect_surface(x + 22, y + 6, 4, 4, 0xFFFF0000, buffer, MENU_W,
+                          MENU_H);
   }
 }
 
@@ -488,6 +541,59 @@ void startmenu_draw(uint32_t *buffer, rect_t clip) {
         buffer[dst_offset + x] = px;
     }
   }
+
+  // Draw hover overlay on hovered item
+  if (hovered_item >= 0) {
+    int hx = 0, hy_start = 0, hw = 0, hh = 0;
+    int search_bottom = PADDING + SEARCH_H;
+    int head_y_h = search_bottom + 20;
+
+    if (startmenu_view_mode == 0) {
+      // Pinned grid
+      int grid_y_h = head_y_h + 24;
+      int col = hovered_item % GRID_COLS;
+      int row = hovered_item / GRID_COLS;
+      hx = PADDING + col * CELL_W;
+      hy_start = grid_y_h + row * CELL_H;
+      hw = CELL_W;
+      hh = CELL_H;
+    } else {
+      // All apps list - compute position by iterating
+      int list_y_h = head_y_h + 30;
+      char cur_l = '\0';
+      for (int i = 0; i <= hovered_item && i < (int)ALL_APPS_COUNT; i++) {
+        char first = all_apps_items[i].label[0];
+        if (first != cur_l && cur_l != '\0') list_y_h += 8;
+        if (first != cur_l) cur_l = first;
+        if (i == hovered_item) {
+          hx = PADDING;
+          hy_start = list_y_h;
+          hw = MENU_W - PADDING * 2;
+          hh = 40;
+          break;
+        }
+        list_y_h += 40;
+      }
+    }
+
+    // Draw transparent gray hover overlay
+    if (hw > 0 && hh > 0) {
+      for (int oy = 0; oy < hh; oy++) {
+        int py = cy + hy_start + oy;
+        if (py < clip.y || py >= clip.y + clip.h) continue;
+        for (int ox = 0; ox < hw; ox++) {
+          int px_x = menu_x + hx + ox;
+          if (px_x < 0 || px_x >= screen_width || py < 0 || py >= screen_height) continue;
+          uint32_t dst = buffer[py * screen_width + px_x];
+          // 25% white blend
+          uint32_t r = (((dst >> 16) & 0xFF) * 192 + 255 * 64) >> 8;
+          uint32_t g = (((dst >> 8) & 0xFF) * 192 + 255 * 64) >> 8;
+          uint32_t b = ((dst & 0xFF) * 192 + 255 * 64) >> 8;
+          buffer[py * screen_width + px_x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+        }
+      }
+    }
+  }
 }
 
 int startmenu_handle_mouse(int mx, int my, int buttons) {
@@ -499,6 +605,10 @@ int startmenu_handle_mouse(int mx, int my, int buttons) {
 
   int cy = (int)anim_y.current_val;
   if (mx < menu_x || mx >= menu_x + MENU_W || my < cy || my >= cy + MENU_H) {
+    if (hovered_item != -1) {
+      hovered_item = -1;
+      compositor_invalidate_rect(menu_x, cy, MENU_W, MENU_H);
+    }
     if (down_edge) {
       startmenu_show(menu_x, screen_height);
       return 1;
@@ -506,12 +616,52 @@ int startmenu_handle_mouse(int mx, int my, int buttons) {
     return 0;
   }
 
+  // Convert to local menu coordinates for hover
+  int lx = mx - menu_x;
+  int ly = my - cy;
+  int search_bottom_h = PADDING + SEARCH_H;
+  int head_y_h = search_bottom_h + 20;
+
+  // Compute hover index on every mouse move
+  int new_hover = -1;
+  if (startmenu_view_mode == 0) {
+    int grid_y_h = head_y_h + 24;
+    for (int i = 0; i < (int)PINNED_COUNT; i++) {
+      int col = i % GRID_COLS;
+      int row = i / GRID_COLS;
+      int ix = PADDING + col * CELL_W;
+      int iy = grid_y_h + row * CELL_H;
+      if (lx >= ix && lx < ix + CELL_W && ly >= iy && ly < iy + CELL_H) {
+        new_hover = i;
+        break;
+      }
+    }
+  } else {
+    int list_y_h = head_y_h + 30;
+    char cur_l = '\0';
+    for (int i = 0; i < (int)ALL_APPS_COUNT; i++) {
+      char first = all_apps_items[i].label[0];
+      if (first != cur_l && cur_l != '\0') list_y_h += 8;
+      if (first != cur_l) cur_l = first;
+      if (ly >= list_y_h && ly < list_y_h + 40 && lx >= PADDING && lx < MENU_W - PADDING) {
+        new_hover = i;
+        break;
+      }
+      list_y_h += 40;
+    }
+  }
+  if (new_hover != hovered_item) {
+    hovered_item = new_hover;
+    compositor_invalidate_rect(menu_x, cy, MENU_W, MENU_H);
+  }
+
   if (!down_edge)
     return 1;
 
   // Convert to local menu coordinates
-  int lx = mx - menu_x;
-  int ly = my - cy;
+  // Conver to local menu coordinates - ALREADY DONE ABOVE
+  lx = mx - menu_x;
+  ly = my - cy;
 
   int search_bottom = PADDING + SEARCH_H;
   int head_y = search_bottom + 20;

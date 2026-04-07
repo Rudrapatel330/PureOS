@@ -305,11 +305,14 @@ typedef enum {
   APP_CAMERA = 11,
   APP_PHOTOS = 12,
   APP_MAIL = 13,
-  APP_RECORDER = 14
+  APP_RECORDER = 14,
+  APP_CHAT = 15,
+  APP_PHONE = 16
 } app_type_t;
 
 icon_t icons[MAX_ICONS];
 int icon_count = 0;
+static int hovered_icon = -1;
 
 void desktop_add_icon(int x, int y, const char *label, int type,
                       uint32_t color) {
@@ -356,6 +359,8 @@ void desktop_init() {
   desktop_add_icon(120, 405, "Mail", APP_MAIL, 0x00AADD);
   desktop_add_icon(120, 480, "Camera", APP_CAMERA, 0x444444);
   desktop_add_icon(210, 30, "Recorder", APP_RECORDER, 0xFF4400);
+  desktop_add_icon(210, 105, "Chat", APP_CHAT, 0x25D366);
+  desktop_add_icon(210, 180, "Phone", APP_PHONE, 0x0078D4);
 
   // Initial draw to populate valid cache
   desktop_draw();
@@ -584,6 +589,35 @@ void draw_icon(int x, int y, int type, uint32_t *target) {
     draw_rect_f(x + 12, y + 36, 16, 2, 0xFF999999, target);
     // Red indicator dot
     draw_rect_f(x + 28, y + 8, 4, 4, 0xFFFF0000, target);
+    break;
+  case APP_CHAT:
+    // Speech Bubble Icon
+    draw_rect_f(x + 4, y + 6, 32, 22, 0xFF25D366, target);   // Bubble body
+    draw_rect_f(x + 6, y + 8, 28, 18, 0xFF2EE672, target);   // Inner lighter
+    draw_rect_f(x + 6, y + 8, 28, 2, 0xFF5AED8F, target);    // Top highlight
+    // Tail
+    draw_rect_f(x + 8, y + 28, 8, 4, 0xFF25D366, target);
+    draw_rect_f(x + 8, y + 32, 4, 3, 0xFF25D366, target);
+    // Text lines inside bubble
+    draw_rect_f(x + 10, y + 12, 16, 2, 0xFFFFFFFF, target);
+    draw_rect_f(x + 10, y + 17, 20, 2, 0xFFFFFFFF, target);
+    draw_rect_f(x + 10, y + 22, 12, 2, 0xFFE0FFE8, target);
+    break;
+  case APP_PHONE:
+    // Phone Handset Icon
+    draw_rect_f(x + 5, y + 8, 30, 26, 0xFF0078D4, target);   // Body bg
+    draw_rect_f(x + 7, y + 10, 26, 22, 0xFF0088F0, target);  // Inner
+    // Handset earpiece
+    draw_rect_f(x + 10, y + 10, 8, 10, 0xFFFFFFFF, target);
+    draw_rect_f(x + 11, y + 12, 6, 6, 0xFF0088F0, target);   // Hole
+    // Handset mouthpiece
+    draw_rect_f(x + 22, y + 22, 8, 10, 0xFFFFFFFF, target);
+    draw_rect_f(x + 23, y + 24, 6, 6, 0xFF0088F0, target);   // Hole
+    // Handle connecting ear to mouth
+    draw_rect_f(x + 16, y + 16, 8, 4, 0xFFFFFFFF, target);
+    draw_rect_f(x + 14, y + 18, 4, 6, 0xFFFFFFFF, target);
+    // Ring indicators
+    draw_rect_f(x + 28, y + 10, 4, 4, 0xFF66FF66, target);   // Green call dot
     break;
   } // end switch
 } // end draw_icon
@@ -884,9 +918,27 @@ void desktop_render_icons(uint32_t *target, rect_t clip) {
     if (!rect_intersect(clip, icon_r, &overlap))
       continue;
 
-    // Selection Highlight
+    // Selection Highlight — solid gray like Windows
     if (icons[i].selected) {
-      draw_rect_trg(target, icons[i].x - 5, icons[i].y - 5, 50, 70, 0xFF0000FF);
+      draw_rect_trg(target, icons[i].x - 5, icons[i].y - 5, 50, 70, 0xFF555555);
+    }
+    // Hover Highlight — transparent gray overlay
+    else if (i == hovered_icon) {
+      // Blend transparent gray over the background
+      for (int hy = 0; hy < 70; hy++) {
+        for (int hx = 0; hx < 50; hx++) {
+          int px = icons[i].x - 5 + hx;
+          int py = icons[i].y - 5 + hy;
+          if (px >= 0 && px < screen_width && py >= 0 && py < screen_height) {
+            uint32_t dst = target[py * screen_width + px];
+            // Blend 25% white over existing pixel
+            uint32_t r = (((dst >> 16) & 0xFF) * 192 + 255 * 64) >> 8;
+            uint32_t g = (((dst >> 8) & 0xFF) * 192 + 255 * 64) >> 8;
+            uint32_t b = ((dst & 0xFF) * 192 + 255 * 64) >> 8;
+            target[py * screen_width + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
+          }
+        }
+      }
     }
 
     // Draw white background square (matching taskbar style) with filter
@@ -898,7 +950,7 @@ void desktop_render_icons(uint32_t *target, rect_t clip) {
 
     draw_icon(icons[i].x, icons[i].y, icons[i].type, target);
 
-    uint32_t text_col = icons[i].selected ? theme_get()->accent : theme_get()->fg;
+    uint32_t text_col = icons[i].selected ? 0xFFFFFFFF : theme_get()->fg;
     draw_string_to_trg(target, icons[i].x - 2, icons[i].y + 45, icons[i].label,
                        text_col);
   }
@@ -1336,6 +1388,26 @@ void desktop_mouse_up(int mx, int my) {
           case APP_CAMERA:
             camera_app_init();
             break;
+          case APP_PHOTOS: {
+            extern void photos_init();
+            photos_init();
+          } break;
+          case APP_MAIL: {
+            extern void mail_app_init();
+            mail_app_init();
+          } break;
+          case APP_RECORDER: {
+            extern void recorder_init();
+            recorder_init();
+          } break;
+          case APP_CHAT: {
+            extern void chat_init();
+            chat_init();
+          } break;
+          case APP_PHONE: {
+            extern void phone_init();
+            phone_init();
+          } break;
           default:
             break;
           }
@@ -1366,6 +1438,32 @@ void desktop_mouse_up(int mx, int my) {
 }
 
 void desktop_mouse_move(int mx, int my) {
+  // Track hovered icon
+  int new_hover = -1;
+  extern os_config_t global_config;
+  if (global_config.show_desktop_icons) {
+    for (int i = 0; i < icon_count; i++) {
+      if (mx >= icons[i].x - 5 && mx < icons[i].x + 45 &&
+          my >= icons[i].y - 5 && my < icons[i].y + 65) {
+        new_hover = i;
+        break;
+      }
+    }
+  }
+  if (new_hover != hovered_icon) {
+    // Invalidate old hover area
+    if (hovered_icon >= 0 && hovered_icon < icon_count) {
+      compositor_invalidate_rect(icons[hovered_icon].x - 5, icons[hovered_icon].y - 5, 55, 75);
+    }
+    hovered_icon = new_hover;
+    // Invalidate new hover area
+    if (hovered_icon >= 0 && hovered_icon < icon_count) {
+      compositor_invalidate_rect(icons[hovered_icon].x - 5, icons[hovered_icon].y - 5, 55, 75);
+    }
+    extern int ui_dirty;
+    ui_dirty = 1;
+  }
+
   if (drag_icon != -1) {
     // Threshold to consider it a drag (30 pixels) - higher to prevent Bochs
     // jitter
@@ -1520,15 +1618,6 @@ void desktop_mouse_move(int mx, int my) {
 }
 
 void desktop_click(int mx, int my, int buttons) {
-  // Dismiss context menu on any left click
-  if (buttons & 1) {
-    if (ctxmenu_click(mx, my)) {
-      extern int ui_dirty;
-      ui_dirty = 1;
-      return;
-    }
-  }
-
   // Right-click on desktop -> show context menu
   if (buttons & 2) {
     // ... (Context Menu Logic) ...

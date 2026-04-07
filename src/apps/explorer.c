@@ -7,7 +7,13 @@
 #include "../kernel/string.h"
 #include "../kernel/theme.h"
 #include "../kernel/window.h"
+#include "../gui/explorer_icons.h"
+#include "../ui/ctxmenu.h"
+#include <stdint.h>
+#include <string.h>
 
+extern window_t *active_window;
+extern int fat_mkdir(const char *path);
 extern void print_serial(const char *);
 extern int ui_dirty;
 
@@ -29,7 +35,7 @@ typedef struct {
 } search_result_t;
 
 #define MAX_SEARCH_RESULTS 64
-#define SIDEBAR_WIDTH 120
+#define SIDEBAR_WIDTH 180 // Wider sidebar for cloud/tags
 
 typedef struct {
   window_t *win;
@@ -52,7 +58,29 @@ typedef struct {
   int search_active;
   int search_focus;
   int hover_btn;
+  int hovered_index;
+  int hovered_sidebar;
+
+  // Pinned Folders
+  char pinned_paths[8][128];
+  char pinned_names[8][32];
+  int pinned_count;
+  
+  // Added Features
+  int sort_mode; // 0 = Name, 1 = Size
 } explorer_app_t;
+
+// Forward Declarations
+void explorer_refresh(window_t *win);
+static void explorer_show_popup(explorer_app_t *app, const char *msg);
+static void action_pin_selected(void);
+static void action_copy_selected(void);
+static void action_cut_selected(void);
+static void action_paste_here(void);
+static void action_delete_selected(void);
+static void action_new_folder(void);
+static void action_rename_selected(void);
+static void action_refresh_view(void);
 
 static inline explorer_app_t *get_explorer_app(void *w) {
   if (!w) return NULL;
@@ -70,37 +98,28 @@ static void explorer_show_popup(explorer_app_t *app, const char *msg) {
 // Hover tracking for toolbar
 static int hover_btn = -1;
 
-// ======================== COLORS ========================
-// Dynamic Theme Overrides
-#define COL_TITLE_BG     (theme_get()->titlebar)
-#define COL_TOOLBAR_BG   (theme_get()->menu_bg)
-#define COL_ADDR_BG      (theme_get()->input_bg)
-#define COL_ADDR_EDGE    (theme_get()->border)
-#define COL_ADDR_FIELD   (theme_get()->input_bg)
-#define COL_CONTENT_BG   (theme_get()->bg)
-#define COL_SIDEBAR_BG   (theme_get()->menu_bg)
-#define COL_STATUS_BG    (theme_get()->titlebar_inactive)
-#define COL_SEL_BG       (theme_get()->accent)
-#define COL_SEL_BORDER   (theme_get()->accent)
-#define COL_TEXT_BLACK   (theme_get()->fg)
-#define COL_TEXT_DARK    (theme_get()->fg)
-#define COL_TEXT_GRAY    (theme_get()->fg_secondary)
-#define COL_DIVIDER      (theme_get()->border)
-#define COL_ICON_FOLDER  0xFFFFD15C // Manila Yellow (Static for brand)
-#define COL_ICON_FILE    (theme_get()->input_bg)
-#define COL_CARD_BG      (theme_get()->input_bg)
-#define COL_CARD_BORDER  (theme_get()->border)
-#define COL_TEXT_WHT     0xFFFFFFFF
+// ======================== COLORS (AURA DARK THEME) ========================
+#define COL_APP_BG       0xFF161616 // Deep dark, almost black
+#define COL_SIDEBAR_BG   0xFF1A1A1A // Slightly lighter than app bg
+#define COL_CONTENT_BG   0xFF1E1E1E // Content area bg
+#define COL_CARD_BG      0xFF252525 // File card bg
+#define COL_CARD_HOVER   0xFF303030 // File card hover
+#define COL_CARD_SEL     0xFF3A3A3A // File card selected
+#define COL_ACCENT       0xFF2F82E2 // macOS blue accent
+#define COL_TEXT_WHT     0xFFFFFFFF // Primary text
+#define COL_TEXT_MUTED   0xFF8B8F96 // Secondary text
+#define COL_TEXT_DARK    0xFFD0D0D0
+#define COL_DIVIDER      0xFF2A2A2A // Subtle borders
+#define COL_ADDR_BG      0xFF2A2A2A // Search/Address bar
+#define COL_ADDR_FIELD   0xFF2A2A2A
+#define COL_ADDR_EDGE    0xFF404040
+#define COL_SEL_BORDER   0xFF4A90D9
 
 // ======================== HELPERS ========================
 
 static void explorer_go_up(explorer_app_t *app) {
-  if (app->at_this_pc)
+  if (strcmp(app->explorer_path, "/") == 0)
     return;
-  if (strcmp(app->explorer_path, "/") == 0) {
-    app->at_this_pc = 1;
-    return;
-  }
   char *last_slash = 0;
   for (int i = 0; app->explorer_path[i]; i++)
     if (app->explorer_path[i] == '/')
@@ -112,14 +131,16 @@ static void explorer_go_up(explorer_app_t *app) {
 }
 
 static void build_display_path(explorer_app_t *app, char *out, int max) {
-  // Convert /DOCS/PROJECTS to "This PC > C: > DOCS > PROJECTS"
   if (app->at_this_pc) {
     strcpy(out, "This PC");
     return;
   }
-  strcpy(out, "This PC > C:");
+  
+  strcpy(out, "Home");
   if (app->explorer_path[0] == '/' && app->explorer_path[1] == 0)
-    strcpy(out, "This PC > C:");
+    return;
+    
+  strcat(out, " > ");
   int start = strlen(out);
   char *p = app->explorer_path;
   if (*p == '/')
@@ -128,13 +149,165 @@ static void build_display_path(explorer_app_t *app, char *out, int max) {
     if (start < max - 4) {
       if (*p == '/') {
         strcat(out, " > ");
-        start += 3;
+        start = strlen(out);
       } else {
         out[start++] = *p;
         out[start] = 0;
       }
     }
     p++;
+  }
+}
+
+// ======================== PINNING ========================
+
+static void explorer_pin_folder(explorer_app_t *app, const char *name, const char *path) {
+  if (app->pinned_count >= 8) return;
+  // Check if already pinned
+  for (int i = 0; i < app->pinned_count; i++) {
+    if (strcmp(app->pinned_paths[i], path) == 0) return;
+  }
+  strcpy(app->pinned_names[app->pinned_count], name);
+  strcpy(app->pinned_paths[app->pinned_count], path);
+  app->pinned_count++;
+}
+
+static void action_pin_selected(void) {
+  // Find current explorer app
+  window_t *win = active_window;
+  explorer_app_t *app = get_explorer_app(win);
+  if (!app || app->selected_index < 0) return;
+
+  int slot = -1;
+  for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+    if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+      slot = i; break;
+    }
+  }
+  if (slot == -1) return;
+
+  FileInfo *fi = &app->dir_cache[slot].files[app->selected_index];
+  if (!fi->is_dir) {
+    explorer_show_popup(app, "Only folders can be pinned");
+    return;
+  }
+
+  char full_path[160];
+  strcpy(full_path, app->explorer_path);
+  if (full_path[strlen(full_path)-1] != '/') strcat(full_path, "/");
+  strcat(full_path, fi->name);
+
+  explorer_pin_folder(app, fi->name, full_path);
+  win->needs_redraw = 1;
+}
+
+static void action_copy_selected(void) {
+  window_t *win = active_window;
+  if (win && win->on_copy) win->on_copy(win);
+}
+
+static void action_cut_selected(void) {
+  window_t *win = active_window;
+  if (win && win->on_cut) win->on_cut(win);
+}
+
+static void action_paste_here(void) {
+  window_t *win = active_window;
+  if (win && win->on_paste) win->on_paste(win, clipboard_paste());
+}
+
+static void action_delete_selected(void) {
+  window_t *win = active_window;
+  explorer_app_t *app = get_explorer_app(win);
+  if (!app || app->selected_index < 0) return;
+  
+  int slot = -1;
+  for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+    if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+      slot = i; break;
+    }
+  }
+  if (slot == -1) return;
+
+  FileInfo *fi = &app->dir_cache[slot].files[app->selected_index];
+  char full_path[160];
+  strcpy(full_path, (app->explorer_path[0] == 0) ? "/" : app->explorer_path);
+  if (full_path[strlen(full_path) - 1] != '/')
+    strcat(full_path, "/");
+  strcat(full_path, fi->name);
+
+  print_serial("EXPLORER DELETE: path='"); print_serial(full_path); print_serial("'\n");
+  int res = fat_delete_recursive(full_path);
+  print_serial("EXPLORER DELETE: result=");
+  char rb[12]; k_itoa(res, rb); print_serial(rb); print_serial("\n");
+  for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) app->dir_cache[i].valid = 0;
+  explorer_refresh(win);
+  win->needs_redraw = 1;
+}
+
+static void action_new_folder(void) {
+  window_t *win = active_window;
+  explorer_app_t *app = get_explorer_app(win);
+  if (!app) return;
+  app->dialog_active = 1;
+  app->dialog_input[0] = 0;
+  app->dialog_cursor = 0;
+  win->needs_redraw = 1;
+}
+
+static void action_refresh_view(void) {
+  window_t *win = active_window;
+  if (win) {
+    explorer_app_t *app = get_explorer_app(win);
+    if (app) {
+      for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) app->dir_cache[i].valid = 0;
+      explorer_refresh(win);
+    }
+  }
+}
+
+static void action_rename_selected(void) {
+  window_t *win = active_window;
+  explorer_app_t *app = get_explorer_app(win);
+  if (!app) return;
+  
+  int slot = -1;
+  for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+    if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+      slot = i; break;
+    }
+  }
+  if (slot == -1 || app->selected_index < 0) return;
+  
+  app->dialog_active = 4;
+  strcpy(app->dialog_input, app->dir_cache[slot].files[app->selected_index].name);
+  app->dialog_cursor = strlen(app->dialog_input);
+  win->needs_redraw = 1;
+}
+
+static void explorer_sort_cache(explorer_app_t *app, int slot) {
+  if (slot < 0 || slot >= EXPLORER_CACHE_SIZE) return;
+  int count = app->dir_cache[slot].count;
+  FileInfo *files = app->dir_cache[slot].files;
+  
+  for (int i = 0; i < count - 1; i++) {
+    for (int j = 0; j < count - i - 1; j++) {
+      int swap = 0;
+      if (files[j].is_dir != files[j+1].is_dir) {
+        swap = files[j].is_dir ? 0 : 1;
+      } else {
+        if (app->sort_mode == 0) { // By name
+          swap = (strcmp(files[j].name, files[j+1].name) > 0);
+        } else { // By size
+          swap = (files[j].size < files[j+1].size);
+        }
+      }
+      if (swap) {
+        FileInfo tmp = files[j];
+        files[j] = files[j+1];
+        files[j+1] = tmp;
+      }
+    }
   }
 }
 
@@ -255,6 +428,8 @@ void explorer_refresh(window_t *win) {
     app->dir_cache[cache_slot].valid = 1;
     app->dir_cache[cache_slot].last_used = ++app->explorer_access_counter;
   }
+  
+  explorer_sort_cache(app, cache_slot);
 
   app->selected_index = -1;
   app->scroll_offset = 0;
@@ -263,161 +438,237 @@ void explorer_refresh(window_t *win) {
   ui_dirty = 1;
 }
 
-// ======================== ICON DRAWING ========================
-
-// Large folder icon (40x32)
-static void draw_folder_icon_large(window_t *win, int x, int y) {
-  // Manila folder look
-  winmgr_fill_rect(win, x, y + 4, 14, 4, 0xFFE0C040);       // Darker tab
-  winmgr_fill_rect(win, x, y + 8, 38, 24, COL_ICON_FOLDER); // Body
-  winmgr_fill_rect(win, x + 1, y + 10, 36, 1, 0x40FFFFFF);  // Inner highlight
-  winmgr_fill_rect(win, x, y + 8, 38, 1, 0x20000000);       // Top shadow
-  winmgr_draw_rect(win, x, y + 8, 38, 24, 0xFFC0A030);      // Outline
-}
-
-// Large file icon (36x40)
-static void draw_file_icon_large(window_t *win, int x, int y) {
-  // Document body
-  winmgr_fill_rect(win, x + 4, y, 30, 38, COL_ICON_FILE);
-  winmgr_draw_rect(win, x + 4, y, 30, 38, 0xFFD0D0D0); // Outline
-  // Folded corner
-  winmgr_fill_rect(win, x + 26, y, 8, 8, 0xFFF8FBFF);
-  winmgr_draw_rect(win, x + 26, y, 8, 8, 0xFFD0D0D0);
-  // Text lines (subtle gray)
-  winmgr_fill_rect(win, x + 10, y + 14, 18, 1, 0xFFCCCCCC);
-  winmgr_fill_rect(win, x + 10, y + 20, 14, 1, 0xFFCCCCCC);
-  winmgr_fill_rect(win, x + 10, y + 26, 16, 1, 0xFFCCCCCC);
-}
+// ======================== DRAWING UI ========================
 
 static void draw_sidebar(window_t *win) {
   explorer_app_t *app = get_explorer_app(win);
   if (!app) return;
   int h = win->height;
-  // Solid light teal sidebar
-  winmgr_fill_rect(win, 0, 24, SIDEBAR_WIDTH, h - 24, COL_SIDEBAR_BG);
-  winmgr_fill_rect(win, SIDEBAR_WIDTH - 1, 24, 1, h - 24, COL_DIVIDER);
+  
+  // Solid dark sidebar
+  winmgr_fill_rect(win, 0, 0, SIDEBAR_WIDTH, h, COL_SIDEBAR_BG);
+  winmgr_fill_rect(win, SIDEBAR_WIDTH - 1, 0, 1, h, COL_DIVIDER);
 
-  const char *items[] = {"This PC", "All Files", "Texts (.txt)", "Images (.png)", "Apps (.app)"};
-  for (int i = 0; i < 5; i++) {
-    if (app->sidebar_sel == i) {
-      winmgr_fill_rect(win, 5, 40 + i * 28, SIDEBAR_WIDTH - 10, 24,
-                       0xFF99CCFF); // Opaque Blue selection
+  struct { const char* section; const char* items[4]; int count; } menu[] = {
+    {"Quick Access", {"Recents", "Downloads", "Desktop", "Documents"}, 4},
+    {"My Storage", {"Local Disk (C:)", "External Drive", 0, 0}, 2},
+    {"Cloud", {"iCloud Drive", "Google Drive", 0, 0}, 2}
+  };
+
+  int y = 50;
+  int sel_idx = 0;
+  
+  for (int s = 0; s < 3; s++) {
+    winmgr_draw_text(win, 15, y, menu[s].section, COL_TEXT_MUTED);
+    y += 20;
+    
+    for (int i = 0; i < menu[s].count; i++) {
+        if (sel_idx == app->sidebar_sel) {
+            winmgr_fill_rect(win, 8, y - 4, SIDEBAR_WIDTH - 16, 24, COL_CARD_SEL);
+        } else if (sel_idx == app->hovered_sidebar) {
+            winmgr_fill_rect(win, 8, y - 4, SIDEBAR_WIDTH - 16, 24, COL_CARD_HOVER);
+        }
+        
+        winmgr_draw_text(win, 25, y + 2, menu[s].items[i], COL_TEXT_WHT);
+        y += 28;
+        sel_idx++;
     }
-    winmgr_draw_text(win, 10, 48 + i * 28, items[i], COL_TEXT_DARK);
+    y += 10;
+  }
+
+  // Dynamic Pinned Folders
+  winmgr_draw_text(win, 15, y, "Pinned", COL_TEXT_MUTED);
+  y += 20;
+  for (int i = 0; i < app->pinned_count; i++) {
+      if (sel_idx == app->sidebar_sel) {
+          winmgr_fill_rect(win, 8, y - 4, SIDEBAR_WIDTH - 16, 24, COL_CARD_SEL);
+      } else if (sel_idx == app->hovered_sidebar) {
+          winmgr_fill_rect(win, 8, y - 4, SIDEBAR_WIDTH - 16, 24, COL_CARD_HOVER);
+      }
+      winmgr_draw_text(win, 25, y + 2, app->pinned_names[i], COL_TEXT_WHT);
+      y += 28;
+      sel_idx++;
   }
 }
 
-// ======================== DRAWING ========================
-
-static void draw_navigation_bar(window_t *win) {
+static void draw_header(window_t *win) {
   explorer_app_t *app = get_explorer_app(win);
   if (!app) return;
   int w = win->width;
 
-  // Navigation bar background (Dark Frosted Gradient)
-  // Modern Flat Light Navigation
-  winmgr_fill_rect(win, 0, 24, w, 28, COL_TITLE_BG);
-  winmgr_fill_rect(win, 0, 51, w, 1, COL_DIVIDER);
+  // Header Background
+  winmgr_fill_rect(win, SIDEBAR_WIDTH, 0, w - SIDEBAR_WIDTH, 50, COL_CONTENT_BG);
+  winmgr_fill_rect(win, SIDEBAR_WIDTH, 49, w - SIDEBAR_WIDTH, 1, COL_DIVIDER);
 
-  // Back/Forward buttons mimicking macOS
-  winmgr_draw_text(win, 15, 31, "<  >", COL_TEXT_DARK);
+  // App Title
+  winmgr_draw_text(win, SIDEBAR_WIDTH + 20, 18, "Aura Files", COL_TEXT_WHT);
 
-  // Address bar title
-  char title[128];
-  build_display_path(app, title, 128);
-  int title_len = strlen(title);
-  winmgr_draw_text(win, (w - title_len * 8) / 2, 31, title, COL_TEXT_BLACK);
-
-  // Search Bar (Right Aligned)
-  int sw = 150;
-  int sx = w - sw - 10;
-  winmgr_fill_rect(win, sx, 28, sw, 20,
-                   app->search_focus ? COL_ADDR_BG : COL_TITLE_BG);
-  winmgr_draw_rect(win, sx, 28, sw, 20, COL_ADDR_EDGE);
+  // Search Bar (Center-ish)
+  int sw = 250;
+  int sx = SIDEBAR_WIDTH + (w - SIDEBAR_WIDTH - sw) / 2;
+  
+  // Rounded-like search bar (drawn as standard rect due to primitive engine limitations)
+  winmgr_fill_rect(win, sx, 12, sw, 26, app->search_focus ? 0xFF353535 : COL_ADDR_BG);
+  winmgr_draw_rect(win, sx, 12, sw, 26, COL_DIVIDER);
 
   if (strlen(app->search_query) == 0 && !app->search_focus) {
-    winmgr_draw_text(win, sx + 5, 33, "Search files...", COL_TEXT_GRAY);
+    winmgr_draw_text(win, sx + 10, 18, "Search folders, files...", COL_TEXT_MUTED);
   } else {
-    winmgr_draw_text(win, sx + 5, 33, app->search_query, COL_TEXT_BLACK);
+    winmgr_draw_text(win, sx + 10, 18, app->search_query, COL_TEXT_WHT);
     if (app->search_focus) {
-      // Cursor
-      int cur_x = sx + 5 + strlen(app->search_query) * 8;
-      winmgr_fill_rect(win, cur_x, 33, 1, 12, COL_TEXT_BLACK);
+      int cur_x = sx + 10 + strlen(app->search_query) * 8;
+      winmgr_fill_rect(win, cur_x, 18, 1, 12, COL_TEXT_WHT);
     }
   }
 
-  // Clear search button
-  if (app->search_active) {
-    winmgr_fill_rect(win, sx - 25, 28, 20, 20, 0xFFEE6666);
-    winmgr_draw_text(win, sx - 19, 33, "X", COL_TEXT_WHT);
-  }
+  // Fake Profile/Notification icons on far right
+  winmgr_draw_text(win, w - 70, 18, "O", COL_TEXT_MUTED); // Bell
+  winmgr_draw_text(win, w - 40, 18, "U", COL_TEXT_WHT); // Profile circle
 }
 
-// C: Drive icon with storage bar (Improved)
-static void draw_drive_block(window_t *win, int x, int y, int w, int selected) {
-  uint32_t bg = selected ? COL_SEL_BG : COL_CARD_BG;
-  uint32_t border = selected ? COL_SEL_BORDER : COL_DIVIDER;
-
-  // Card base with subtle shadow/gradient feel
-  winmgr_fill_rect(win, x, y, w, 70, bg);
-  winmgr_draw_rect(win, x, y, w, 70, border);
-
-  // Drive label
-  winmgr_draw_text(win, x + 15, y + 12, "Local Disk (C:)", COL_TEXT_DARK);
-
-  // Storage bar (Modern Gradient Feel)
-  int bar_x = x + 15;
-  int bar_y = y + 32;
-  int bar_w = w - 30;
-  if (bar_w > 200)
-    bar_w = 200;
-
-  // Track
-  winmgr_fill_rect(win, bar_x, bar_y, bar_w, 8, 0xFF1A1E24);
-  // Progress (Gradient-like: Sakura Pink)
-  int used = bar_w * 3 / 10;
-  winmgr_fill_rect(win, bar_x, bar_y, used, 8, COL_ICON_FOLDER);
-
-  // Size text
-  winmgr_draw_text(win, bar_x, bar_y + 14, "7.2 GB free of 10 GB",
-                   0xFF555555); // Darker gray for readability
-
-  // "Manage" Button Simulation
-  int mx = x + w - 70;
-  int my = y + 10;
-  winmgr_fill_rect(win, mx, my, 60, 20, 0xFFE0E0E0); // Opaque Light Gray
-  winmgr_draw_text(win, mx + 8, my + 5, "Manage", COL_TEXT_DARK);
-}
-
-static void draw_this_pc_view(window_t *win) {
+static void draw_navigation_toolbar(window_t *win) {
   explorer_app_t *app = get_explorer_app(win);
   if (!app) return;
+  
+  int tx = SIDEBAR_WIDTH;
+  int ty = 50;
   int w = win->width;
-  int content_x = SIDEBAR_WIDTH + 10;
-  int content_y = 60;
 
-  winmgr_draw_text(win, content_x, content_y, "Devices", COL_TEXT_BLACK);
+  // Toolbar area
+  winmgr_fill_rect(win, tx, ty, w - tx, 60, COL_CONTENT_BG);
+  
+  // Breadcrumb
+  char title[128];
+  build_display_path(app, title, 128);
+  winmgr_draw_text(win, tx + 20, ty + 15, "H", COL_TEXT_MUTED); // Home icon placeholder
+  winmgr_draw_text(win, tx + 35, ty + 15, ">", COL_TEXT_MUTED);
+  winmgr_draw_text(win, tx + 50, ty + 15, title, COL_TEXT_WHT);
 
-  int drive_w = (w - content_x - 30);
-  if (drive_w > 260)
-    drive_w = 260;
-  draw_drive_block(win, content_x, content_y + 25, drive_w,
-                   (app->selected_index == 0));
+  // Action Buttons
+  int btn_y = ty + 35;
+  winmgr_fill_rect(win, tx + 20, btn_y, 90, 24, COL_ACCENT); // Primary button
+  winmgr_draw_text(win, tx + 25, btn_y + 6, "+ New Folder", COL_TEXT_WHT);
+  
+  winmgr_fill_rect(win, tx + 120, btn_y, 70, 24, COL_CARD_BG);
+  winmgr_draw_text(win, tx + 130, btn_y + 6, "^ Upload", COL_TEXT_WHT);
+  
+  winmgr_fill_rect(win, tx + 200, btn_y, 60, 24, COL_CARD_BG);
+  winmgr_draw_text(win, tx + 210, btn_y + 6, "Share", COL_TEXT_WHT);
+  
+  winmgr_fill_rect(win, tx + 270, btn_y, 70, 24, COL_CARD_BG);
+  winmgr_draw_text(win, tx + 280, btn_y + 6, "Sort", COL_TEXT_WHT);
 }
+
+static void draw_column_headers(window_t *win) {
+  int tx = SIDEBAR_WIDTH;
+  int ty = 110;
+  int w = win->width - tx;
+  
+  winmgr_fill_rect(win, tx, ty, w, 24, COL_CONTENT_BG);
+  winmgr_fill_rect(win, tx, ty + 23, w, 1, COL_DIVIDER);
+  
+  winmgr_draw_text(win, tx + 20, ty + 6, "Name", COL_TEXT_MUTED);
+  winmgr_draw_text(win, tx + (w / 2) - 30, ty + 6, "Size", COL_TEXT_MUTED);
+  winmgr_draw_text(win, tx + (w / 2) + 50, ty + 6, "Type", COL_TEXT_MUTED);
+  winmgr_draw_text(win, tx + w - 150, ty + 6, "Date Modified", COL_TEXT_MUTED);
+}
+
+
+static void draw_file_card(window_t *win, FileInfo *fi, int x, int y, int w, int h, int selected, int hovered) {
+    if (selected) {
+        winmgr_fill_rect(win, x, y, w, h, COL_CARD_SEL);
+        winmgr_draw_rect(win, x, y, w, h, COL_ACCENT);
+    } else if (hovered) {
+        winmgr_fill_rect(win, x, y, w, h, COL_CARD_HOVER);
+        winmgr_draw_rect(win, x, y, w, h, COL_DIVIDER);
+    } else {
+        winmgr_fill_rect(win, x, y, w, h, COL_CARD_BG);
+        winmgr_draw_rect(win, x, y, w, h, COL_DIVIDER);
+    }
+
+    // Determine type & icon
+    const char *type_name = "File";
+    if (fi->is_dir) {
+        if (strcmp(fi->name, "..") == 0) {
+            draw_icon_folder_48(win, x + w / 2 - 24, y + 10);
+            winmgr_draw_text(win, x + w / 2 - 8, y + 65, "..", COL_TEXT_WHT);
+            return;
+        }
+        type_name = "Folder";
+        draw_icon_folder_48(win, x + w / 2 - 24, y + 10);
+    } else {
+        int len = strlen(fi->name);
+        if (len > 4) {
+            if (strcasestr(fi->name, ".pdf")) {
+                type_name = "PDF Document";
+                draw_icon_pdf_48(win, x + w / 2 - 24, y + 10);
+            } else if (strcasestr(fi->name, ".png") || strcasestr(fi->name, ".bmp")) {
+                type_name = "Image";
+                draw_icon_image_48(win, x + w / 2 - 24, y + 10);
+            } else if (strcasestr(fi->name, ".app")) {
+                type_name = "Application";
+                draw_icon_app_48(win, x + w / 2 - 24, y + 10);
+            } else if (strcasestr(fi->name, ".txt")) {
+                type_name = "Text Document";
+                draw_icon_file_48(win, x + w / 2 - 24, y + 10);
+            } else {
+                draw_icon_file_48(win, x + w / 2 - 24, y + 10);
+            }
+        } else {
+            draw_icon_file_48(win, x + w / 2 - 24, y + 10);
+        }
+    }
+
+    // Name truncation
+    char name_buf[20] = {0};
+    strncpy(name_buf, fi->name, 15);
+    if (strlen(fi->name) > 15) {
+        strcpy(name_buf + 12, "...");
+    }
+    int tx = x + (w - strlen(name_buf) * 8) / 2;
+    winmgr_draw_text(win, tx, y + 65, name_buf, COL_TEXT_WHT);
+
+    // Type label
+    int ty_x = x + (w - strlen(type_name) * 8) / 2;
+    winmgr_draw_text(win, ty_x, y + h - 26, type_name, COL_TEXT_MUTED);
+
+    // Size label
+    char size_buf[32];
+    if (fi->is_dir) {
+        strcpy(size_buf, "--");
+    } else {
+        if (fi->size < 1024) {
+            char num[16];
+            k_itoa(fi->size, num);
+            strcpy(size_buf, num);
+            strcat(size_buf, " B");
+        } else if (fi->size < 1024 * 1024) {
+            char num[16];
+            k_itoa(fi->size / 1024, num);
+            strcpy(size_buf, num);
+            strcat(size_buf, " KB");
+        } else {
+            char num[16];
+            k_itoa(fi->size / (1024 * 1024), num);
+            strcpy(size_buf, num);
+            strcat(size_buf, " MB");
+        }
+    }
+    int sz_x = x + (w - strlen(size_buf) * 8) / 2;
+    winmgr_draw_text(win, sz_x, y + h - 14, size_buf, COL_TEXT_MUTED);
+}
+
 
 static void draw_file_grid(window_t *win) {
   explorer_app_t *app = get_explorer_app(win);
   if (!app) return;
   int w = win->width;
-  int content_y = 78;
-  int content_h = win->height - content_y - 24;
-
+  int content_y = 135;
+  int content_h = win->height - content_y - 30; // 30 for status bar
   int content_x = SIDEBAR_WIDTH;
-  // Content background
-  winmgr_fill_rect(win, content_x, content_y, w - content_x, content_h,
-                   COL_CONTENT_BG);
 
-  // Get current cache slot for this path
+  winmgr_fill_rect(win, content_x, content_y, w - content_x, content_h, COL_CONTENT_BG);
+
   int slot = -1;
   for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
     if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
@@ -428,82 +679,40 @@ static void draw_file_grid(window_t *win) {
 
   if (slot == -1 || app->dir_cache[slot].count == 0) {
     win->max_scroll = 0;
-    winmgr_draw_text(win, content_x + 20, content_y + 30,
-                     "This folder is empty or not in cache", COL_TEXT_GRAY);
+    winmgr_draw_text(win, content_x + (w - content_x)/2 - 100, content_y + 100,
+                     "This folder is empty", COL_TEXT_MUTED);
     return;
   }
 
   int f_count = app->dir_cache[slot].count;
   FileInfo *f_cache = app->dir_cache[slot].files;
 
-  // Grid layout
-  int start_x = content_x + 10;
-  int start_y = content_y + 8;
-  int cell_w = 110; // Increased from 80 to prevent overlap
-  int cell_h = 90;  // Increased from 80
-  int cols = (w - content_x - 10) / cell_w;
-  if (cols < 1)
-    cols = 1;
+  // Grid layout (using File Cards)
+  int start_x = content_x + 20;
+  int start_y = content_y + 10;
+  int cell_w = 140; 
+  int cell_h = 120;  
+  int padding = 15;
+  int cols = (w - content_x - 40) / (cell_w + padding);
+  if (cols < 1) cols = 1;
 
   int total_rows = (f_count + cols - 1) / cols;
-  int max_scroll_pixels = total_rows * cell_h - (content_h - 10);
-  if (max_scroll_pixels < 0)
-    max_scroll_pixels = 0;
-  win->max_scroll = max_scroll_pixels;
+  int max_scroll = (total_rows * (cell_h + padding)) - content_h + 20;
+  win->max_scroll = (max_scroll > 0) ? max_scroll : 0;
 
   for (int i = 0; i < f_count && i < 64; i++) {
+    if (strcmp(f_cache[i].name, ".") == 0) continue;
+
     int col = i % cols;
     int row = i / cols;
 
-    int fx = start_x + col * cell_w;
-    int fy = start_y + row * cell_h - win->scroll_position;
+    int fx = start_x + col * (cell_w + padding);
+    int fy = start_y + row * (cell_h + padding) - win->scroll_position;
 
-    // Bounds check
-    if (fy + cell_h < 78 || fy > win->height - 24)
-      continue;
+    if (fy + cell_h < content_y || fy > win->height - 30) continue;
 
-    // Skip . entry
-    if (strcmp(f_cache[i].name, ".") == 0)
-      continue;
-
-    // Selection highlight
-    if (i == app->selected_index) {
-      winmgr_fill_rect(win, fx, fy, cell_w - 4, cell_h - 4, COL_SEL_BG);
-      winmgr_draw_rect(win, fx, fy, cell_w - 4, cell_h - 4, COL_SEL_BORDER);
-    }
-
-    // Icon
-    int icon_x = fx + (cell_w - 36) / 2;
-    int icon_y = fy + 4;
-
-    if (f_cache[i].is_dir) {
-      if (strcmp(f_cache[i].name, "..") == 0) {
-        // Up arrow for ..
-        winmgr_fill_rect(win, icon_x + 8, icon_y + 8, 20, 20, COL_ICON_FOLDER);
-        winmgr_draw_text(win, icon_x + 12, icon_y + 12, "..", COL_TEXT_BLACK);
-      } else {
-        draw_folder_icon_large(win, icon_x, icon_y);
-      }
-    } else {
-      draw_file_icon_large(win, icon_x, icon_y);
-    }
-
-    // Name truncation logic
-    char name_buf[16] = {0};
-    strncpy(name_buf, f_cache[i].name, 11);
-    if (strlen(f_cache[i].name) > 11) {
-      name_buf[8] = '.';
-      name_buf[9] = '.';
-      name_buf[10] = '.';
-      name_buf[11] = 0;
-    }
-    int name_len = strlen(name_buf);
-    int tx = fx + (cell_w - 4 - name_len * 8) / 2;
-    if (tx < fx)
-      tx = fx;
-
-    uint32_t name_col = (i == app->selected_index) ? COL_TEXT_BLACK : COL_TEXT_DARK;
-    winmgr_draw_text(win, tx, fy + cell_h - 18, name_buf, name_col);
+    draw_file_card(win, &f_cache[i], fx, fy, cell_w, cell_h, 
+                  (i == app->selected_index), (i == app->hovered_index));
   }
 }
 
@@ -511,120 +720,75 @@ static void draw_search_results(window_t *win) {
   explorer_app_t *app = get_explorer_app(win);
   if (!app) return;
   int w = win->width;
-  int content_y = 78;
-  int content_h = win->height - content_y - 24;
+  int content_y = 135;
+  int content_h = win->height - content_y - 30;
   int content_x = SIDEBAR_WIDTH;
 
-  winmgr_fill_rect(win, content_x, content_y, w - content_x, content_h,
-                   COL_CONTENT_BG);
+  winmgr_fill_rect(win, content_x, content_y, w - content_x, content_h, COL_CONTENT_BG);
 
   if (app->search_count == 0) {
-    winmgr_draw_text(win, content_x + 20, content_y + 30, "No results found.",
-                     COL_TEXT_GRAY);
+    winmgr_draw_text(win, content_x + 20, content_y + 30, "No results found.", COL_TEXT_MUTED);
     return;
   }
 
-  // Grid layout for results (similar to file_grid but uses search_results)
-  int start_x = content_x + 10;
-  int start_y = content_y + 8;
-  int cell_w = 110;
-  int cell_h = 90;
-  int cols = (w - content_x - 10) / cell_w;
-  if (cols < 1)
-    cols = 1;
+  int start_x = content_x + 20;
+  int start_y = content_y + 10;
+  int cell_w = 140; 
+  int cell_h = 120;  
+  int padding = 15;
+  int cols = (w - content_x - 40) / (cell_w + padding);
+  if (cols < 1) cols = 1;
 
   int total_rows = (app->search_count + cols - 1) / cols;
-  win->max_scroll =
-      (total_rows * cell_h > content_h) ? total_rows * cell_h - content_h : 0;
+  int max_scroll = (total_rows * (cell_h + padding)) - content_h + 20;
+  win->max_scroll = (max_scroll > 0) ? max_scroll : 0;
 
   for (int i = 0; i < app->search_count; i++) {
     int col = i % cols;
     int row = i / cols;
-    int fx = start_x + col * cell_w;
-    int fy = start_y + row * cell_h - win->scroll_position;
+    int fx = start_x + col * (cell_w + padding);
+    int fy = start_y + row * (cell_h + padding) - win->scroll_position;
 
-    if (fy + cell_h < 78 || fy > win->height - 24)
-      continue;
+    if (fy + cell_h < content_y || fy > win->height - 30) continue;
 
-    if (i == app->selected_index) {
-      winmgr_fill_rect(win, fx, fy, cell_w - 4, cell_h - 4, COL_SEL_BG);
-      winmgr_draw_rect(win, fx, fy, cell_w - 4, cell_h - 4, COL_SEL_BORDER);
-    }
-
-    int icon_x = fx + (cell_w - 36) / 2;
-    int icon_y = fy + 4;
-
-    if (app->search_results[i].is_dir) {
-      draw_folder_icon_large(win, icon_x, icon_y);
-    } else {
-      draw_file_icon_large(win, icon_x, icon_y);
-    }
-
-    char name_buf[16] = {0};
-    strncpy(name_buf, app->search_results[i].name, 11);
-    if (strlen(app->search_results[i].name) > 11) {
-      strcpy(name_buf + 8, "...");
-    }
-    int name_len = strlen(name_buf);
-    int tx = fx + (cell_w - 4 - name_len * 8) / 2;
-    winmgr_draw_text(win, tx, fy + cell_h - 18, name_buf, COL_TEXT_DARK);
+    FileInfo fi;
+    strcpy(fi.name, app->search_results[i].name);
+    fi.is_dir = app->search_results[i].is_dir;
+    fi.size = app->search_results[i].size;
+    
+    draw_file_card(win, &fi, fx, fy, cell_w, cell_h, 
+                  (i == app->selected_index), (i == app->hovered_index));
   }
-}
-
-static void draw_action_toolbar(window_t *win) {
-  explorer_app_t *app = get_explorer_app(win);
-  if (!app) return;
-  int w = win->width;
-  int tx = SIDEBAR_WIDTH + 5;
-
-  // Toolbar background
-  winmgr_fill_rect(win, tx, 52, w - tx, 24, COL_TOOLBAR_BG);
-  // Bottom divider
-  winmgr_fill_rect(win, tx, 76, w - tx, 1, COL_DIVIDER);
-
-  if (app->at_this_pc)
-    return;
-
-  // New Folder button
-  uint32_t nf = (app->hover_btn == 10) ? COL_SEL_BG : 0x20FFFFFF;
-  winmgr_fill_rect(win, tx + 6, 54, 60, 19, nf);
-  winmgr_draw_text(win, tx + 10, 57, "+ Folder", COL_TEXT_DARK);
-
-  // Refresh
-  uint32_t ref = (app->hover_btn == 13) ? COL_SEL_BG : 0x20FFFFFF;
-  winmgr_fill_rect(win, tx + 70, 54, 55, 19, ref);
-  winmgr_draw_text(win, tx + 74, 57, "Refresh", COL_TEXT_DARK);
 }
 
 static void draw_status_bar(window_t *win) {
   explorer_app_t *app = get_explorer_app(win);
   if (!app) return;
   int w = win->width;
-  int sy = win->height - 24;
+  int sy = win->height - 30;
 
-  winmgr_fill_rect(win, 0, sy, w, 24, COL_STATUS_BG);
-  winmgr_fill_rect(win, 0, sy, w, 1, COL_DIVIDER);
+  winmgr_fill_rect(win, SIDEBAR_WIDTH, sy, w - SIDEBAR_WIDTH, 30, COL_CONTENT_BG);
+  winmgr_fill_rect(win, SIDEBAR_WIDTH, sy, w - SIDEBAR_WIDTH, 1, COL_DIVIDER);
 
   char status[128];
-  if (app->at_this_pc) {
-    strcpy(status, "1 drive connected");
-  } else {
-    // Get current cache slot for this path
-    int slot = -1;
-    for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
-      if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
-        slot = i;
-        break;
-      }
+  int slot = -1;
+  for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+    if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+      slot = i;
+      break;
     }
-    int f_count = (slot != -1) ? app->dir_cache[slot].count : 0;
-
-    char num[12];
-    k_itoa(f_count, num);
-    strcpy(status, num);
-    strcat(status, " items found");
   }
-  winmgr_draw_text(win, 10, sy + 6, status, COL_TEXT_DARK);
+  int f_count = (slot != -1) ? app->dir_cache[slot].count : 0;
+
+  char num[12];
+  k_itoa(f_count, num);
+  strcpy(status, num);
+  strcat(status, " items");
+  
+  winmgr_draw_text(win, SIDEBAR_WIDTH + 20, sy + 10, status, COL_TEXT_MUTED);
+  
+  // OS Name branding
+  winmgr_draw_text(win, w - 80, sy + 10, "Pure OS", COL_TEXT_MUTED);
 }
 
 static void draw_input_dialog(window_t *win) {
@@ -655,7 +819,10 @@ static void draw_input_dialog(window_t *win) {
   }
 
   // Title
-  const char *title = (app->dialog_active == 1) ? "New Folder" : "New File";
+  const char *title = "";
+  if (app->dialog_active == 1) title = "New Folder";
+  else if (app->dialog_active == 2) title = "New File";
+  else if (app->dialog_active == 4) title = "Rename Item";
   winmgr_draw_text(win, dx + 10, dy + 8, title, 0xFFFFFFFF); // Fixed contrast
 
   // Input field
@@ -663,12 +830,12 @@ static void draw_input_dialog(window_t *win) {
   winmgr_draw_rect(win, dx + 12, dy + 40, dw - 24, 22, COL_ADDR_EDGE);
   winmgr_draw_text(win, dx + 16, dy + 44, app->dialog_input, COL_TEXT_DARK);
 
-  // Buttons
-  winmgr_fill_rect(win, dx + 60, dy + 75, 70, 24, 0xFF98C379); // Green
-  winmgr_draw_text(win, dx + 85, dy + 81, "OK", COL_TEXT_DARK);
+  // Actions
+  winmgr_fill_rect(win, dx + 60, dy + 75, 70, 24, COL_APP_BG);
+  winmgr_draw_text(win, dx + 85, dy + 79, "OK", COL_TEXT_WHT);
 
-  winmgr_fill_rect(win, dx + 150, dy + 75, 70, 24, COL_SEL_BG); // Sakura
-  winmgr_draw_text(win, dx + 162, dy + 81, "Cancel", COL_TEXT_DARK);
+  winmgr_fill_rect(win, dx + 150, dy + 75, 70, 24, COL_CARD_SEL); // Sakura
+  winmgr_draw_text(win, dx + 162, dy + 79, "Cancel", COL_TEXT_WHT);
 }
 
 // ======================== MAIN DRAW ========================
@@ -677,21 +844,18 @@ void explorer_draw(window_t *win) {
   explorer_app_t *app = get_explorer_app(win);
   if (!app) return;
   
-  const theme_t *theme = theme_get();
- 
-  // Clear the entire window area to theme background
-  winmgr_fill_rect(win, 0, 0, win->width, win->height, theme->bg);
+  // App Background (entire window)
+  winmgr_fill_rect(win, 0, 0, win->width, win->height, COL_APP_BG);
 
+  // Note: draw order matters. Background -> layout components -> overlays
   draw_sidebar(win);
-  draw_navigation_bar(win);
-  draw_action_toolbar(win);
+  draw_header(win);
+  draw_navigation_toolbar(win);
+  draw_column_headers(win);
 
-  if (app->at_this_pc) {
-    draw_this_pc_view(win);
-  } else {
-    if (app->search_active)
+  if (app->search_active) {
       draw_search_results(win);
-    else
+  } else {
       draw_file_grid(win);
   }
 
@@ -830,6 +994,22 @@ static void dialog_confirm(window_t *win) {
     fs_mkdir(full_path);
   } else if (app->dialog_active == 2) {
     fs_write(full_path, (const uint8_t *)"", 0);
+  } else if (app->dialog_active == 4) {
+    // Rename operation
+    int slot = -1;
+    for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+      if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+        slot = i; break;
+      }
+    }
+    if (slot != -1 && app->selected_index >= 0) {
+      char old_path[160];
+      strcpy(old_path, app->explorer_path);
+      if (old_path[strlen(old_path) - 1] != '/') strcat(old_path, "/");
+      strcat(old_path, app->dir_cache[slot].files[app->selected_index].name);
+      
+      fat_move_file(old_path, full_path);
+    }
   }
 
   app->dialog_active = 0;
@@ -868,12 +1048,6 @@ static void explorer_on_copy(void *w) {
     strcat(full_path, "/");
   strcat(full_path, app->dir_cache[slot].files[app->selected_index].name);
 
-  if (app->dir_cache[slot].files[app->selected_index].is_dir) {
-    explorer_show_popup(app, "Folders not supported");
-    win->needs_redraw = 1;
-    return;
-  }
-
   clipboard_copy(full_path);
   clipboard_set_operation(CLIPBOARD_OP_COPY);
 
@@ -908,12 +1082,6 @@ static void explorer_on_cut(void *w) {
   if (full_path[strlen(full_path) - 1] != '/')
     strcat(full_path, "/");
   strcat(full_path, app->dir_cache[slot].files[app->selected_index].name);
-
-  if (app->dir_cache[slot].files[app->selected_index].is_dir) {
-    explorer_show_popup(app, "Folders not supported");
-    win->needs_redraw = 1;
-    return;
-  }
 
   clipboard_copy(full_path);
   clipboard_set_operation(CLIPBOARD_OP_CUT);
@@ -961,22 +1129,12 @@ static void explorer_on_paste(void *w, const char *path) {
   print_serial("'\n");
 
   if (op == CLIPBOARD_OP_COPY) {
-    int res = fat_copy_file(path, dest_path);
-    print_serial("EXPLORER PASTE: fat_copy_file returned ");
-    char nb[12];
-    k_itoa(res, nb);
-    print_serial(nb);
-    print_serial("\n");
+    int res = fat_copy_recursive(path, dest_path);
     if (res == 0) {
       strcpy(msg, "Copy completed!");
     }
   } else if (op == CLIPBOARD_OP_CUT) {
     int res = fat_move_file(path, dest_path);
-    print_serial("EXPLORER PASTE: fat_move_file returned ");
-    char nb[12];
-    k_itoa(res, nb);
-    print_serial(nb);
-    print_serial("\n");
     if (res == 0) {
       strcpy(msg, "Move completed!");
       clipboard_set_operation(CLIPBOARD_OP_NONE);
@@ -1038,6 +1196,12 @@ void explorer_handle_key(window_t *win, int key, char ascii) {
     win->needs_redraw = 1;
   }
 
+  if (key == 0x53) { // Delete key
+    print_serial("EXPLORER: Delete key pressed\n");
+    action_delete_selected();
+    return;
+  }
+
   if (key == 0x0E || ascii == '\b') {
     if (app->search_focus) {
       if (app->search_cursor > 0) {
@@ -1072,7 +1236,7 @@ void explorer_handle_key(window_t *win, int key, char ascii) {
 
 void explorer_on_scroll(window_t *win, int direction) {
   explorer_app_t *app = get_explorer_app(win);
-  if (!app || app->at_this_pc)
+  if (!app)
     return;
   // Wheel UP (direction > 0) -> scroll viewport UP -> decrease scroll_position
   // Move 60 pixels per notch for smooth but snappy feel
@@ -1093,18 +1257,114 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
   explorer_app_t *app = get_explorer_app(win);
   if (!app) return;
 
-  // Rising edge detection
-  if (!(buttons & 1)) {
+  int rx = mx;
+  int ry = my;
+  int w = win->width;
+
+  // Layout parameters matching drawing functions
+  int content_x = SIDEBAR_WIDTH;
+  int content_y = 135;
+  int content_h = win->height - content_y - 30; // 30 for status bar
+  int cell_w = 140, cell_h = 120, padding = 15;
+  int start_x = content_x + 20;
+  int start_y = content_y + 10;
+  int cols = (w - content_x - 40) / (cell_w + padding);
+  if (cols < 1) cols = 1;
+
+  // HOVER DETECTION
+  int new_hover_sb = -1;
+  if (rx < SIDEBAR_WIDTH) {
+    int y = 50;
+    int sel_idx = 0;
+    int counts[4] = {4, 2, 2, 3};
+    for (int s = 0; s < 4; s++) {
+      y += 20; // section header
+      for (int i = 0; i < counts[s]; i++) {
+        if (ry >= y - 4 && ry < y + 24) {
+          new_hover_sb = sel_idx;
+        }
+        y += 28;
+        sel_idx++;
+      }
+      y += 10;
+    }
+  }
+
+  if (new_hover_sb != app->hovered_sidebar) {
+    app->hovered_sidebar = new_hover_sb;
+    win->needs_redraw = 1;
+  }
+
+  int new_hover = -1;
+  if (rx >= content_x && ry >= content_y && ry < win->height - 30) {
+      int grid_x = rx - start_x;
+      int grid_y = ry - start_y + win->scroll_position;
+      if (grid_x >= 0 && grid_y >= 0) {
+          int col = grid_x / (cell_w + padding);
+          int row = grid_y / (cell_h + padding);
+          if ((grid_x % (cell_w + padding)) < cell_w && (grid_y % (cell_h + padding)) < cell_h) {
+              new_hover = row * cols + col;
+              
+              int slot = -1;
+              for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+                if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+                  slot = i; break;
+                }
+              }
+              int max_items = (slot != -1) ? app->dir_cache[slot].count : 0;
+              if (app->search_active) max_items = app->search_count;
+              if (new_hover >= max_items) new_hover = -1;
+          }
+      }
+  }
+  if (new_hover != app->hovered_index) {
+    app->hovered_index = new_hover;
+    win->needs_redraw = 1;
+  }
+
+  // CLICK DETECTION (Rising edge only)
+  if (!(buttons & 3)) { // Track both left & right
     app->prev_mouse_buttons = 0;
     return;
   }
   if (app->prev_mouse_buttons)
     return;
-  app->prev_mouse_buttons = 1;
+  app->prev_mouse_buttons = buttons;
 
-  // mx, my are already window-relative (WM subtracts win->x/y)
-  int rx = mx;
-  int ry = my;
+  // Handle Right Click
+  if (buttons & 2) {
+    // If hovering over a file/folder in the grid
+    if (new_hover != -1) {
+      app->selected_index = new_hover;
+      win->needs_redraw = 1;
+
+      static ctxmenu_item_t folder_items[] = {
+        {"Open", 0}, 
+        {"Pin to Sidebar", action_pin_selected},
+        {0, 0},
+        {"Copy", action_copy_selected},
+        {"Cut", action_cut_selected},
+        {"Rename", action_rename_selected},
+        {"Delete", action_delete_selected}
+      };
+      
+      // Global coordinates for ctxmenu_show
+      ctxmenu_show(win->x + mx, win->y + my, folder_items, 7);
+      return;
+    }
+    // Right click on empty area
+    else if (rx >= content_x && ry >= content_y) {
+       static ctxmenu_item_t empty_items[] = {
+         {"New Folder", action_new_folder},
+         {"Paste", action_paste_here},
+         {0, 0},
+         {"Refresh", action_refresh_view},
+         {"Sort By Name", 0}
+       };
+       ctxmenu_show(win->x + mx, win->y + my, empty_items, 5);
+       return;
+    }
+  }
 
   if (app->dialog_active == 3) {
     int dw = 280, dh = 110;
@@ -1122,12 +1382,10 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
     int dx = (win->width - dw) / 2;
     int dy = (win->height - dh) / 2;
 
-    // OK button
     if (rx >= dx + 60 && rx < dx + 130 && ry >= dy + 75 && ry < dy + 99) {
       dialog_confirm(win);
       win->needs_redraw = 1;
     }
-    // Cancel button
     else if (rx >= dx + 150 && rx < dx + 220 && ry >= dy + 75 && ry < dy + 99) {
       app->dialog_active = 0;
       app->dialog_input[0] = 0;
@@ -1137,136 +1395,116 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
     return;
   }
 
-  // Sidebar hit test (items are 28px tall, drawn starting at y=40)
-  if (rx < SIDEBAR_WIDTH && ry >= 40 && ry < 40 + 5 * 28) {
-    app->sidebar_sel = (ry - 40) / 28;
+  // Handle Sidebar Click
+  if (new_hover_sb != -1) {
+    app->sidebar_sel = new_hover_sb;
     win->needs_redraw = 1;
-
-    if (app->sidebar_sel == 0) {
-      app->at_this_pc = 1;
-      app->search_active = 0;
-      explorer_refresh(win);
-    } else if (app->sidebar_sel == 1) {
-      app->at_this_pc = 0;
-      app->search_active = 0;
-      strcpy(app->explorer_path, "/");
-      explorer_refresh(win);
-    } else if (app->sidebar_sel == 2) {
-      app->at_this_pc = 0;
-      strcpy(app->search_query, ".txt");
-      explorer_do_search(app);
-    } else if (app->sidebar_sel == 3) {
-      app->at_this_pc = 0;
-      strcpy(app->search_query, ".png");
-      explorer_do_search(app);
-    } else if (app->sidebar_sel == 4) {
-      app->at_this_pc = 0;
-      strcpy(app->search_query, ".app");
-      explorer_do_search(app);
+    app->search_active = 0;
+    app->at_this_pc = 0;
+    app->selected_index = -1;
+    
+    if (new_hover_sb == 0) strcpy(app->explorer_path, "/Recents");
+    else if (new_hover_sb == 1) strcpy(app->explorer_path, "/Downloads");
+    else if (new_hover_sb == 2) strcpy(app->explorer_path, "/Desktop");
+    else if (new_hover_sb == 3) strcpy(app->explorer_path, "/Documents");
+    else if (new_hover_sb == 4) strcpy(app->explorer_path, "/"); // Local Disk C:
+    else if (new_hover_sb == 5) strcpy(app->explorer_path, "/"); // External Drive
+    else if (new_hover_sb == 6) strcpy(app->explorer_path, "/"); // iCloud
+    else if (new_hover_sb == 7) strcpy(app->explorer_path, "/"); // Google Drive
+    else if (new_hover_sb >= 8 && new_hover_sb < 8 + app->pinned_count) {
+       strcpy(app->explorer_path, app->pinned_paths[new_hover_sb - 8]);
     }
+    else {
+       strcpy(app->explorer_path, "/");
+    }
+    explorer_refresh(win);
     return;
   }
 
-  // Navigation bar (y: 24-52)
-  if (ry >= 27 && ry < 49) {
-    // Back button (x: 4-32)
-    if (rx >= 4 && rx < 32 && !app->at_this_pc) {
-      explorer_go_up(app);
-      explorer_refresh(win);
-      app->search_active = 0; // Exit search on back
-    }
-
-    // Search Box Hit Test (sw=150, pos from right)
-    int sw = 150;
-    int sx = win->width - sw - 10;
+  // Header / Search Bar Hit Test (y: 0-50)
+  if (ry < 50 && rx >= SIDEBAR_WIDTH) {
+    int sw = 250;
+    int sx = SIDEBAR_WIDTH + (w - SIDEBAR_WIDTH - sw) / 2;
+    
     if (rx >= sx && rx < sx + sw) {
       app->search_focus = 1;
-      app->dialog_active = 0; // Close other dialogs
+      app->dialog_active = 0;
       win->needs_redraw = 1;
     } else {
       app->search_focus = 0;
       win->needs_redraw = 1;
     }
-
-    // Clear Button Hit Test
-    if (app->search_active && rx >= sx - 25 && rx < sx - 5) {
+    
+    // Clear search
+    if (app->search_active && rx >= sx + sw - 20) {
       app->search_active = 0;
       app->search_query[0] = 0;
       app->search_cursor = 0;
-      app->sidebar_sel = 1; // switch to "All Files"
-      strcpy(app->explorer_path, "/");
-      explorer_refresh(win);
-      win->needs_redraw = 1;
-    }
-
-    return;
-  }
-
-  // Action toolbar (y: 52-76, only when not at This PC)
-  int tx = SIDEBAR_WIDTH + 5;
-  if (!app->at_this_pc && ry >= 54 && ry < 73) {
-    if (rx >= tx + 6 && rx < tx + 66) { // + Folder
-      app->dialog_active = 1;
-      app->dialog_input[0] = 0;
-      app->dialog_cursor = 0;
-      win->needs_redraw = 1;
-    } else if (rx >= tx + 70 && rx < tx + 125) { // Refresh
-      // Invalidate all caches
-      for (int i = 0; i < EXPLORER_CACHE_SIZE; i++)
-        app->dir_cache[i].valid = 0;
       explorer_refresh(win);
     }
     return;
   }
 
-  // Content area
-  int content_x = SIDEBAR_WIDTH + 10;
-  int content_y = 60;
-  int content_h = win->height - 78 - 24;
-  if (rx >= content_x && ry >= content_y) {
-    if (app->at_this_pc) {
-      // Check if C: drive was clicked (Simplified & Robust)
-      if (rx >= SIDEBAR_WIDTH + 5 && rx < win->width - 10 && ry >= 75 &&
-          ry < 165) {
-        app->selected_index = 0;
-        app->at_this_pc = 0;
-        strcpy(app->explorer_path, "/");
-        explorer_refresh(win);
+  // Navigation Toolbar Hit Test (y: 50-110)
+  if (ry >= 50 && ry < 110 && rx >= SIDEBAR_WIDTH) {
+    app->search_focus = 0;
+    
+    int tx = SIDEBAR_WIDTH;
+    int ty = 50;
+    
+    // Back navigation
+    if (rx >= tx + 15 && rx < tx + 40 && ry >= ty + 5 && ry < ty + 30) {
+      explorer_go_up(app);
+      explorer_refresh(win);
+      return;
+    }
+
+    int btn_y = ty + 35; // 85
+    if (ry >= btn_y && ry < btn_y + 24) {
+      if (rx >= tx + 20 && rx < tx + 110) { // New Folder
+        app->dialog_active = 1;
+        app->dialog_input[0] = 0;
+        app->dialog_cursor = 0;
         win->needs_redraw = 1;
+        return;
       }
-
-    } else {
-      // Grid hit test using content_x offset
-      int cell_w = 110, cell_h = 90;
-      int cols = (win->width - content_x - 10) / cell_w;
-      if (cols < 1)
-        cols = 1;
-      int grid_x = rx - content_x;
-      int grid_y =
-          ry - (78 + 8) + win->scroll_position; // add scroll offset back
-      if (grid_y >= 0 && ry < 78 + content_h) { // ensure within content area
-        int col = grid_x / cell_w;
-        int row = grid_y / cell_h;
-        int idx = row * cols + col;
-
-        int slot = -1;
-        for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
-          if (app->dir_cache[i].valid &&
-              strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
-            slot = i;
-            break;
-          }
-        }
-
-        if (slot != -1 && idx >= 0 && idx < app->dir_cache[slot].count) {
-          if (app->selected_index == idx)
-            explorer_open_file(win, idx);
-          else
-            app->selected_index = idx;
-          win->needs_redraw = 1;
-        }
+      if (rx >= tx + 120 && rx < tx + 190) { // Upload / Refresh
+        for (int i = 0; i < EXPLORER_CACHE_SIZE; i++)
+          app->dir_cache[i].valid = 0;
+        explorer_refresh(win);
+        return;
+      }
+      if (rx >= tx + 200 && rx < tx + 260) { // Share
+         explorer_show_popup(app, "Share not implemented");
+         return;
+      }
+      if (rx >= tx + 270 && rx < tx + 340) { // Sort
+         app->sort_mode = !app->sort_mode;
+         for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) app->dir_cache[i].valid = 0;
+         explorer_refresh(win);
+         return;
       }
     }
+    return;
+  }
+
+  // Column Headers (y: 110-135)
+  if (ry >= 110 && ry < 135 && rx >= SIDEBAR_WIDTH) {
+    return; // No-op for now
+  }
+
+  // Content Area Hit Test
+  if (new_hover != -1) {
+      app->search_focus = 0;
+      if (app->selected_index == new_hover)
+          explorer_open_file(win, new_hover);
+      else
+          app->selected_index = new_hover;
+      win->needs_redraw = 1;
+  } else if (rx >= content_x && ry >= content_y && ry < win->height - 30) {
+      app->search_focus = 0;
+      app->selected_index = -1; // Deselect
+      win->needs_redraw = 1;
   }
 }
 
@@ -1311,11 +1549,29 @@ void explorer_init() {
   win->scroll_line_height = 30; // smooth scroll
 
   // Reset state
-  app->at_this_pc = 1;
+  app->at_this_pc = 0;
   strcpy(app->explorer_path, "/");
   app->dialog_active = 0;
   app->selected_index = -1;
   app->hover_btn = -1;
+  app->hovered_index = -1;
+  app->hovered_sidebar = -1;
+  app->sort_mode = 0;
+
+  // Ensure standard folders exist
+  fat_mkdir("/Downloads");
+  fat_mkdir("/Desktop");
+  fat_mkdir("/Documents");
+  fat_mkdir("/Recents");
+
+  // Default Pins
+  strcpy(app->pinned_names[0], "Work");
+  strcpy(app->pinned_paths[0], "/Documents/Work");
+  strcpy(app->pinned_names[1], "Personal");
+  strcpy(app->pinned_paths[1], "/Documents/Personal");
+  app->pinned_count = 2;
+  fat_mkdir("/Documents/Work");
+  fat_mkdir("/Documents/Personal");
 
   explorer_refresh(win);
   win->needs_redraw = 1;

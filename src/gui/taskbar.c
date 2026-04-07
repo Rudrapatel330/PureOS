@@ -4,7 +4,6 @@
 #include "../kernel/config.h"
 #include "../kernel/screen.h"
 #include "../kernel/string.h"
-#include "../kernel/theme.h"
 #include "../kernel/window.h"
 #include "startmenu.h"
 #include "sysmenu.h"
@@ -169,6 +168,26 @@ static void launch_app_by_id(int id) {
   case 13: {
     extern void mail_app_init();
     mail_app_init();
+  } break;
+  case 11: {
+    extern void camera_app_init();
+    camera_app_init();
+  } break;
+  case 12: {
+    extern void photos_init();
+    photos_init();
+  } break;
+  case 14: {
+    extern void recorder_init();
+    recorder_init();
+  } break;
+  case 15: {
+    extern void chat_init();
+    chat_init();
+  } break;
+  case 16: {
+    extern void phone_init();
+    phone_init();
   } break;
   }
 }
@@ -543,6 +562,34 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
         (global_config.taskbar_position == 1) ? 8 : (screen_width - dock_w - 8);
   }
 
+  extern window_t *active_window;
+  int is_max = (active_window && active_window->id != 0 && active_window->is_maximized);
+  
+  if (global_config.auto_hide_taskbar || is_max) {
+      int is_hovering = 0;
+      if (!is_vertical) {
+          if (g_taskbar.mouse_y >= screen_height - 12 || 
+              (g_taskbar.mouse_y >= g_taskbar.anim_dock_y && g_taskbar.mouse_x >= g_taskbar.anim_dock_x && g_taskbar.mouse_x <= g_taskbar.anim_dock_x + g_taskbar.anim_dock_w)) {
+              is_hovering = 1;
+          }
+          if (!is_hovering) dock_y = screen_height + 15;
+      } else {
+         if (global_config.taskbar_position == 1) { // Left
+            if (g_taskbar.mouse_x <= 12 ||
+                (g_taskbar.mouse_x <= g_taskbar.anim_dock_x + g_taskbar.anim_dock_w && g_taskbar.mouse_y >= g_taskbar.anim_dock_y && g_taskbar.mouse_y <= g_taskbar.anim_dock_y + g_taskbar.anim_dock_h)) {
+                is_hovering = 1;
+            }
+            if (!is_hovering) dock_x = -dock_w - 15;
+         } else { // Right
+            if (g_taskbar.mouse_x >= screen_width - 12 ||
+                (g_taskbar.mouse_x >= g_taskbar.anim_dock_x && g_taskbar.mouse_y >= g_taskbar.anim_dock_y && g_taskbar.mouse_y <= g_taskbar.anim_dock_y + g_taskbar.anim_dock_h)) {
+                is_hovering = 1;
+            }
+            if (!is_hovering) dock_x = screen_width + 15;
+         }
+      }
+  }
+
   g_taskbar.dock_x = dock_x;
   g_taskbar.dock_y = dock_y;
   g_taskbar.dock_w = dock_w;
@@ -673,6 +720,17 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
       (mx >= g_taskbar.dock_x && mx <= g_taskbar.dock_x + g_taskbar.dock_w &&
        my >= g_taskbar.dock_y && my <= g_taskbar.dock_y + g_taskbar.dock_h);
 
+  extern int screen_width, screen_height;
+  int near_edge = 0;
+  extern window_t *active_window;
+  int is_max = (active_window && active_window->id != 0 && active_window->is_maximized);
+
+  if (global_config.auto_hide_taskbar || is_max) {
+      if (is_vertical && global_config.taskbar_position == 1 && mx <= 12) near_edge = 1;
+      else if (is_vertical && global_config.taskbar_position == 2 && mx >= screen_width - 12) near_edge = 1;
+      else if (!is_vertical && my >= screen_height - 12) near_edge = 1;
+  }
+
   int hovered = -1;
   if (in_dock) {
     for (int i = 0; i < g_taskbar.icon_count; i++) {
@@ -692,12 +750,28 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
     }
   }
 
-  if (hovered != g_taskbar.hovered_index ||
+  int was_near_edge = 0;
+  if (global_config.auto_hide_taskbar || is_max) {
+      if (is_vertical && global_config.taskbar_position == 1 && g_taskbar.mouse_x <= 12) was_near_edge = 1;
+      else if (is_vertical && global_config.taskbar_position == 2 && g_taskbar.mouse_x >= screen_width - 12) was_near_edge = 1;
+      else if (!is_vertical && g_taskbar.mouse_y >= screen_height - 12) was_near_edge = 1;
+  }
+
+  int force_dirty = (near_edge != was_near_edge);
+
+  if (hovered != g_taskbar.hovered_index || force_dirty ||
       (in_dock && (mx != g_taskbar.mouse_x || my != g_taskbar.mouse_y))) {
     g_taskbar.hovered_index = hovered;
     g_taskbar.mouse_x = mx;
     g_taskbar.mouse_y = my;
     taskbar_update_magnification(mx, my);
+    if (force_dirty) {
+        extern int ui_dirty;
+        ui_dirty = 1;
+    }
+  } else {
+      g_taskbar.mouse_x = mx;
+      g_taskbar.mouse_y = my;
   }
 
   static int tb_last_btn = 0;

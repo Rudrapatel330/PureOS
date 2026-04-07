@@ -12,11 +12,13 @@ static tcp_conn_t *active_conns[MAX_TCP_CONNS] = {0};
 static uint16_t local_port_counter = 49152; // Ephemeral port range
 
 // Helper to flush any pending packets in the NIC
+// Process them through net_receive instead of discarding, so we don't
+// silently drop audio packets or ACKs belonging to other connections.
 static void tcp_flush_rx() {
   static uint8_t dummy[1600];
   uint16_t plen;
   while (pcnet_poll(dummy, &plen) > 0) {
-    // Just drain them
+    net_receive(dummy, plen);
   }
 }
 

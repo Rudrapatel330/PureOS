@@ -244,21 +244,18 @@ void desktop_process_messages(void) {
 
       if (mouse_moved) {
         desktop_mouse_move(mouse_x, mouse_y);
-        extern int taskbar_handle_mouse(int mx, int my, int buttons);
-        taskbar_handle_mouse(mouse_x, mouse_y, curr_btns);
       }
 
       static int local_prev_buttons = 0;
       int wm_consumed = 0;
-      if (curr_btns != local_prev_buttons ||
-          (curr_btns && (dx != 0 || dy != 0))) {
+      if (curr_btns != local_prev_buttons || dx != 0 || dy != 0) {
         wm_consumed = winmgr_handle_mouse_global(mouse_x, mouse_y, curr_btns);
         if (wm_consumed)
           ui_dirty = 1;
       }
 
       if (curr_btns && !local_prev_buttons) {
-        if ((curr_btns & 2) || !wm_consumed) {
+        if (!wm_consumed) {
           desktop_click(mouse_x, mouse_y, curr_btns);
           ui_dirty = 1;
         }
@@ -318,11 +315,18 @@ void desktop_task() {
     desktop_process_messages();
     usb_poll();
 
-    // Background Network Polling
-    static uint8_t net_poll_buf[1600];
-    uint16_t net_poll_len;
-    if (pcnet_poll(net_poll_buf, &net_poll_len) > 0) {
-        net_receive(net_poll_buf, net_poll_len);
+    // Background Network Polling — drain ALL pending packets per frame
+    // Audio packets from the web span multiple TCP segments; polling only
+    // one per frame starves phone_update and causes audio packets to never
+    // fully arrive in the TCP receive buffer.
+    {
+        static uint8_t net_poll_buf[1600];
+        uint16_t net_poll_len;
+        int polls = 0;
+        while (polls < 128 && pcnet_poll(net_poll_buf, &net_poll_len) > 0) {
+            net_receive(net_poll_buf, net_poll_len);
+            polls++;
+        }
     }
 
     static uint64_t last_anim_tick_ms = 0;
@@ -428,11 +432,15 @@ void desktop_task() {
 
     if (tick_elapsed) {
       extern window_t *sysmon_win, *chat_win, *phone_win, *recorder_win;
+      // We will add audio test win here
+      extern window_t *audio_test_win;
       extern void sysmon_update(window_t *), chat_update(window_t *), phone_update(window_t *), recorder_update(window_t *);
+      extern void audio_test_update(window_t *);
       if (sysmon_win) sysmon_update(sysmon_win);
       if (chat_win) chat_update(chat_win);
       if (phone_win) phone_update(phone_win);
       if (recorder_win) recorder_update(recorder_win);
+      if (audio_test_win) audio_test_update(audio_test_win);
     }
 
     videoplayer_update();

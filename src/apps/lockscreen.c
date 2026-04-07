@@ -28,6 +28,7 @@ extern const unsigned int wallpaper_png_size;
 /* Serial debug */
 extern void print_serial(const char *s);
 extern void sleep(int ticks);
+extern void compositor_blur_rect(int x, int y, int w, int h, int radius);
 
 /* ======================== COLOR HELPERS ======================== */
 
@@ -320,6 +321,11 @@ void lockscreen_show(void) {
 
   ls_render_wallpaper(backbuffer);
   print_serial("LS: Wallpaper prepared in backbuffer.\n");
+
+  // Apply background blur (Windows-style)
+  print_serial("LS: Applying background blur...\n");
+  compositor_blur_rect(0, 0, screen_width, screen_height, 20); // First pass
+  compositor_blur_rect(0, 0, screen_width, screen_height, 20); // Second pass for deeper blur
 
   // PRE-COPY background to all 3 BGA buffers (triple buffering) to avoid
   // flicker

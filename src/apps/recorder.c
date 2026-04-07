@@ -227,6 +227,7 @@ void recorder_on_close(void *w) {
     
     if (s->buffer) kfree(s->buffer);
     kfree(s);
+    win->user_data = 0;
     recorder_win = 0;
 }
 
@@ -240,6 +241,7 @@ void recorder_init(void) {
     s->state = STATE_IDLE;
 
     win->user_data = s;
+    win->app_type = 14; // APP_RECORDER
     win->draw = (void (*)(void *))recorder_draw;
     win->on_mouse = (void (*)(void *, int, int, int))recorder_on_mouse;
     win->on_close = (void (*)(void *))recorder_on_close;

@@ -87,6 +87,8 @@ int fat_write_file(const char *path, const uint8_t *data, uint32_t size);
 int fat_delete_file(const char *path);
 int fat_copy_file(const char *src, const char *dst);
 int fat_move_file(const char *src, const char *dst);
+int fat_copy_recursive(const char *src, const char *dst);
+int fat_delete_recursive(const char *path);
 
 int fat_mkdir(const char *path);
 int fat_list_files_str_dir(uint32_t dir_cluster, char *buffer, int max_len);

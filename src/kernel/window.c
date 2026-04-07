@@ -1,7 +1,7 @@
 #include "window.h"
 #include "../gui/startmenu.h"
 #include "../gui/taskbar.h"
-#include "../ui/ctxmenu.h" // Logic for Right Click
+
 #include "anim.h"
 #include "clipboard.h"
 #include "compositor.h"
@@ -1903,9 +1903,9 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
     hit = 1; // Force hit if dragging/resizing
 
   if (hit) {
-    // Focus
+    // Focus (Only on Click)
     extern window_t *active_window;
-    if (active_window != win && !win->is_dragging) {
+    if (buttons != 0 && active_window != win && !win->is_dragging) {
       active_window = win;
       winmgr_bring_to_front(win);
       // bring_to_front moves the window struct in the array,
@@ -1931,15 +1931,7 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
       ui_dirty = 1;
     }
 
-    // Right Click: Context Menu
-    if (buttons & 2) {
-      if (win->flags & WINDOW_FLAG_NO_CLOSE)
-        return 1; // Protected window
-      static ctxmenu_item_t items[] = {
-          {"Minimize", 0}, {"Maximize", 0}, {"Close", 0}};
-      ctxmenu_show(mx, my, items, 3);
-      return 1;
-    }
+
 
     if (buttons & 1) {
       // 1. Check for Click on Min/Max/Close Buttons FIRST (Priority)
@@ -1965,7 +1957,7 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
             win->saved_h = win->height;
 
             int target_w = screen_width;
-            int target_h = screen_height - 30;
+            int target_h = screen_height;
             if (winmgr_resize_surface(win, target_w, target_h)) {
               win->width = target_w;
               win->height = target_h;
@@ -2282,6 +2274,16 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
 
 // Global handler to iterate windows
 int winmgr_handle_mouse_global(int mx, int my, int buttons) {
+  // -3. Check Context Menu (highest priority global UI)
+  extern int ctxmenu_click(int mx, int my);
+  if (buttons != 0) {
+    if (ctxmenu_click(mx, my)) {
+      extern int ui_dirty;
+      ui_dirty = 1;
+      return 1;
+    }
+  }
+
   // Mission Control: intercept clicks to select a window
   extern int search_active;
   if (search_active) {

@@ -266,6 +266,7 @@ void chat_on_close(void *w) {
         tcp_close(&s->conn);
     }
     kfree(s);
+    win->user_data = 0;
     chat_win = 0; // Clear global pointer so kernel stops calling update
 }
 
@@ -281,6 +282,7 @@ void chat_init(void) {
     strcpy(s->target_username, "Android_User");
 
     win->user_data = s;
+    win->app_type = 15; // APP_CHAT
     win->draw = (void (*)(void *))chat_draw;
     win->on_key = (void (*)(void *, int, char))chat_on_key;
     win->on_mouse = (void (*)(void *, int, int, int))chat_on_mouse;

@@ -658,10 +658,13 @@ static void compositor_render_rect(rect_t clip) {
   }
 
   // 3. UI Overlays
-  menubar_draw(backbuffer, clip);
+  int is_fullscreen = (active_window && active_window->id != 0 && active_window->is_maximized);
+  if (!is_fullscreen) {
+    menubar_draw(backbuffer, clip);
+    sysmenu_draw(backbuffer, clip);
+  }
   taskbar_draw(backbuffer, clip);
   startmenu_draw(backbuffer, clip);
-  sysmenu_draw(backbuffer, clip);
   extern void desktop_render_search(uint32_t *target, rect_t clip);
   desktop_render_search(backbuffer, clip);
 
@@ -943,14 +946,13 @@ void compositor_set_overlay(int x, int y, int w, int h, int enabled) {
 }
 
 void compositor_blur_rect(int x, int y, int w, int h, int radius) {
-  if (!backbuffer || w <= radius * 2 || h <= radius * 2)
+  if (!backbuffer || w <= 0 || h <= 0 || radius <= 0)
     return;
 
-  int x1 = (x < radius) ? radius : x;
-  int y1 = (y < radius) ? radius : y;
-  int x2 = (x + w >= screen_width - radius) ? screen_width - radius - 1 : x + w;
-  int y2 =
-      (y + h >= screen_height - radius) ? screen_height - radius - 1 : y + h;
+  int x1 = (x < 0) ? 0 : x;
+  int y1 = (y < 0) ? 0 : y;
+  int x2 = (x + w > screen_width) ? screen_width : x + w;
+  int y2 = (y + h > screen_height) ? screen_height : y + h;
 
   int bw = x2 - x1;
   int bh = y2 - y1;
@@ -961,12 +963,17 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
   const int div = (2 * r + 1);
   static uint32_t line_buf[4096];
 
+  // Horizontal pass
   for (int j = y1; j < y2; j++) {
     uint32_t r_sum = 0, g_sum = 0, b_sum = 0;
     uint32_t *row = &backbuffer[j * screen_width];
 
+    // Initialize sum with clamping
     for (int i = -r; i <= r; i++) {
-      uint32_t p = row[x1 + i];
+      int sx = x1 + i;
+      if (sx < 0) sx = 0;
+      if (sx >= screen_width) sx = screen_width - 1;
+      uint32_t p = row[sx];
       r_sum += (p >> 16) & 0xFF;
       g_sum += (p >> 8) & 0xFF;
       b_sum += p & 0xFF;
@@ -975,21 +982,33 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
     for (int i = 0; i < bw; i++) {
       line_buf[i] = 0xFF000000 | ((r_sum / div) << 16) | ((g_sum / div) << 8) |
                     (b_sum / div);
-      if (i + 1 < bw) {
-        uint32_t p_out = row[x1 + i - r];
-        uint32_t p_in = row[x1 + i + r + 1];
-        r_sum = r_sum - ((p_out >> 16) & 0xFF) + ((p_in >> 16) & 0xFF);
-        g_sum = g_sum - ((p_out >> 8) & 0xFF) + ((p_in >> 8) & 0xFF);
-        b_sum = b_sum - (p_out & 0xFF) + (p_in & 0xFF);
-      }
+      
+      int out_x = x1 + i - r;
+      int in_x = x1 + i + r + 1;
+      if (out_x < 0) out_x = 0;
+      if (out_x >= screen_width) out_x = screen_width - 1;
+      if (in_x < 0) in_x = 0;
+      if (in_x >= screen_width) in_x = screen_width - 1;
+
+      uint32_t p_out = row[out_x];
+      uint32_t p_in = row[in_x];
+      r_sum = r_sum - ((p_out >> 16) & 0xFF) + ((p_in >> 16) & 0xFF);
+      g_sum = g_sum - ((p_out >> 8) & 0xFF) + ((p_in >> 8) & 0xFF);
+      b_sum = b_sum - (p_out & 0xFF) + (p_in & 0xFF);
     }
     memcpy(&row[x1], line_buf, bw * 4);
   }
 
+  // Vertical pass
   for (int i = x1; i < x2; i++) {
     uint32_t r_sum = 0, g_sum = 0, b_sum = 0;
+    
+    // Initialize sum with clamping
     for (int j = -r; j <= r; j++) {
-      uint32_t p = backbuffer[(y1 + j) * screen_width + i];
+      int sy = y1 + j;
+      if (sy < 0) sy = 0;
+      if (sy >= screen_height) sy = screen_height - 1;
+      uint32_t p = backbuffer[sy * screen_width + i];
       r_sum += (p >> 16) & 0xFF;
       g_sum += (p >> 8) & 0xFF;
       b_sum += p & 0xFF;
@@ -998,13 +1017,19 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
     for (int j = 0; j < bh; j++) {
       line_buf[j] = 0xFF000000 | ((r_sum / div) << 16) |
                          ((g_sum / div) << 8) | (b_sum / div);
-      if (j + 1 < bh) {
-        uint32_t p_out = backbuffer[(y1 + j - r) * screen_width + i];
-        uint32_t p_in = backbuffer[(y1 + j + r + 1) * screen_width + i];
-        r_sum = r_sum - ((p_out >> 16) & 0xFF) + ((p_in >> 16) & 0xFF);
-        g_sum = g_sum - ((p_out >> 8) & 0xFF) + ((p_in >> 8) & 0xFF);
-        b_sum = b_sum - (p_out & 0xFF) + (p_in & 0xFF);
-      }
+      
+      int out_y = y1 + j - r;
+      int in_y = y1 + j + r + 1;
+      if (out_y < 0) out_y = 0;
+      if (out_y >= screen_height) out_y = screen_height - 1;
+      if (in_y < 0) in_y = 0;
+      if (in_y >= screen_height) in_y = screen_height - 1;
+
+      uint32_t p_out = backbuffer[out_y * screen_width + i];
+      uint32_t p_in = backbuffer[in_y * screen_width + i];
+      r_sum = r_sum - ((p_out >> 16) & 0xFF) + ((p_in >> 16) & 0xFF);
+      g_sum = g_sum - ((p_out >> 8) & 0xFF) + ((p_in >> 8) & 0xFF);
+      b_sum = b_sum - (p_out & 0xFF) + (p_in & 0xFF);
     }
     for (int j = 0; j < bh; j++) {
       backbuffer[(y1 + j) * screen_width + i] = line_buf[j];

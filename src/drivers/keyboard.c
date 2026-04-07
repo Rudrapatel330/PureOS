@@ -214,7 +214,8 @@ void receive_keyboard_byte(uint8_t scancode) {
     else if ((scancode >= 0x3B && scancode <= 0x44) || scancode == 0x57 ||
              scancode == 0x58 || scancode == 0x48 || scancode == 0x4B ||
              scancode == 0x4D || scancode == 0x50 || scancode == 0x49 ||
-             scancode == 0x51) {
+             scancode == 0x51 || scancode == 0x47 || scancode == 0x4F ||
+             scancode == 0x52 || scancode == 0x53) {
       if (scancode == 0x58) { // F12
         extern void debug_shell();
         debug_shell();

@@ -169,7 +169,7 @@ async def handle_index(request):
     function s(){ 
         const t=i.value.trim(); 
         if(!t)return; 
-        w.send(JSON.stringify({type:"chat",from:"Android_User",to:"PureOS_Phone",message:t})); 
+        w.send(JSON.stringify({type:"chat",from:"Android_User",to:"PureOS_User",message:t})); 
         i.value=""; 
         a("Me", t, "self");
     }

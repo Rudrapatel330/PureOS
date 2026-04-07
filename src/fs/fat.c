@@ -510,6 +510,8 @@ int fat_read_file(const char *path, uint8_t *buffer) {
 }
 
 int fat_write_file(const char *path, const uint8_t *data, uint32_t size) {
+  print_serial("FAT: Write file path='"); print_serial(path); print_serial("' size=");
+  char nb[12]; k_itoa(size, nb); print_serial(nb); print_serial("\n");
   print_serial("FAT: write_file called with path=");
   print_serial(path);
   print_serial("\n");
@@ -1147,49 +1149,135 @@ static vfs_node_t *fat_vfs_finddir(vfs_node_t *node, char *name) {
 
 vfs_driver_t fat_vfs_driver = {"fat32_adaptive",
                                fat_vfs_read,
-                               0, // write
+                               (void*)fat_write_file, // write
                                0, // open
                                0, // close
                                fat_vfs_readdir,
                                fat_vfs_finddir};
 
 int fat_copy_file(const char *src, const char *dst) {
+  print_serial("FAT: Copy file src='"); print_serial(src); print_serial("' dst='"); print_serial(dst); print_serial("'\n");
   fat_dir_entry_t entry;
   if (!fat_find_file(src, &entry)) {
+    print_serial("FAT: Copy failed, src not found\n");
     return -1;
   }
+
+  if (entry.attributes & FAT_ATTR_DIRECTORY)
+    return -2; // Not a file
 
   uint32_t size = entry.file_size;
+  if (size > 16 * 1024 * 1024) {
+    print_serial("FAT: Copy failed, file too large\n");
+    return -3; 
+  }
 
-  // file_data can be empty if size is 0
-  uint8_t *file_data = (uint8_t *)kmalloc(size + 1);
-  if (!file_data && size > 0) {
+  uint8_t *data = (uint8_t *)kmalloc(size + 1);
+  if (!data && size > 0) {
+    print_serial("FAT: Copy failed, OOM\n");
     return -1;
   }
+  
   if (size > 0) {
-    if (fat_read_file(src, file_data) == 0 && entry.file_size > 0) {
-      kfree(file_data);
+    if (fat_read_file(src, data) != size) {
+      print_serial("FAT: Copy failed, read error\n");
+      kfree(data);
       return -1;
     }
   }
-
-  if (fat_write_file(dst, file_data ? file_data : (uint8_t *)"", size) == 0) {
-    if (file_data)
-      kfree(file_data);
+  
+  if (!fat_write_file(dst, size > 0 ? data : (uint8_t*)"", size)) {
+    print_serial("FAT: Copy failed, write error\n");
+    if (data) kfree(data);
     return -1;
   }
-
-  if (file_data)
-    kfree(file_data);
+  
+  if (data) kfree(data);
+  print_serial("FAT: Copy file successful\n");
   return 0;
 }
 
-int fat_move_file(const char *src, const char *dst) {
-  // If same directory, we could just rename (not implemented yet)
-  // For now, copy and delete
-  if (fat_copy_file(src, dst) < 0)
+int fat_copy_recursive(const char *src, const char *dst) {
+  print_serial("FAT: Copy recursive src='"); print_serial(src); print_serial("' dst='"); print_serial(dst); print_serial("'\n");
+  fat_dir_entry_t entry;
+  if (!fat_find_file(src, &entry))
     return -1;
-  return fat_delete_file(src) == 1 ? 0 : -1;
+
+  if (!(entry.attributes & FAT_ATTR_DIRECTORY)) {
+    return fat_copy_file(src, dst);
+  }
+
+  // It's a directory. Create destination.
+  if (!fat_mkdir(dst)) {
+    // If it already exists, that's okay, we can merge
+  }
+
+  // List files in source
+  uint32_t dir_cluster = get_entry_cluster(&entry);
+  if (dir_cluster == 0 && !is_fat32) dir_cluster = FAT_ROOT_CLUSTER;
+
+  FileInfo *files = (FileInfo *)kmalloc(64 * sizeof(FileInfo));
+  if (!files) return -1;
+  int count = fat_list_files_gui_dir(dir_cluster, files, 64);
+
+  for (int i = 0; i < count; i++) {
+    if (strcmp(files[i].name, ".") == 0 || strcmp(files[i].name, "..") == 0)
+      continue;
+
+    char sub_src[256], sub_dst[256];
+    strcpy(sub_src, src);
+    if (sub_src[strlen(sub_src)-1] != '/') strcat(sub_src, "/");
+    strcat(sub_src, files[i].name);
+
+    strcpy(sub_dst, dst);
+    if (sub_dst[strlen(sub_dst)-1] != '/') strcat(sub_dst, "/");
+    strcat(sub_dst, files[i].name);
+
+    fat_copy_recursive(sub_src, sub_dst);
+  }
+
+  kfree(files);
+  return 0;
+}
+
+int fat_delete_recursive(const char *path) {
+  fat_dir_entry_t entry;
+  if (!fat_find_file(path, &entry))
+    return -1;
+
+  if (!(entry.attributes & FAT_ATTR_DIRECTORY)) {
+    return fat_delete_file(path);
+  }
+
+  // It's a directory. Empty it first.
+  uint32_t dir_cluster = get_entry_cluster(&entry);
+  if (dir_cluster == 0 && !is_fat32) dir_cluster = FAT_ROOT_CLUSTER;
+
+  FileInfo *files = (FileInfo *)kmalloc(64 * sizeof(FileInfo));
+  if (!files) return -1;
+  int count = fat_list_files_gui_dir(dir_cluster, files, 64);
+
+  for (int i = 0; i < count; i++) {
+    if (strcmp(files[i].name, ".") == 0 || strcmp(files[i].name, "..") == 0)
+      continue;
+
+    char sub_path[256];
+    strcpy(sub_path, path);
+    if (sub_path[strlen(sub_path)-1] != '/') strcat(sub_path, "/");
+    strcat(sub_path, files[i].name);
+
+    fat_delete_recursive(sub_path);
+  }
+
+  kfree(files);
+  // Now delete the directory itself (fat_delete_file handles directories too)
+  return fat_delete_file(path);
+}
+
+int fat_move_file(const char *src, const char *dst) {
+  if (fat_copy_recursive(src, dst) < 0)
+    return -1;
+  return fat_delete_recursive(src) == 1 ? 0 : -1;
 }
 uint32_t fat_get_total_size() {
   return (bpb.total_sectors_short != 0 ? bpb.total_sectors_short

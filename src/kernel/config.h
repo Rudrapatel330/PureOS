@@ -22,6 +22,7 @@ typedef struct {
   int num_pinned;
   int pinned[10];       // Array of APP_XXX IDs
   int taskbar_position; // 0 = Bottom, 1 = Left, 2 = Right
+  int auto_hide_taskbar;
 } os_config_t;
 
 extern os_config_t global_config;

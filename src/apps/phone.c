@@ -464,6 +464,7 @@ void phone_init(void) {
     s->connecting = 1;
 
     win->user_data = s;
+    win->app_type = 16; // APP_PHONE
     win->draw = (void (*)(void *))phone_draw;
     win->on_key = (void (*)(void *, int, char))phone_on_key;
     win->on_mouse = (void (*)(void *, int, int, int))phone_on_mouse;
