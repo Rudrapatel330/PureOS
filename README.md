@@ -198,7 +198,7 @@ graph LR
 | 🌐 **Web Browser** | Built-in web browser with custom HTML/DOM parser, CSS engine, JavaScript interpreter, and layout renderer — connects over raw TCP sockets |
 | 📧 **Mail Client** | Full SMTP email client that can send real emails through Gmail — see [Email Setup Guide](#-email-setup-guide) below |
 | 🐦 **PureChat** | Real-time bidirectional chat client with newline-delimited JSON protocol and kernel-level network polling |
-| 📞 **Phone** | Real-time voice calling app with 48kHz bidirectional streaming, 170ms audio chunking, and jitter-buffered playback |
+| 📞 **Phone** | WhatsApp-style voice calling app with circular dialpad, integrated contacts, 48kHz bidirectional streaming, and jitter-buffered playback |
 
 ---
 
@@ -449,7 +449,7 @@ PureOS can send **real emails** through Gmail. To configure:
 
 ## 🐦 PureChat & Relay Server
 
-PureOS includes a fully functional real-time chat system inspired by modern messaging apps. It consists of a native GUI client and a lightweight Python-based relay server for cross-platform synchronization (PC/Mobile).
+PureOS includes a fully functional real-time communication system inspired by modern messaging apps. It consists of a native GUI suite (Chat/Phone) and a lightweight Python-based relay server for cross-platform synchronization (PC/Mobile) with persistent identity management.
 
 ### 🖥️ Communication Architecture
 
@@ -489,13 +489,20 @@ graph TD
 ```
 
 ### 🐍 Python Relay Server (`server/relay.py`)
+- **Persistent Web Login** — Securely store your phone number in browser `localStorage` to maintain a consistent identity across sessions without random IDs.
 - **Unified Port** — Serving both the web dashboard and WebSocket messaging on a single port (7862) for easy Ngrok/Cloud deployment.
 - **TCP Bridge** — Bridging raw TCP sockets (Port 7860) from PureOS to modern WebSockets (Port 7861/7862).
-- **Premium Dashboard** — Modern, responsive web interface with a custom 'KABUTAR' splash screen and glassmorphic UI.
+- **Premium Dashboard** — Modern, responsive web interface with a custom 'KABUTAR' splash screen, glassmorphic UI, and authorized Web Audio initialization.
 
-### 📞 Voice Calling & Acoustic Echo Cancellation (AEC)
+### 👥 Shared Contact System
+PureOS features a system-wide contact repository mapped at the kernel level:
+- **Global Mapping** — Share names and phone numbers between the **Chat** and **Phone** apps.
+- **Dynamic Resolution** — Automatically resolves numbers to saved names in the sidebar or dialer, defaulting to "Unknown" for unsaved contacts.
+- **Direct Save** — Add new contacts directly from the Phone dialer or via the `/add <number> <name>` command in Chat.
 
-PureOS features a highly optimized, full-duplex voice calling pipeline that bridges the OS natively to a web browser. To deliver a seamless experience comparable to WhatsApp or Discord, the architecture handles network jitter and acoustic feedback natively:
+### 📞 Voice Calling & WhatsApp-style UI
+
+PureOS features a highly optimized, full-duplex voice calling pipeline with a premium **WhatsApp-style UI**. The redesign features a central circular digital dialpad and modular navigation tabs:
 
 ```mermaid
 sequenceDiagram
