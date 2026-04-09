@@ -46,6 +46,7 @@ typedef struct {
   int scroll_y, tz;
   int mx, my;
   int auto_hide_taskbar;
+  int sel_res; // Selected resolution index
 } sstate_t;
 
 static void card(window_t *w, int x, int y, int cw, int h) {
@@ -431,10 +432,39 @@ static void settings_draw(void *w) {
     winmgr_draw_text(win, cx, cy, "System", theme->fg);
     cy += 30;
 
-    winmgr_fill_rect(win, cx, cy, card_w, 50, theme->input_bg);
-    winmgr_draw_rect(win, cx, cy, card_w, 50, theme->border);
     winmgr_draw_text(win, cx + 15, cy + 12, "Display", theme->fg);
-    winmgr_draw_text(win, cx + 15, cy + 28, "1024x768 32bpp BGA", theme->fg_secondary);
+    winmgr_draw_text(win, cx + 15, cy + 28, "Active Resolution", theme->fg_secondary);
+
+    cy += 60;
+    // Resolution List
+    winmgr_draw_text(win, cx, cy, "Screen Resolution", theme->fg);
+    cy += 30;
+
+    const char *res_names[] = {"800x600", "1024x768", "1280x720", "1280x800",
+                               "1440x900", "1600x900", "1920x1080"};
+    int res_w[] = {800, 1024, 1280, 1280, 1440, 1600, 1920};
+    int res_h[] = {600, 768, 720, 800, 900, 900, 1080};
+
+    for (int i = 0; i < 7; i++) {
+      int item_y = cy + i * 35;
+      if (item_y + 30 > win->height + s->scroll_y) break;
+
+      uint32_t bg = (s->sel_res == i) ? theme->accent : theme->input_bg;
+      DRAW_HOVER(win, s, cx, item_y, card_w, 30, bg, 0xFF353545);
+      winmgr_draw_rect(win, cx, item_y, card_w, 30, theme->border);
+      winmgr_draw_text(win, cx + 15, item_y + 8, res_names[i], 
+                       (s->sel_res == i) ? 0xFFFFFFFF : theme->fg);
+      
+      // Mark current resolution
+      if (screen_width == res_w[i] && screen_height == res_h[i]) {
+        winmgr_draw_text(win, cx + card_w - 80, item_y + 8, "(Current)", theme->fg_secondary);
+      }
+    }
+
+    cy += 7 * 35 + 10;
+    // Apply Resolution Button
+    DRAW_HOVER(win, s, cx, cy, 140, 30, theme->accent, 0xFF353545);
+    winmgr_draw_text(win, cx + 25, cy + 8, "Apply Resolution", 0xFFFFFFFF);
 
     cy += 60;
     winmgr_fill_rect(win, cx, cy, card_w, 50, 0xFFFAFAFA);
@@ -850,6 +880,29 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
       win->needs_redraw = 1;
     }
   }
+
+  // System settings (Resolution)
+  if (s->page == PD) {
+    int res_cy = 40 + 30 + 60 + 30; // Matches settings_draw for PD
+    int card_w = win->width - CX - 20;
+
+    for (int i = 0; i < 7; i++) {
+        int item_y = res_cy + i * 35;
+        if (click && rx >= CX && rx <= CX + card_w && ry >= item_y && ry <= item_y + 30) {
+            s->sel_res = i;
+            win->needs_redraw = 1;
+        }
+    }
+
+    int apply_res_y = res_cy + 7 * 35 + 10;
+    if (click && rx >= CX && rx <= CX + 140 && ry >= apply_res_y && ry <= apply_res_y + 30) {
+        int res_w[] = {800, 1024, 1280, 1280, 1440, 1600, 1920};
+        int res_h[] = {600, 768, 720, 800, 900, 900, 1080};
+        extern void screen_set_resolution(int, int);
+        screen_set_resolution(res_w[s->sel_res], res_h[s->sel_res]);
+        win->needs_redraw = 1;
+    }
+  }
 }
 
 static void settings_on_scroll(void *w, int direction) {
@@ -927,6 +980,18 @@ void settings_init() {
   for (int i = 0; i < global_config.num_pinned; i++) {
     st->pinned[i] = global_config.pinned[i];
   }
+
+  // Initialize selected resolution to current
+  st->sel_res = 1; // Default 1024x768
+  int res_w[] = {800, 1024, 1280, 1280, 1440, 1600, 1920};
+  int res_h[] = {600, 768, 720, 800, 900, 900, 1080};
+  for (int i = 0; i < 7; i++) {
+    if (screen_width == res_w[i] && screen_height == res_h[i]) {
+      st->sel_res = i;
+      break;
+    }
+  }
+
   win->user_data = st;
 
   win->draw = settings_draw;

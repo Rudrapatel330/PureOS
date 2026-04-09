@@ -382,242 +382,231 @@ static void draw_rect_f(int x, int y, int w, int h, uint32_t color,
 }
 
 void draw_icon(int x, int y, int type, uint32_t *target) {
+  uint32_t W = 0xFFFFFFFF;
+  uint32_t W90 = 0xFFE8E8E8;
+  uint32_t W60 = 0xFFBBBBBB;
+
   switch (type) {
   case APP_COMPUTER:
-    // iMac style silver frame (34x22)
+    // iMac style silver frame
     draw_rect_f(x + 3, y + 6, 34, 23, 0xFFC0C0C0, target);
-    draw_rect_f(x + 5, y + 8, 30, 18, 0xFF111111, target); // Black bezel
-    // Vibrant screen with reflection
-    draw_rect_f(x + 6, y + 9, 28, 16, 0xFF0078D4, target); // Modern Blue
-    draw_rect_f(x + 6, y + 9, 14, 8, 0xFF0089F2,
-                target); // Top-left highlight
-    // Stand
+    draw_rect_f(x + 5, y + 8, 30, 18, 0xFF111111, target);
+    draw_rect_f(x + 6, y + 9, 28, 16, 0xFF0078D4, target);
+    draw_rect_f(x + 6, y + 9, 14, 8, 0xFF0089F2, target);
     draw_rect_f(x + 15, y + 29, 10, 4, 0xFF808080, target);
     draw_rect_f(x + 10, y + 33, 20, 3, 0xFF999999, target);
     break;
   case APP_TERMINAL:
-    // Dark glass terminal (34x28) with integrated anchor border
-    draw_rect_f(x + 3, y + 6, 34, 28, 0xFF475569,
-                target); // Outer anchor bridge
-    draw_rect_f(x + 4, y + 7, 32, 26, 0xFF18181b,
-                target);                                  // Inner console
-    draw_rect_f(x + 4, y + 7, 32, 4, 0xFF27272a, target); // Title bar
-    // Three tiny "window dots" (red, yellow, green)
-    draw_rect_f(x + 7, y + 8, 2, 2, 0xFFef4444, target);
-    draw_rect_f(x + 11, y + 8, 2, 2, 0xFFf59e0b, target);
-    draw_rect_f(x + 15, y + 8, 2, 2, 0xFF10b981, target);
-    // Neon prompt
-    draw_rect_f(x + 7, y + 14, 4, 2, 0xFF22c55e, target);
-    draw_rect_f(x + 7, y + 16, 2, 2, 0xFF22c55e, target);
-    // Subtle text lines
-    draw_rect_f(x + 13, y + 14, 12, 2, 0xFFe2e8f0, target);
-    draw_rect_f(x + 7, y + 22, 24, 1, 0xFF71717a, target);
-    draw_rect_f(x + 7, y + 26, 18, 1, 0xFF71717a, target);
+    // Dark glass terminal with prompt
+    draw_rect_f(x + 3, y + 5, 34, 30, 0xFF2DB84D, target);
+    draw_rect_f(x + 5, y + 7, 30, 26, 0xFF1A3A25, target);
+    // Traffic light dots
+    draw_rect_f(x + 8, y + 9, 3, 3, 0xFFef4444, target);
+    draw_rect_f(x + 13, y + 9, 3, 3, 0xFFf59e0b, target);
+    draw_rect_f(x + 18, y + 9, 3, 3, 0xFF10b981, target);
+    // Arrow ">" shape
+    draw_rect_f(x + 8, y + 16, 3, 3, W, target);
+    draw_rect_f(x + 11, y + 19, 3, 3, W, target);
+    draw_rect_f(x + 14, y + 22, 3, 3, W, target);
+    draw_rect_f(x + 11, y + 25, 3, 3, W, target);
+    draw_rect_f(x + 8, y + 28, 3, 3, W, target);
+    // Underscore cursor
+    draw_rect_f(x + 19, y + 28, 10, 3, W, target);
     break;
   case APP_CALCULATOR:
-    // Sleek white/gray body with defining border
-    draw_rect_f(x + 6, y + 4, 28, 34, 0xFFcbd5e1, target); // Border
-    draw_rect_f(x + 7, y + 5, 26, 32, 0xFFf8fafc, target); // Main surface
-    // Modern OLED-style display
-    draw_rect_f(x + 9, y + 7, 22, 9, 0xFF0f172a, target);
-    draw_rect_f(x + 24, y + 10, 4, 3, 0xFF10b981, target); // cursor/digit
-    // Soft button grid
-    for (int r = 0; r < 3; r++) {
-      for (int c = 0; c < 3; c++) {
-        draw_rect_f(x + 9 + c * 8, y + 19 + r * 6, 6, 4, 0xFFcbd5e1, target);
-      }
-    }
-    // Blue accent equals button
-    draw_rect_f(x + 25, y + 31, 6, 4, 0xFF3b82f6, target);
+    // Cyan bg with calculator layout
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFF00AEEF, target);
+    // Display
+    draw_rect_f(x + 7, y + 6, 26, 10, 0xFF003E5C, target);
+    draw_rect_f(x + 25, y + 10, 6, 4, 0xFF00E676, target);
+    // 3x3 button grid
+    for (int r = 0; r < 3; r++)
+      for (int c = 0; c < 3; c++)
+        draw_rect_f(x + 7 + c * 9, y + 19 + r * 7, 7, 5, W, target);
+    // Orange equals
+    draw_rect_f(x + 27, y + 33, 8, 5, 0xFFFF9500, target);
     break;
   case APP_EDITOR:
-    // Document with high depth and defining border
-    draw_rect_f(x + 7, y + 4, 26, 32, 0xFFcbd5e1, target); // Border
-    draw_rect_f(x + 8, y + 5, 24, 30, 0xFFf1f5f9, target); // Surface
-    // Folded corner
-    draw_rect_f(x + 27, y + 4, 6, 6, 0xFF94a3b8, target);
-    // Blue line highlights (code-style)
-    draw_rect_f(x + 11, y + 9, 8, 2, 0xFF3b82f6, target); // Keyword
-    draw_rect_f(x + 21, y + 9, 8, 2, 0xFF1e293b, target);
-    draw_rect_f(x + 11, y + 14, 18, 2, 0xFF1e293b, target);
-    draw_rect_f(x + 11, y + 19, 14, 2, 0xFFef4444,
-                target); // Error/String
-    draw_rect_f(x + 11, y + 24, 16, 2, 0xFF1e293b, target);
-    draw_rect_f(x + 11, y + 29, 10, 2, 0xFF1e293b, target);
+    // Blue bg with document page
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFF5B8BF5, target);
+    // White page
+    draw_rect_f(x + 9, y + 5, 24, 30, W, target);
+    draw_rect_f(x + 6, y + 8, 3, 24, W, target);   // Left margin
+    // Fold corner
+    draw_rect_f(x + 28, y + 5, 5, 5, W90, target);
+    // Code-like text lines
+    draw_rect_f(x + 12, y + 11, 16, 3, 0xFF3B82F6, target);
+    draw_rect_f(x + 12, y + 17, 18, 3, 0xFF64748B, target);
+    draw_rect_f(x + 12, y + 23, 12, 3, 0xFF64748B, target);
+    draw_rect_f(x + 12, y + 29, 16, 3, 0xFF64748B, target);
     break;
   case APP_PAINT:
-    // Artist Palette (Modern refined)
-    draw_rect_f(x + 5, y + 10, 30, 22, 0xFFfde68a, target);  // Pale wood
-    draw_rect_f(x + 25, y + 10, 10, 22, 0xFFfcd34d, target); // Depth
-    // Finger hole
-    draw_rect_f(x + 8, y + 24, 6, 4, 0xFF1e293b, target);
-    // Vibrant paint dots
-    draw_rect_f(x + 9, y + 14, 4, 4, 0xFFef4444, target);  // Red
-    draw_rect_f(x + 15, y + 13, 4, 4, 0xFF3b82f6, target); // Blue
-    draw_rect_f(x + 21, y + 14, 4, 4, 0xFF10b981, target); // Green
-    draw_rect_f(x + 15, y + 20, 4, 4, 0xFFf59e0b, target); // Orange
-    draw_rect_f(x + 22, y + 21, 4, 4, 0xFFec4899, target); // Pink
-    // Brush
-    draw_rect_f(x + 28, y + 8, 3, 20, 0xFF78350f, target);
-    draw_rect_f(x + 27, y + 26, 5, 6, 0xFFd97706, target); // Bristles
+    // Pink/red bg with canvas and brush
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFFFF6B81, target);
+    // Canvas
+    draw_rect_f(x + 6, y + 6, 20, 26, W, target);
+    // Paint spots
+    draw_rect_f(x + 9, y + 10, 6, 6, 0xFFFF3B30, target);
+    draw_rect_f(x + 17, y + 16, 5, 5, 0xFF34C759, target);
+    draw_rect_f(x + 10, y + 22, 8, 5, 0xFF007AFF, target);
+    // Brush handle
+    draw_rect_f(x + 26, y + 6, 4, 20, 0xFF8B5E3C, target);
+    // Brush tip
+    draw_rect_f(x + 25, y + 26, 6, 7, 0xFFFFCC02, target);
     break;
   case APP_FILEMGR:
-    // Modern Folder icon with depth (34x22)
-    draw_rect_f(x + 3, y + 12, 34, 22, 0xFFf59e0b, target); // Back
-    draw_rect_f(x + 3, y + 9, 14, 4, 0xFFf59e0b, target);   // Tab
-    // Folder Front with gradient look
-    draw_rect_f(x + 3, y + 16, 34, 18, 0xFFfbbf24, target);
-    draw_rect_f(x + 3, y + 16, 34, 1, 0xFFfef3c7,
-                target); // Edge highlight
-    // Document peek
-    draw_rect_f(x + 7, y + 13, 26, 6, 0xFFf8fafc, target);
+    // Yellow bg with folder
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFFFFC107, target);
+    // Folder tab
+    draw_rect_f(x + 6, y + 10, 14, 5, 0xFFF5F5DC, target);
+    // Folder body
+    draw_rect_f(x + 5, y + 14, 30, 18, 0xFFF5F5DC, target);
+    // Front flap
+    draw_rect_f(x + 5, y + 18, 30, 14, W, target);
+    draw_rect_f(x + 5, y + 18, 30, 2, 0xFFE8E8E0, target);
     break;
   case APP_TASKMGR:
-    // High-tech monitor (34x30) with integrated anchor border
-    draw_rect_f(x + 3, y + 5, 34, 30, 0xFF475569, target); // Border
-    draw_rect_f(x + 4, y + 6, 32, 28, 0xFF1e293b, target); // Surface
-    draw_rect_f(x + 4, y + 6, 32, 3, 0xFF334155, target);  // Title bar
-    // Vibrant Telemetry (Bar Charts)
-    draw_rect_f(x + 7, y + 22, 5, 10, 0xFF10b981, target);
-    draw_rect_f(x + 14, y + 16, 5, 16, 0xFF10b981, target);
-    draw_rect_f(x + 21, y + 26, 5, 6, 0xFF3b82f6, target);
-    draw_rect_f(x + 28, y + 20, 5, 12, 0xFFef4444, target);
-    // Background Grid
-    for (int i = 0; i < 4; i++) {
-      draw_rect_f(x + 5, y + 12 + i * 6, 30, 1, 0xFF475569, target);
-    }
+    // Green bg with bar chart
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFF43A047, target);
+    // Three ascending bars
+    draw_rect_f(x + 7, y + 24, 8, 12, W, target);
+    draw_rect_f(x + 16, y + 16, 8, 20, W90, target);
+    draw_rect_f(x + 25, y + 8, 8, 28, 0xFF00E676, target);
     break;
   case APP_BROWSER:
-    // Stylized Globe (30x30) with refined border
-    draw_rect_f(x + 4, y + 6, 32, 29, 0xFFcbd5e1, target);  // Border
-    draw_rect_f(x + 5, y + 10, 30, 25, 0xFF3b82f6, target); // Ocean
-    draw_rect_f(x + 8, y + 10, 24, 8, 0xFF60a5fa, target);  // Atmosphere
-    // Latitude/Longitude Lines (Minimal Silver)
-    draw_rect_f(x + 5, y + 18, 30, 1, 0xFFe2e8f0, target);
-    draw_rect_f(x + 5, y + 26, 30, 1, 0xFFe2e8f0, target);
-    draw_rect_f(x + 19, y + 10, 2, 25, 0xFFe2e8f0, target);
-    // Mini search bar at top
-    draw_rect_f(x + 5, y + 6, 30, 6, 0xFFf1f5f9, target);
-    draw_rect_f(x + 8, y + 8, 4, 2, 0xFF94a3b8, target); // URL dot
+    // Teal bg with Safari compass
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFF00B4D8, target);
+    // Outer ring
+    draw_rect_f(x + 6, y + 6, 28, 28, W, target);
+    // Inner colored circle
+    draw_rect_f(x + 8, y + 8, 24, 24, 0xFF009BBA, target);
+    // Compass needle - red (NE)
+    draw_rect_f(x + 20, y + 12, 3, 3, 0xFFFF3B30, target);
+    draw_rect_f(x + 23, y + 9, 3, 3, 0xFFFF3B30, target);
+    draw_rect_f(x + 22, y + 11, 3, 3, 0xFFFF3B30, target);
+    draw_rect_f(x + 25, y + 8, 3, 3, 0xFFFF3B30, target);
+    // Compass needle - white (SW)
+    draw_rect_f(x + 14, y + 22, 3, 3, W, target);
+    draw_rect_f(x + 17, y + 19, 3, 3, W, target);
+    draw_rect_f(x + 12, y + 24, 3, 3, W, target);
+    draw_rect_f(x + 15, y + 21, 3, 3, W, target);
+    // Center dot
+    draw_rect_f(x + 19, y + 19, 3, 3, W, target);
     break;
   case APP_VIDEOPLAYER:
-    // Pro Cinema Display (30x30) with integrated anchor border
-    draw_rect_f(x + 5, y + 7, 30, 26, 0xFF475569, target); // Border
-    draw_rect_f(x + 6, y + 8, 28, 24, 0xFF020617, target); // Screen
-    draw_rect_f(x + 6, y + 8, 28, 2, 0xFF1e293b, target);  // Title
-    // Vibrant Play Button triangle
-    for (int i = 0; i < 10; i++) {
-      draw_rect_f(x + 17 + i / 2, y + 15 + i, 1, 1, 0xFFf8fafc, target);
-      draw_rect_f(x + 17 + i / 2, y + 25 - i, 1, 1, 0xFFf8fafc, target);
-    }
-    draw_rect_f(x + 17, y + 15, 1, 11, 0xFFf8fafc, target);
+    // Purple bg with play triangle
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFFAB47BC, target);
+    // Play triangle
+    draw_rect_f(x + 14, y + 8, 4, 24, W, target);
+    draw_rect_f(x + 18, y + 11, 4, 18, W, target);
+    draw_rect_f(x + 22, y + 14, 4, 12, W, target);
+    draw_rect_f(x + 26, y + 17, 3, 6, W, target);
     break;
   case APP_SETTINGS:
-    // High-precision metallic gear
-    draw_rect_f(x + 7, y + 12, 26, 20, 0xFF94a3b8, target); // Body
-    draw_rect_f(x + 15, y + 4, 10, 32, 0xFF94a3b8, target); // Vert
-    draw_rect_f(x + 4, y + 17, 32, 10, 0xFF94a3b8, target); // Horiz
-    // Core sapphire
-    draw_rect_f(x + 15, y + 15, 10, 10, 0xFF3b82f6, target);
-    draw_rect_f(x + 17, y + 17, 6, 6, 0xFF1e3a8a,
-                target); // Inner hole depth
+    // Gray bg with gear icon
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFF8E8E93, target);
+    // Gear cross arms
+    draw_rect_f(x + 17, y + 5, 7, 30, W90, target);   // Vertical
+    draw_rect_f(x + 5, y + 15, 30, 7, W90, target);    // Horizontal
+    // Diagonal teeth
+    draw_rect_f(x + 9, y + 8, 7, 7, W90, target);
+    draw_rect_f(x + 24, y + 8, 7, 7, W90, target);
+    draw_rect_f(x + 9, y + 25, 7, 7, W90, target);
+    draw_rect_f(x + 24, y + 25, 7, 7, W90, target);
+    // Center circle
+    draw_rect_f(x + 14, y + 13, 12, 12, 0xFF8E8E93, target);
+    draw_rect_f(x + 15, y + 14, 10, 10, W60, target);
+    // Inner dot
+    draw_rect_f(x + 18, y + 17, 5, 5, 0xFF8E8E93, target);
     break;
   case APP_PDFREADER:
-    // PDF Document icon - white page with red PDF label
-    draw_rect_f(x + 8, y + 4, 24, 32, 0xFFe2e8f0, target); // Page border
-    draw_rect_f(x + 9, y + 5, 22, 30, 0xFFf8fafc, target); // Page surface
-    draw_rect_f(x + 26, y + 4, 6, 6, 0xFF94a3b8, target);  // Folded corner
-    // Red "PDF" banner
-    draw_rect_f(x + 11, y + 14, 18, 10, 0xFFdc2626, target);
-    // Text lines below
-    draw_rect_f(x + 12, y + 28, 14, 2, 0xFF94a3b8, target);
-    draw_rect_f(x + 12, y + 32, 10, 2, 0xFF94a3b8, target);
-    break;
-  case APP_PHOTOS:
-    // Simple Flat Landscape Icon (Photo)
-    // White Paper Frame
-    draw_rect_f(x + 6, y + 4, 30, 32, 0xFFcbd5e1, target); // Border
-    draw_rect_f(x + 7, y + 5, 28, 30, 0xFFf8fafc, target); // Surface
-    // Sky
-    draw_rect_f(x + 10, y + 8, 22, 14, 0xFF00bcd4, target); // Cyan Sky
-    // Sun
-    draw_rect_f(x + 24, y + 10, 5, 5, 0xFFFFEB3B, target); // Yellow Sun
-    // Mountains (Overlapping triangles/rects for simplicity)
-    draw_rect_f(x + 10, y + 16, 12, 6, 0xFF009688, target); // Mid Mountain
-    draw_rect_f(x + 16, y + 14, 16, 8, 0xFF4CAF50, target); // High Mountain
-    break;
-  case APP_MAIL:
-    // Mail Envelope Icon
-    draw_rect_f(x + 3, y + 8, 34, 24, 0xFFe2e8f0,
-                target); // Back flat envelope body
-    draw_rect_f(x + 3, y + 8, 34, 1, 0xFF94a3b8, target);  // Top outline
-    draw_rect_f(x + 3, y + 31, 34, 1, 0xFF94a3b8, target); // Bottom outline
-    draw_rect_f(x + 3, y + 8, 1, 24, 0xFF94a3b8, target);  // Left outline
-    draw_rect_f(x + 36, y + 8, 1, 24, 0xFF94a3b8, target); // Right outline
-
-    // Envelope Flap (V-Shape approximation through rect stepdowns)
-    for (int i = 0; i < 17; i++) {
-      draw_rect_f(x + 3 + i, y + 8 + i, 2, 2, 0xFFcbd5e1,
-                  target); // Left diagonal flap
-      draw_rect_f(x + 35 - i, y + 8 + i, 2, 2, 0xFFcbd5e1,
-                  target); // Right diagonal flap
-    }
-    draw_rect_f(x + 16, y + 21, 8, 4, 0xFF0078D4,
-                target); // Blue stamp / seal indicator in center
+    // Dark red bg with document
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFFCC3333, target);
+    // White page
+    draw_rect_f(x + 9, y + 5, 22, 30, W, target);
+    // Fold corner
+    draw_rect_f(x + 26, y + 5, 5, 5, W90, target);
+    // Red "PDF" label
+    draw_rect_f(x + 12, y + 16, 16, 9, 0xFFFF3B30, target);
+    // Text lines
+    draw_rect_f(x + 12, y + 28, 16, 2, W60, target);
+    draw_rect_f(x + 12, y + 32, 10, 2, W60, target);
     break;
   case APP_CAMERA:
-    // Modern Camera Icon
-    draw_rect_f(x + 5, y + 10, 30, 22, 0xFF333333, target); // Body
-    draw_rect_f(x + 12, y + 7, 16, 4, 0xFF333333, target);  // Top bump
-    // Lens
-    draw_rect_f(x + 14, y + 13, 12, 12, 0xFF111111, target); 
-    draw_rect_f(x + 16, y + 15, 8, 8, 0xFF0078D4, target);   // Glass
-    draw_rect_f(x + 22, y + 15, 2, 2, 0xFFFFFFFF, target);   // Reflection
-    // Flash
+    // Camera icon
+    draw_rect_f(x + 5, y + 10, 30, 22, 0xFF333333, target);
+    draw_rect_f(x + 12, y + 7, 16, 4, 0xFF333333, target);
+    draw_rect_f(x + 14, y + 13, 12, 12, 0xFF111111, target);
+    draw_rect_f(x + 16, y + 15, 8, 8, 0xFF0078D4, target);
+    draw_rect_f(x + 22, y + 15, 2, 2, W, target);
     draw_rect_f(x + 7, y + 12, 4, 3, 0xFF666666, target);
     break;
-  case APP_RECORDER:
-    // Modern Microphone Icon
-    draw_rect_f(x + 10, y + 5, 20, 25, 0xFF333333, target); // Mic body
-    draw_rect_f(x + 12, y + 7, 16, 21, 0xFF555555, target); // Grill
-    // Grill lines
-    for (int i = 0; i < 5; i++) {
-        draw_rect_f(x + 14, y + 10 + i * 4, 12, 1, 0xFF111111, target);
+  case APP_PHOTOS:
+    // Colorful landscape
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFF1E88E5, target);
+    // Photo frame
+    draw_rect_f(x + 5, y + 7, 30, 26, W, target);
+    // Sky
+    draw_rect_f(x + 6, y + 8, 28, 14, 0xFF87CEEB, target);
+    // Sun
+    draw_rect_f(x + 26, y + 10, 6, 6, 0xFFFFEB3B, target);
+    // Mountains
+    draw_rect_f(x + 6, y + 18, 16, 7, 0xFF4CAF50, target);
+    draw_rect_f(x + 16, y + 15, 18, 10, 0xFF2E7D32, target);
+    // Ground
+    draw_rect_f(x + 6, y + 25, 28, 7, 0xFF388E3C, target);
+    break;
+  case APP_MAIL:
+    // Blue bg with envelope
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFF5C9CE5, target);
+    // Envelope body
+    draw_rect_f(x + 5, y + 11, 30, 20, W, target);
+    // Envelope flap (V-shape)
+    for (int i = 0; i < 15; i++) {
+      draw_rect_f(x + 5 + i, y + 11 + i, 2, 1, W90, target);
+      draw_rect_f(x + 33 - i, y + 11 + i, 2, 1, W90, target);
     }
-    // Stand
-    draw_rect_f(x + 18, y + 30, 4, 6, 0xFF888888, target);
-    draw_rect_f(x + 12, y + 36, 16, 2, 0xFF999999, target);
-    // Red indicator dot
-    draw_rect_f(x + 28, y + 8, 4, 4, 0xFFFF0000, target);
+    // Blue seal
+    draw_rect_f(x + 17, y + 23, 6, 4, 0xFF007AFF, target);
+    break;
+  case APP_RECORDER:
+    // Orange bg with microphone
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFFFF6600, target);
+    // Mic head (rounded capsule)
+    draw_rect_f(x + 13, y + 5, 14, 20, W, target);
+    draw_rect_f(x + 15, y + 4, 10, 1, W, target);   // rounded top
+    // Mic stand
+    draw_rect_f(x + 18, y + 25, 4, 6, W90, target);
+    // Base
+    draw_rect_f(x + 12, y + 31, 16, 3, W90, target);
+    // Red recording dot
+    draw_rect_f(x + 28, y + 6, 6, 6, 0xFFFF3B30, target);
     break;
   case APP_CHAT:
-    // Speech Bubble Icon
-    draw_rect_f(x + 4, y + 6, 32, 22, 0xFF25D366, target);   // Bubble body
-    draw_rect_f(x + 6, y + 8, 28, 18, 0xFF2EE672, target);   // Inner lighter
-    draw_rect_f(x + 6, y + 8, 28, 2, 0xFF5AED8F, target);    // Top highlight
+    // Green bg with speech bubble
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFF25D366, target);
+    // Bubble body
+    draw_rect_f(x + 5, y + 6, 30, 22, W, target);
     // Tail
-    draw_rect_f(x + 8, y + 28, 8, 4, 0xFF25D366, target);
-    draw_rect_f(x + 8, y + 32, 4, 3, 0xFF25D366, target);
-    // Text lines inside bubble
-    draw_rect_f(x + 10, y + 12, 16, 2, 0xFFFFFFFF, target);
-    draw_rect_f(x + 10, y + 17, 20, 2, 0xFFFFFFFF, target);
-    draw_rect_f(x + 10, y + 22, 12, 2, 0xFFE0FFE8, target);
+    draw_rect_f(x + 8, y + 28, 8, 4, W, target);
+    draw_rect_f(x + 8, y + 32, 4, 3, W, target);
+    // Text lines
+    draw_rect_f(x + 10, y + 12, 18, 3, 0xFF25D366, target);
+    draw_rect_f(x + 10, y + 18, 22, 3, 0xFF25D366, target);
+    draw_rect_f(x + 10, y + 24, 14, 3, 0xFF8FE8A8, target);
     break;
   case APP_PHONE:
-    // Phone Handset Icon
-    draw_rect_f(x + 5, y + 8, 30, 26, 0xFF0078D4, target);   // Body bg
-    draw_rect_f(x + 7, y + 10, 26, 22, 0xFF0088F0, target);  // Inner
-    // Handset earpiece
-    draw_rect_f(x + 10, y + 10, 8, 10, 0xFFFFFFFF, target);
-    draw_rect_f(x + 11, y + 12, 6, 6, 0xFF0088F0, target);   // Hole
-    // Handset mouthpiece
-    draw_rect_f(x + 22, y + 22, 8, 10, 0xFFFFFFFF, target);
-    draw_rect_f(x + 23, y + 24, 6, 6, 0xFF0088F0, target);   // Hole
-    // Handle connecting ear to mouth
-    draw_rect_f(x + 16, y + 16, 8, 4, 0xFFFFFFFF, target);
-    draw_rect_f(x + 14, y + 18, 4, 6, 0xFFFFFFFF, target);
-    // Ring indicators
-    draw_rect_f(x + 28, y + 10, 4, 4, 0xFF66FF66, target);   // Green call dot
+    // Blue bg with phone handset
+    draw_rect_f(x + 3, y + 3, 34, 34, 0xFF0078D4, target);
+    // Earpiece
+    draw_rect_f(x + 8, y + 8, 9, 10, W, target);
+    draw_rect_f(x + 10, y + 10, 5, 6, 0xFF0078D4, target);   // Ear hole
+    // Handle connecting
+    draw_rect_f(x + 15, y + 16, 10, 5, W, target);
+    draw_rect_f(x + 16, y + 20, 8, 4, W, target);
+    // Mouthpiece
+    draw_rect_f(x + 23, y + 22, 9, 10, W, target);
+    draw_rect_f(x + 25, y + 24, 5, 6, 0xFF0078D4, target);   // Mouth hole
     break;
   } // end switch
 } // end draw_icon
@@ -700,12 +689,20 @@ static inline uint32_t bicubic_interpolate(const uint8_t *pixels, int bw,
 }
 
 static int cache_valid = 0;
-
 void desktop_invalidate() { cache_valid = 0; }
 
+static int desktop_last_w = 0, desktop_last_h = 0;
+
 void desktop_draw() {
+  if (desktop_buffer && (desktop_last_w != screen_width || desktop_last_h != screen_height)) {
+    kfree(desktop_buffer);
+    desktop_buffer = 0;
+  }
+
   if (!desktop_buffer) {
     desktop_buffer = (uint32_t *)kmalloc(screen_width * screen_height * 4);
+    desktop_last_w = screen_width;
+    desktop_last_h = screen_height;
     if (!desktop_buffer)
       return;
   }

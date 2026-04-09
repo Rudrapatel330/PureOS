@@ -186,6 +186,86 @@ void reboot_system(void) {
   __asm__ volatile("hlt");
 }
 
+#include "config.h" 
+// This includes os_config_t and extern global_config
+
+extern void desktop_invalidate(void);
+extern void compositor_init(void);
+extern void desktop_draw(void);
+extern uint32_t bga_width, bga_height;
+
+void screen_set_resolution(int width, int height) {
+  if (width < 640 || height < 480)
+    return;
+  if (width > 1920 || height > 1080)
+    return;
+
+  print_serial("KERNEL: Changing resolution to ");
+  char buf[16];
+  k_itoa(width, buf);
+  print_serial(buf);
+  print_serial("x");
+  k_itoa(height, buf);
+  print_serial(buf);
+  print_serial("\n");
+
+  // 1. Update hardware
+  bga_set_video_mode(width, height, 32, 1, 1);
+  bga_write_register(VBE_DISPI_INDEX_VIRT_HEIGHT, height * 3);
+  bga_write_register(VBE_DISPI_INDEX_X_OFFSET, 0);
+  bga_write_register(VBE_DISPI_INDEX_Y_OFFSET, 0);
+
+  // 2. Update globals
+  screen_width = width;
+  screen_height = height;
+  bga_width = width;
+  bga_height = height;
+
+  // 3. Reallocate backbuffer
+  if (backbuffer)
+    kfree(backbuffer);
+  backbuffer = (uint32_t *)kmalloc(width * height * 4);
+  if (backbuffer) {
+    memset(backbuffer, 0, width * height * 4);
+  }
+
+  // 4. Update config & theme
+  global_config.screen_width = width;
+  global_config.screen_height = height;
+  config_save();
+
+  // 5. Notify systems
+  compositor_init();
+  desktop_invalidate();
+  desktop_draw(); // Re-render wallpaper to new buffer size
+
+  // 6. Ensure windows are within bounds
+  extern window_t windows[];
+  extern int window_count;
+  for (int i = 0; i < window_count; i++) {
+    if (windows[i].id != 0) {
+      if (windows[i].x + windows[i].width > width) {
+          windows[i].x = width - windows[i].width;
+          if (windows[i].x < 0) windows[i].x = 0;
+      }
+      if (windows[i].y + windows[i].height > height) {
+          windows[i].y = height - windows[i].height;
+          if (windows[i].y < 24) windows[i].y = 100; // Below menubar
+      }
+      windows[i].needs_redraw = 1;
+    }
+  }
+
+  // 7. Reposition mouse if needed
+  if (mouse_x > width - 12)
+    mouse_x = width - 12;
+  if (mouse_y > height - 12)
+    mouse_y = height - 12;
+
+  ui_dirty = 1;
+  print_serial("KERNEL: Resolution changed successfully.\n");
+}
+
 // Mouse state (Desktop Context)
 int mouse_buttons = 0;
 
