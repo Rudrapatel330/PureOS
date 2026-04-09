@@ -6,6 +6,7 @@
 #include "../drivers/ac97.h"
 #include "../lib/speexdsp/include/speex/speex_echo.h"
 #include "../lib/speexdsp/include/speex/speex_preprocess.h"
+#include "contacts.h"
 
 extern void print_serial(const char *str);
 extern void k_itoa(int n, char *s);
@@ -83,16 +84,21 @@ typedef enum {
     CALL_STATE_IDLE,
     CALL_STATE_CALLING,
     CALL_STATE_RINGING,
-    CALL_STATE_INCALL
+    CALL_STATE_INCALL,
+    CALL_STATE_ADD_CONTACT
 } call_state_t;
 
 typedef struct {
     char target_username[32];
+    char contact_name[32];
     tcp_conn_t conn;
     int connected;
     int connecting;
     uint32_t server_ip;
     call_state_t state;
+    
+    int ui_tab;
+    int add_step;
     
     // Networking & Parsing (Lazy memmove support)
     uint8_t rx_json_buf[65536]; 
@@ -135,16 +141,33 @@ static void phone_destroy_aec(phone_state_t *s) {
     if (s->preprocess_state) { speex_preprocess_state_destroy(s->preprocess_state); s->preprocess_state = NULL; }
 }
 
+typedef struct {
+    char number[32];
+    char name[32];
+} contact_entry_t;
+extern contact_entry_t _global_contacts[];
+extern int _global_contacts_count;
+
 static phone_state_t* get_state(window_t* win) {
     return (phone_state_t*)win->user_data;
+}
+
+static void draw_fill_circle(window_t *win, int cx, int cy, int r, uint32_t color) {
+    for (int y = -r; y <= r; y++) {
+        for (int x = -r; x <= r; x++) {
+            if (x*x + y*y <= r*r) {
+                winmgr_put_pixel(win, cx+x, cy+y, color);
+            }
+        }
+    }
 }
 
 static void phone_draw(window_t *win) {
     phone_state_t *s = get_state(win);
     const theme_t *th = theme_get();
 
-    winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, th->bg);
-
+    winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, 0xFF0B141A); // WhatsApp Dark theme bg
+    
     int cx = win->width / 2;
     int cy = (win->height + 24) / 2;
 
@@ -153,25 +176,85 @@ static void phone_draw(window_t *win) {
         return;
     }
     
-    winmgr_draw_text(win, 10, 30, "KABUTAR PHONE", th->accent);
-
     if (s->state == CALL_STATE_IDLE) {
-        winmgr_draw_text(win, cx - 80, cy - 60, "Enter target to dial:", th->fg);
-        winmgr_fill_rect(win, cx - 80, cy - 40, 160, 30, th->input_bg);
-        winmgr_draw_rect(win, cx - 80, cy - 40, 160, 30, th->border);
-        winmgr_draw_text(win, cx - 70, cy - 32, s->target_username, th->fg);
+        // Top Navigation Tabs
+        winmgr_fill_rect(win, 0, 24, win->width, 34, 0xFF202C33);
+        winmgr_fill_rect(win, 0, 24, win->width/2, 34, s->ui_tab == 0 ? 0xFF2A3942 : 0xFF202C33);
+        winmgr_draw_text(win, win->width/4 - 24, 34, "Dialer", s->ui_tab == 0 ? 0xFFFFFFFF : 0xFF8696A0);
+        
+        winmgr_fill_rect(win, win->width/2, 24, win->width/2, 34, s->ui_tab == 1 ? 0xFF2A3942 : 0xFF202C33);
+        winmgr_draw_text(win, win->width*3/4 - 32, 34, "Contacts", s->ui_tab == 1 ? 0xFFFFFFFF : 0xFF8696A0);
 
-        winmgr_fill_rect(win, cx - 40, cy + 10, 80, 40, 0xFF00AA00);
-        winmgr_draw_text(win, cx - 15, cy + 22, "Dial", 0xFFFFFFFF);
+        if (s->ui_tab == 0) {
+            int num_len = strlen(s->target_username);
+            winmgr_draw_text(win, cx - (num_len*4), 70, s->target_username, 0xFFFFFFFF);
+            
+            const char *cname = contacts_get_name(s->target_username);
+            if (strcmp(cname, "Unknown") != 0 && s->target_username[0] != 0) {
+                int nlen = strlen(cname);
+                winmgr_draw_text(win, cx - (nlen*4), 90, cname, 0xFF8696A0);
+            }
+            
+            // Draw Keypad
+            const char *keys[12] = {"1","2","3","4","5","6","7","8","9","*","0","#"};
+            for (int i=0; i<12; i++) {
+                int kx = cx + ((i%3)-1)*65;
+                int ky = 140 + (i/3)*55;
+                draw_fill_circle(win, kx, ky, 22, 0xFF202C33);
+                winmgr_draw_text(win, kx - 4, ky - 6, keys[i], 0xFFFFFFFF);
+            }
+            
+            // Draw Call
+            draw_fill_circle(win, cx, 350, 26, 0xFF00A884);
+            winmgr_draw_text(win, cx - 16, 344, "Call", 0xFFFFFFFF);
+            
+            // Draw Del
+            if (num_len > 0) {
+                winmgr_draw_text(win, cx + 55, 344, "Del", 0xFF8696A0);
+            }
+        } else if (s->ui_tab == 1) {
+            int current_y = 70;
+            // New Contact logic
+            winmgr_fill_rect(win, 20, current_y, win->width - 40, 36, 0xFF2A3942);
+            winmgr_draw_text(win, cx - 40, current_y + 12, "+ Add Contact", 0xFF00A884);
+            current_y += 46;
+            
+            for (int i=0; i<_global_contacts_count; i++) {
+                winmgr_fill_rect(win, 10, current_y, win->width - 20, 48, 0xFF202C33);
+                winmgr_draw_text(win, 20, current_y + 10, _global_contacts[i].name, 0xFFFFFFFF);
+                winmgr_draw_text(win, 20, current_y + 26, _global_contacts[i].number, 0xFF8696A0);
+                
+                draw_fill_circle(win, win->width - 40, current_y + 24, 16, 0xFF00A884);
+                winmgr_draw_text(win, win->width - 52, current_y + 18, "Call", 0xFFFFFFFF);
+                
+                current_y += 52;
+            }
+        }
+    } else if (s->state == CALL_STATE_ADD_CONTACT) {
+        if (s->add_step == 0) {
+            winmgr_draw_text(win, cx - 80, cy - 60, "Enter phone number:", 0xFF8696A0);
+            winmgr_fill_rect(win, cx - 80, cy - 40, 160, 30, 0xFF202C33);
+            winmgr_draw_text(win, cx - 70, cy - 32, s->target_username, 0xFFFFFFFF);
+            
+            winmgr_fill_rect(win, cx - 40, cy + 10, 80, 36, 0xFF00A884);
+            winmgr_draw_text(win, cx - 16, cy + 22, "Next", 0xFFFFFFFF);
+        } else {
+            winmgr_draw_text(win, cx - 80, cy - 60, "Enter contact name:", 0xFF8696A0);
+            winmgr_fill_rect(win, cx - 80, cy - 40, 160, 30, 0xFF202C33);
+            winmgr_draw_text(win, cx - 70, cy - 32, s->contact_name, 0xFFFFFFFF);
+            
+            winmgr_fill_rect(win, cx - 40, cy + 10, 80, 36, 0xFF00A884);
+            winmgr_draw_text(win, cx - 16, cy + 22, "Save", 0xFFFFFFFF);
+        }
     } else if (s->state == CALL_STATE_CALLING) {
         winmgr_draw_text(win, cx - 40, cy - 30, "Calling...", th->fg);
-        winmgr_draw_text(win, cx - 40, cy - 10, s->target_username, th->accent);
+        winmgr_draw_text(win, cx - 40, cy - 10, contacts_get_name(s->target_username), th->accent);
 
         winmgr_fill_rect(win, cx - 40, cy + 20, 80, 40, 0xFFAA0000);
         winmgr_draw_text(win, cx - 25, cy + 32, "Cancel", 0xFFFFFFFF);
     } else if (s->state == CALL_STATE_RINGING) {
         winmgr_draw_text(win, cx - 50, cy - 30, "Incoming call!", 0xFF00AA00);
-        winmgr_draw_text(win, cx - 40, cy - 10, s->target_username, th->accent);
+        winmgr_draw_text(win, cx - 40, cy - 10, contacts_get_name(s->target_username), th->accent);
 
         winmgr_fill_rect(win, cx - 90, cy + 20, 80, 40, 0xFF00AA00);
         winmgr_draw_text(win, cx - 75, cy + 32, "Accept", 0xFFFFFFFF);
@@ -180,7 +263,7 @@ static void phone_draw(window_t *win) {
         winmgr_draw_text(win, cx + 25, cy + 32, "Reject", 0xFFFFFFFF);
     } else if (s->state == CALL_STATE_INCALL) {
         winmgr_draw_text(win, cx - 30, cy - 30, "In Call", 0xFF00AA00);
-        winmgr_draw_text(win, cx - 40, cy - 10, s->target_username, th->accent);
+        winmgr_draw_text(win, cx - 40, cy - 10, contacts_get_name(s->target_username), th->accent);
 
         winmgr_fill_rect(win, cx - 40, cy + 20, 80, 40, 0xFFAA0000);
         winmgr_draw_text(win, cx - 30, cy + 32, "Hang Up", 0xFFFFFFFF);
@@ -365,13 +448,56 @@ static void phone_on_key(void *w, int key, char c) {
 
     if (s->state == CALL_STATE_IDLE) {
         int len = strlen(s->target_username);
-        if (c >= 32 && c <= 126 && len < 31) {
-            s->target_username[len] = c;
-            s->target_username[len+1] = 0;
-            win->needs_redraw = 1;
-        } else if (c == '\b' && len > 0) {
-            s->target_username[len-1] = 0;
-            win->needs_redraw = 1;
+        // Only accept typing if we are on Dialer tab, but really they use mouse now
+        if (s->ui_tab == 0) {
+            if (c >= 32 && c <= 126 && len < 31) {
+                s->target_username[len] = c;
+                s->target_username[len+1] = 0;
+                win->needs_redraw = 1;
+            } else if (c == '\b' && len > 0) {
+                s->target_username[len-1] = 0;
+                win->needs_redraw = 1;
+            } else if (c == '\n' || c == '\r') {
+                if (len > 0) {
+                    char packet[128];
+                    strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
+                    strcat(packet, s->target_username);
+                    strcat(packet, "\"} \n");
+                    tcp_send(&s->conn, packet, strlen(packet));
+                    s->state = CALL_STATE_CALLING;
+                    win->needs_redraw = 1;
+                }
+            }
+        }
+    } else if (s->state == CALL_STATE_ADD_CONTACT) {
+        if (s->add_step == 0) {
+            int len = strlen(s->target_username);
+            if (c >= 32 && c <= 126 && len < 31) {
+                s->target_username[len] = c;
+                s->target_username[len+1] = 0;
+                win->needs_redraw = 1;
+            } else if (c == '\b' && len > 0) {
+                s->target_username[len-1] = 0;
+                win->needs_redraw = 1;
+            } else if (c == '\n' || c == '\r') {
+                s->add_step = 1;
+                win->needs_redraw = 1;
+            }
+        } else {
+            int len = strlen(s->contact_name);
+            if (c >= 32 && c <= 126 && len < 31) {
+                s->contact_name[len] = c;
+                s->contact_name[len+1] = 0;
+                win->needs_redraw = 1;
+            } else if (c == '\b' && len > 0) {
+                s->contact_name[len-1] = 0;
+                win->needs_redraw = 1;
+            } else if (c == '\n' || c == '\r') {
+                contacts_add(s->target_username, s->contact_name);
+                s->state = CALL_STATE_IDLE;
+                s->ui_tab = 1;
+                win->needs_redraw = 1;
+            }
         }
     }
 }
@@ -389,13 +515,92 @@ static void phone_on_mouse(void *w, int x, int y, int buttons) {
     int cy = (win->height + 24) / 2;
 
     if (s->state == CALL_STATE_IDLE) {
-        if (x >= cx - 40 && x <= cx + 40 && y >= cy + 10 && y <= cy + 50) {
-            char packet[128];
-            strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
-            strcat(packet, s->target_username);
-            strcat(packet, "\"} \n");
-            tcp_send(&s->conn, packet, strlen(packet));
-            s->state = CALL_STATE_CALLING;
+        if (y >= 24 && y <= 58) {
+            if (x < win->width/2) s->ui_tab = 0;
+            else s->ui_tab = 1;
+            win->needs_redraw = 1;
+            return;
+        }
+        
+        if (s->ui_tab == 0) {
+            // Keypad
+            for (int i=0; i<12; i++) {
+                int kx = cx + ((i%3)-1)*65;
+                int ky = 140 + (i/3)*55;
+                if ((x-kx)*(x-kx) + (y-ky)*(y-ky) <= 484) {
+                    const char *keys = "123456789*0#";
+                    int len = strlen(s->target_username);
+                    if (len < 31) {
+                        s->target_username[len] = keys[i];
+                        s->target_username[len+1] = 0;
+                        win->needs_redraw = 1;
+                    }
+                    return;
+                }
+            }
+            
+            // Call Button
+            if ((x-cx)*(x-cx) + (y-350)*(y-350) <= 676) {
+                if (strlen(s->target_username) > 0) {
+                    char packet[128];
+                    strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
+                    strcat(packet, s->target_username);
+                    strcat(packet, "\"} \n");
+                    tcp_send(&s->conn, packet, strlen(packet));
+                    s->state = CALL_STATE_CALLING;
+                    win->needs_redraw = 1;
+                }
+                return;
+            }
+            
+            // Del Button
+            if (x >= cx + 40 && x <= cx + 80 && y >= 330 && y <= 370) {
+                int len = strlen(s->target_username);
+                if (len > 0) {
+                    s->target_username[len-1] = 0;
+                    win->needs_redraw = 1;
+                }
+                return;
+            }
+        } else if (s->ui_tab == 1) {
+            int current_y = 70;
+            // New contact
+            if (x >= 20 && x <= win->width-20 && y >= current_y && y <= current_y+36) {
+                s->contact_name[0] = 0;
+                s->target_username[0] = 0;
+                s->add_step = 0;
+                s->state = CALL_STATE_ADD_CONTACT;
+                win->needs_redraw = 1;
+                return;
+            }
+            current_y += 46;
+            
+            for (int i=0; i<_global_contacts_count; i++) {
+                int bx = win->width - 40;
+                int by = current_y + 24;
+                if ((x-bx)*(x-bx) + (y-by)*(y-by) <= 400) {
+                    strcpy(s->target_username, _global_contacts[i].number);
+                    char packet[128];
+                    strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
+                    strcat(packet, s->target_username);
+                    strcat(packet, "\"} \n");
+                    tcp_send(&s->conn, packet, strlen(packet));
+                    s->state = CALL_STATE_CALLING;
+                    win->needs_redraw = 1;
+                    return;
+                }
+                current_y += 52;
+            }
+        }
+    } else if (s->state == CALL_STATE_ADD_CONTACT) {
+        if (x >= cx - 40 && x <= cx + 40 && y >= cy + 10 && y <= cy + 46) {
+            if (s->add_step == 0) {
+                s->add_step = 1;
+            } else {
+                contacts_add(s->target_username, s->contact_name);
+                s->state = CALL_STATE_IDLE;
+                s->ui_tab = 1;
+            }
             win->needs_redraw = 1;
         }
     } else if (s->state == CALL_STATE_CALLING || s->state == CALL_STATE_INCALL) {

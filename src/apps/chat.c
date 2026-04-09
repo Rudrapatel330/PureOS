@@ -3,12 +3,50 @@
 #include "../kernel/string.h"
 #include "../kernel/theme.h"
 #include "../net/net.h"
+#include "contacts.h"
+
+// --- Global Contacts Implementation ---
+typedef struct {
+    char number[32];
+    char name[32];
+} contact_entry_t;
+
+contact_entry_t _global_contacts[50] = {
+    {"+916354286174", "tirth"}
+};
+int _global_contacts_count = 1;
+
+void contacts_add(const char *number, const char *name) {
+    if (!number || number[0] == 0) return;
+    for (int i=0; i<_global_contacts_count; i++) {
+        if (strcmp(_global_contacts[i].number, number)==0) {
+            strcpy(_global_contacts[i].name, name);
+            return;
+        }
+    }
+    if (_global_contacts_count < 50) {
+        strcpy(_global_contacts[_global_contacts_count].number, number);
+        strcpy(_global_contacts[_global_contacts_count].name, name);
+        _global_contacts_count++;
+    }
+}
+
+const char* contacts_get_name(const char *number) {
+    if (!number || number[0] == 0) return "";
+    if (strcmp(number, "PureOS_User")==0 || strcmp(number, "PureOS_Phone")==0) return number;
+    for (int i=0; i<_global_contacts_count; i++) {
+        if (strcmp(_global_contacts[i].number, number)==0) return _global_contacts[i].name;
+    }
+    return "Unknown";
+}
 
 // --- Chat State Structures ---
 
 #define MAX_CHAT_HISTORY 50
 #define MSG_LEN 256
 #define USER_LEN 32
+
+#define MAX_CONTACTS 10
 
 typedef struct {
     char sender[USER_LEN];
@@ -19,6 +57,8 @@ typedef struct {
 typedef struct {
     char my_username[USER_LEN];
     char target_username[USER_LEN];
+    char contacts[MAX_CONTACTS][USER_LEN];
+    int contacts_count;
     char input_buf[MSG_LEN];
     int input_pos;
     
@@ -54,7 +94,16 @@ static void chat_draw(window_t *win) {
     winmgr_fill_rect(win, 0, 24, SIDE_WIDTH, win->height - 24, th->menu_bg);
     winmgr_fill_rect(win, SIDE_WIDTH - 1, 24, 1, win->height - 24, th->border);
     winmgr_draw_text(win, 10, 35, "Contacts", th->fg);
-    winmgr_draw_text(win, 10, 60, s->target_username[0] ? s->target_username : "No active chat", th->accent);
+    
+    int cy = 60;
+    for (int i = 0; i < s->contacts_count; i++) {
+        uint32_t color = (strcmp(s->contacts[i], s->target_username) == 0) ? th->accent : th->fg;
+        winmgr_draw_text(win, 10, cy, contacts_get_name(s->contacts[i]), color);
+        cy += 20;
+    }
+    if (s->contacts_count == 0) {
+        winmgr_draw_text(win, 10, 60, "No contacts", th->fg);
+    }
 
     // Chat Area
     int chat_x = SIDE_WIDTH + 10;
@@ -153,6 +202,20 @@ static void chat_process_packet(window_t *win, const char *buf) {
         m->sender[i] = 0;
         
         m->is_self = (strcmp(m->sender, s->my_username) == 0);
+        
+        // Add to contacts if not self and not known
+        if (!m->is_self) {
+            int known = 0;
+            for (int c = 0; c < s->contacts_count; c++) {
+                if (strcmp(s->contacts[c], m->sender) == 0) {
+                    known = 1;
+                    break;
+                }
+            }
+            if (!known && s->contacts_count < MAX_CONTACTS) {
+                strcpy(s->contacts[s->contacts_count++], m->sender);
+            }
+        }
     }
 }
 
@@ -194,6 +257,30 @@ void chat_update(void *w) {
 static void chat_send_message(window_t *win) {
     chat_state_t *s = get_state(win);
     if (!s->connected || s->input_pos == 0) return;
+
+    if (strncmp(s->input_buf, "/add ", 5) == 0) {
+        char *ptr = s->input_buf + 5;
+        char num[32] = {0};
+        char nam[32] = {0};
+        int i=0, j=0;
+        while (*ptr && *ptr != ' ' && i < 31) num[i++] = *ptr++;
+        if (*ptr == ' ') ptr++;
+        while (*ptr && j < 31) nam[j++] = *ptr++;
+        
+        if (i>0 && j>0) {
+            contacts_add(num, nam);
+            if (s->history_count < MAX_CHAT_HISTORY) {
+                chat_msg_t *m = &s->history[s->history_count++];
+                strcpy(m->sender, "System");
+                strcpy(m->text, "Contact saved.");
+                m->is_self = 0;
+            }
+        }
+        s->input_pos = 0;
+        s->input_buf[0] = 0;
+        win->needs_redraw = 1;
+        return;
+    }
 
     // Send: {"type":"chat","from":"...","to":"...","message":"..."}
     char packet[512];
@@ -253,6 +340,12 @@ static void chat_on_mouse(void *w, int x, int y, int buttons) {
         if (!s->connected && !s->connecting && x < SIDE_WIDTH) {
             s->connecting = 1;
             win->needs_redraw = 1;
+        } else if (s->connected && x < SIDE_WIDTH && y >= 50) {
+            int idx = (y - 50) / 20;
+            if (idx >= 0 && idx < s->contacts_count) {
+                strcpy(s->target_username, s->contacts[idx]);
+                win->needs_redraw = 1;
+            }
         }
     }
 }
@@ -280,6 +373,7 @@ void chat_init(void) {
 
     strcpy(s->my_username, "PureOS_User");
     strcpy(s->target_username, "Android_User");
+    strcpy(s->contacts[s->contacts_count++], "Android_User");
 
     win->user_data = s;
     win->app_type = 15; // APP_CHAT

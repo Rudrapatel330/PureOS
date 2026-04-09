@@ -7,6 +7,7 @@ HTTP_WS_PORT = 7862
 
 # username -> (type, obj)
 clients = {}
+os_phone_state = 'IDLE'
 
 async def broadcast(target, data):
     dtype = data.get('type', '')
@@ -33,6 +34,7 @@ async def broadcast(target, data):
 
 # --- TCP Handler (PureOS) ---
 async def handle_tcp(reader, writer):
+    global os_phone_state
     username = None
     try:
         while True:
@@ -49,6 +51,15 @@ async def handle_tcp(reader, writer):
                 elif 'to' in data:
                     # Forward general messages (chat, call_request, call_accept, audio, etc)
                     data['from'] = username
+                    
+                    if username == 'PureOS_Phone':
+                        if data.get('type') in ('call_accept', 'call_request'):
+                            os_phone_state = 'INCALL'
+                        elif data.get('type') in ('call_reject', 'call_end'):
+                            os_phone_state = 'IDLE'
+                    elif data.get('to') == 'PureOS_Phone' and data.get('type') in ('call_end', 'call_reject'):
+                        os_phone_state = 'IDLE'
+                            
                     await broadcast(data['to'], data)
             except Exception as e:
                 pass
@@ -58,6 +69,7 @@ async def handle_tcp(reader, writer):
 
 # --- Unified HTTP & WebSocket Handler ---
 async def handle_ws_route(request):
+    global os_phone_state
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     username = "Android_User"
@@ -71,6 +83,20 @@ async def handle_ws_route(request):
                     print(f"[WS] {username} identified")
                 elif 'to' in data:
                     data['from'] = username
+                    
+                    if data.get('type') == 'call_request' and data.get('to') == 'PureOS_Phone':
+                        if os_phone_state != 'IDLE':
+                            reject = {
+                                "type": "call_reject",
+                                "from": "PureOS_Phone",
+                                "to": username,
+                                "message": "OS is busy on another call"
+                            }
+                            await broadcast(username, reject)
+                            continue
+                    elif data.get('to') == 'PureOS_Phone' and data.get('type') in ('call_end', 'call_reject'):
+                        os_phone_state = 'IDLE'
+                            
                     await broadcast(data['to'], data)
     finally:
         if username and username in clients: del clients[username]
@@ -110,10 +136,19 @@ async def handle_index(request):
     input { flex: 1; padding: 12px 20px; border: none; border-radius: 25px; background: rgba(255,255,255,0.05); color: white; outline: none; font-size: 16px; border: 1px solid rgba(255,255,255,0.1); min-width: 0; }
     input:focus { border-color: #e94560; }
     #sendBtn { background: #e94560; }
+    #login-overlay { position: fixed; inset: 0; background: #0f0c29; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1000; }
+    #login-overlay h2 { font-size: 2rem; margin-bottom: 20px; }
+    #login-overlay input { font-size: 1.2rem; padding: 15px; margin-bottom: 20px; text-align: center; border: none; border-radius: 10px; color: black; }
+    #login-overlay .btn { font-size: 1.2rem; padding: 10px 30px; background: #08d9d6; color: #0f0c29; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; }
     </style></head><body>
+    <div id="login-overlay">
+        <h2>Enter Phone Number</h2>
+        <input type="text" id="phoneInput" placeholder="e.g. 555-1234">
+        <button class="btn" onclick="doLogin()">Login</button>
+    </div>
     <div id="splash"><h1>KABUTAR</h1></div>
     <div id="header">
-        <h2 id="title">PureOS_User</h2>
+        <h2 id="title">User</h2>
         <div>
             <button id="callBtn" class="btn" onclick="startCall()">Call</button>
             <button id="endBtn" class="btn" onclick="endCall()">End Call</button>
@@ -127,9 +162,9 @@ async def handle_index(request):
 
     <script>
     const c=document.getElementById("chat"), i=document.getElementById("i");
-    const ws_proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
-    const w = new WebSocket(ws_proto + "//" + location.host + "/ws");
-    
+    let w = null;
+    let my_username = "Unknown";
+
     // Web Audio specific
     let audioCtx = null;
     let micStream = null;
@@ -137,10 +172,37 @@ async def handle_index(request):
     let micWorklet = null;
     let micFallback = null;
     let isCalling = false;
+    
+    document.getElementById("header").style.display = "none";
+    document.getElementById("chat").style.display = "none";
+    document.getElementById("input-area").style.display = "none";
+
+    let saved = localStorage.getItem("kabutar_phone");
+    if (saved) document.getElementById("phoneInput").value = saved;
+
+    function doLogin() {
+        let p = document.getElementById("phoneInput").value.trim();
+        if(!p) return;
+        localStorage.setItem("kabutar_phone", p);
+        my_username = p;
+        
+        try {
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+        } catch(e) {}
+        
+        document.getElementById("login-overlay").style.display = "none";
+        document.getElementById("header").style.display = "flex";
+        document.getElementById("chat").style.display = "flex";
+        document.getElementById("input-area").style.display = "flex";
+        document.getElementById("title").innerText = my_username;
+
+        const ws_proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
+        w = new WebSocket(ws_proto + "//" + location.host + "/ws");
 
     w.onopen=()=>{ 
-        w.send(JSON.stringify({type:"auth",username:"Android_User"})); 
-        a("System", "SECURE LINK ESTABLISHED", "other"); 
+        w.send(JSON.stringify({type:"auth",username:my_username})); 
+        a("System", "SECURE LINK ESTABLISHED (" + my_username + ")", "other"); 
     };
     
     w.onmessage=(e)=>{ 
@@ -148,7 +210,7 @@ async def handle_index(request):
         if(!d) return;
 
         if(d.type === "message" || d.type === "chat") {
-            a(d.from, d.text || d.message, d.from==="Android_User"?"self":"other"); 
+            a(d.from, d.text || d.message, d.from===my_username?"self":"other"); 
         } else if(d.type === "call_request") {
             a("System", "Incoming call from " + d.from, "other");
             document.getElementById("callBtn").innerText = "Accept";
@@ -165,11 +227,12 @@ async def handle_index(request):
             if(isCalling) playAudioData(d.data);
         }
     };
+    } // End doLogin()
 
     function s(){ 
         const t=i.value.trim(); 
         if(!t)return; 
-        w.send(JSON.stringify({type:"chat",from:"Android_User",to:"PureOS_User",message:t})); 
+        w.send(JSON.stringify({type:"chat",from:my_username,to:"PureOS_User",message:t})); 
         i.value=""; 
         a("Me", t, "self");
     }
@@ -215,12 +278,22 @@ async def handle_index(request):
     }
 
     function startCall() {
+        try {
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+        } catch(e) {}
+        
         a("System", "Calling...", "self");
         w.send(JSON.stringify({type:"call_request", to:"PureOS_Phone"}));
         document.getElementById("callBtn").innerText = "Calling...";
     }
 
     function acceptCall() {
+        try {
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+        } catch(e) {}
+        
         w.send(JSON.stringify({type:"call_accept", to:"PureOS_Phone"}));
         setupCallUI();
         startAudioCapture();
