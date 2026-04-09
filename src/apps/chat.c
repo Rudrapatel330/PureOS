@@ -11,10 +11,8 @@ typedef struct {
     char name[32];
 } contact_entry_t;
 
-contact_entry_t _global_contacts[50] = {
-    {"+916354286174", "tirth"}
-};
-int _global_contacts_count = 1;
+contact_entry_t _global_contacts[50];
+int _global_contacts_count = 0;
 
 void contacts_add(const char *number, const char *name) {
     if (!number || number[0] == 0) return;
