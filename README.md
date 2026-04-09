@@ -195,10 +195,7 @@ graph LR
 ### Internet & Communication
 | App | Description |
 |---|---|
-| 🌐 **Web Browser** | Built-in web browser with custom HTML/DOM parser, CSS engine, JavaScript interpreter, and layout renderer — connects over raw TCP sockets |
-| 📧 **Mail Client** | Full SMTP email client that can send real emails through Gmail — see [Email Setup Guide](#-email-setup-guide) below |
-| 🐦 **PureChat** | Real-time bidirectional chat client with newline-delimited JSON protocol and kernel-level network polling |
-| 📞 **Phone** | WhatsApp-style voice calling app with circular dialpad, integrated contacts, 48kHz bidirectional streaming, and jitter-buffered playback |
+| 📞 **Phone** | Modern voice calling app with circular dialpad, integrated contacts, 48kHz bidirectional streaming, and jitter-buffered playback |
 
 ---
 
@@ -500,9 +497,9 @@ PureOS features a system-wide contact repository mapped at the kernel level:
 - **Dynamic Resolution** — Automatically resolves numbers to saved names in the sidebar or dialer, defaulting to "Unknown" for unsaved contacts.
 - **Direct Save** — Add new contacts directly from the Phone dialer or via the `/add <number> <name>` command in Chat.
 
-### 📞 Voice Calling & WhatsApp-style UI
+### 📞 Voice Calling & Modern UI
 
-PureOS features a highly optimized, full-duplex voice calling pipeline with a premium **WhatsApp-style UI**. The redesign features a central circular digital dialpad and modular navigation tabs:
+PureOS features a highly optimized, full-duplex voice calling pipeline with a premium **modern user interface**. The redesign features a central circular digital dialpad and modular navigation tabs:
 
 ```mermaid
 sequenceDiagram
