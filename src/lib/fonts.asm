@@ -56,9 +56,9 @@ global _binary_DroidSansFallbackFull_ttf_end
 global _binary_DroidSansFallbackFull_ttf_size
 _binary_DroidSansFallbackFull_ttf:
 _binary_DroidSansFallbackFull_ttf_start:
-    incbin "mupdf/resources/fonts/droid/DroidSansFallbackFull.ttf"
+    db 0
 _binary_DroidSansFallbackFull_ttf_end:
-_binary_DroidSansFallbackFull_ttf_size: dq _binary_DroidSansFallbackFull_ttf_end - _binary_DroidSansFallbackFull_ttf_start
+_binary_DroidSansFallbackFull_ttf_size: dq 0
 
 global _binary_DroidSansFallback_ttf
 global _binary_DroidSansFallback_ttf_start
@@ -1756,9 +1756,9 @@ global _binary_SourceHanSerif_Regular_ttc_end
 global _binary_SourceHanSerif_Regular_ttc_size
 _binary_SourceHanSerif_Regular_ttc:
 _binary_SourceHanSerif_Regular_ttc_start:
-    incbin "mupdf/resources/fonts/han/SourceHanSerif-Regular.ttc"
+    db 0
 _binary_SourceHanSerif_Regular_ttc_end:
-_binary_SourceHanSerif_Regular_ttc_size: dq _binary_SourceHanSerif_Regular_ttc_end - _binary_SourceHanSerif_Regular_ttc_start
+_binary_SourceHanSerif_Regular_ttc_size: dq 0
 
 global _binary_StandardSymbolsPS_cff
 global _binary_StandardSymbolsPS_cff_start

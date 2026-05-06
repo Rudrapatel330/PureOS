@@ -3,7 +3,7 @@
 .global wallpaper_png_size
 
 wallpaper_png_data:
-.incbin "src/fs/wallpaper_ultra.png"
+.byte 0
 wallpaper_png_end:
 
 .align 4

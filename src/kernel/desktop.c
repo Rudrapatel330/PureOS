@@ -313,6 +313,102 @@ typedef enum {
 icon_t icons[MAX_ICONS];
 int icon_count = 0;
 static int hovered_icon = -1;
+<<<<<<< HEAD
+=======
+
+// PNG Icon Caching for desktop/taskbar
+static const char *app_icon_paths[] = {
+    [APP_TERMINAL] = 0,
+    [APP_CALCULATOR] = "/CALCULAT.PNG",
+    [APP_EDITOR] = "/NOTES.PNG",
+    [APP_COMPUTER] = 0,
+    [APP_PAINT] = 0,
+    [APP_FILEMGR] = "/FILEEXPL.PNG",
+    [APP_TASKMGR] = 0,
+    [APP_BROWSER] = "/BROWSER.PNG",
+    [APP_VIDEOPLAYER] = "/VIDEO.PNG",
+    [APP_SETTINGS] = "/SETTINGS.PNG",
+    [APP_PDFREADER] = 0,
+    [APP_CAMERA] = 0,
+    [APP_PHOTOS] = "/PHOTOS.PNG",
+    [APP_MAIL] = "/MAIL.PNG",
+    [APP_RECORDER] = "/RECORD.PNG",
+    [APP_CHAT] = "/CHAT.PNG",
+    [APP_PHONE] = "/MOBILE.PNG"
+};
+static uint32_t *app_icon_cache[32] = {0};
+#include "../fs/fs.h"
+
+static int draw_icon_png(int x, int y, int type, uint32_t *target) {
+  if (type < 0 || type >= 32) return 0;
+  if (!app_icon_cache[type] && app_icon_paths[type]) {
+    file_entry_t *f = fs_find(app_icon_paths[type]);
+    if (f) {
+      extern void print_serial(const char *str);
+      print_serial("draw_icon_png: found ");
+      print_serial(app_icon_paths[type]);
+      print_serial("\n");
+      uint8_t *raw = (uint8_t *)kmalloc(f->size + 16);
+      if (raw) {
+        int rs = fs_read(app_icon_paths[type], raw);
+        if (rs > 0) {
+          int iw, ih, in;
+          unsigned char *pixels = stbi_load_from_memory(raw, rs, &iw, &ih, &in, 4);
+          if (pixels) {
+            print_serial("draw_icon_png: decoded OK\n");
+            uint32_t *cached = (uint32_t *)kmalloc(40 * 40 * 4);
+            if (cached) {
+              uint32_t *p32 = (uint32_t *)pixels;
+              for (int py = 0; py < 40; py++) {
+                int sy = (py * ih) / 40;
+                for (int px = 0; px < 40; px++) {
+                  int sx = (px * iw) / 40;
+                  uint32_t p = p32[sy * iw + sx];
+                  uint8_t r = p & 0xFF, g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF, a = (p >> 24) & 0xFF;
+                  cached[py * 40 + px] = (a << 24) | (r << 16) | (g << 8) | b;
+                }
+              }
+              app_icon_cache[type] = cached;
+            }
+            stbi_image_free(pixels);
+          } else {
+            print_serial("draw_icon_png: stbi_load_from_memory failed\n");
+          }
+        }
+        kfree(raw);
+      }
+    }
+  }
+
+  if (app_icon_cache[type]) {
+    uint32_t *data = app_icon_cache[type];
+    for (int py = 0; py < 40; py++) {
+      int dy = y + py;
+      if (dy < 0 || dy >= screen_height) continue;
+      for (int px = 0; px < 40; px++) {
+        int dx = x + px;
+        if (dx < 0 || dx >= screen_width) continue;
+        uint32_t p = data[py * 40 + px];
+        uint8_t a = (p >> 24) & 0xFF;
+        if (a == 0) continue;
+        if (a == 255) {
+          target[dy * screen_width + dx] = p;
+        } else {
+          uint32_t d = target[dy * screen_width + dx];
+          uint32_t sr = (p >> 16) & 0xFF, sg = (p >> 8) & 0xFF, sb = p & 0xFF;
+          uint32_t dr = (d >> 16) & 0xFF, dg = (d >> 8) & 0xFF, db = d & 0xFF;
+          uint32_t r = ((sr - dr) * a >> 8) + dr;
+          uint32_t g = ((sg - dg) * a >> 8) + dg;
+          uint32_t b = ((sb - db) * a >> 8) + db;
+          target[dy * screen_width + dx] = 0xFF000000 | (r << 16) | (g << 8) | b;
+        }
+      }
+    }
+    return 1;
+  }
+  return 0;
+}
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
 
 void desktop_add_icon(int x, int y, const char *label, int type,
                       uint32_t color) {
@@ -382,10 +478,16 @@ static void draw_rect_f(int x, int y, int w, int h, uint32_t color,
 }
 
 void draw_icon(int x, int y, int type, uint32_t *target) {
+<<<<<<< HEAD
   uint32_t W = 0xFFFFFFFF;
   uint32_t W90 = 0xFFE8E8E8;
   uint32_t W60 = 0xFFBBBBBB;
 
+=======
+  if (type >= 0 && type < 32 && app_icon_paths[type]) {
+    if (draw_icon_png(x, y, type, target)) return;
+  }
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
   switch (type) {
   case APP_COMPUTER:
     // iMac style silver frame
@@ -608,6 +710,35 @@ void draw_icon(int x, int y, int type, uint32_t *target) {
     draw_rect_f(x + 23, y + 22, 9, 10, W, target);
     draw_rect_f(x + 25, y + 24, 5, 6, 0xFF0078D4, target);   // Mouth hole
     break;
+  case APP_CHAT:
+    // Speech Bubble Icon
+    draw_rect_f(x + 4, y + 6, 32, 22, 0xFF25D366, target);   // Bubble body
+    draw_rect_f(x + 6, y + 8, 28, 18, 0xFF2EE672, target);   // Inner lighter
+    draw_rect_f(x + 6, y + 8, 28, 2, 0xFF5AED8F, target);    // Top highlight
+    // Tail
+    draw_rect_f(x + 8, y + 28, 8, 4, 0xFF25D366, target);
+    draw_rect_f(x + 8, y + 32, 4, 3, 0xFF25D366, target);
+    // Text lines inside bubble
+    draw_rect_f(x + 10, y + 12, 16, 2, 0xFFFFFFFF, target);
+    draw_rect_f(x + 10, y + 17, 20, 2, 0xFFFFFFFF, target);
+    draw_rect_f(x + 10, y + 22, 12, 2, 0xFFE0FFE8, target);
+    break;
+  case APP_PHONE:
+    // Phone Handset Icon
+    draw_rect_f(x + 5, y + 8, 30, 26, 0xFF0078D4, target);   // Body bg
+    draw_rect_f(x + 7, y + 10, 26, 22, 0xFF0088F0, target);  // Inner
+    // Handset earpiece
+    draw_rect_f(x + 10, y + 10, 8, 10, 0xFFFFFFFF, target);
+    draw_rect_f(x + 11, y + 12, 6, 6, 0xFF0088F0, target);   // Hole
+    // Handset mouthpiece
+    draw_rect_f(x + 22, y + 22, 8, 10, 0xFFFFFFFF, target);
+    draw_rect_f(x + 23, y + 24, 6, 6, 0xFF0088F0, target);   // Hole
+    // Handle connecting ear to mouth
+    draw_rect_f(x + 16, y + 16, 8, 4, 0xFFFFFFFF, target);
+    draw_rect_f(x + 14, y + 18, 4, 6, 0xFFFFFFFF, target);
+    // Ring indicators
+    draw_rect_f(x + 28, y + 10, 4, 4, 0xFF66FF66, target);   // Green call dot
+    break;
   } // end switch
 } // end draw_icon
 
@@ -714,11 +845,22 @@ void desktop_draw() {
 
     if (global_config.wallpaper_type == 3) {
       int bw, bh, channels;
-      unsigned char *pixels = stbi_load_from_memory(
-          wallpaper_png_data, wallpaper_png_size, &bw, &bh, &channels, 4);
+      unsigned char *pixels = NULL;
+      
+      file_entry_t *entry = fs_find("wallpaper.png");
+      if (!entry) entry = fs_find("WALLPAPE.PNG"); // Try 8.3 name
+
+      if (entry) {
+        unsigned char *file_buf = (unsigned char *)kmalloc(entry->size);
+        if (file_buf) {
+            fs_read(entry->name, file_buf);
+            pixels = stbi_load_from_memory(file_buf, entry->size, &bw, &bh, &channels, 4);
+            kfree(file_buf);
+        }
+      }
 
       if (pixels) {
-        print_serial("DESKTOP: PNG Wallpaper Loaded Successfully\n");
+        print_serial("DESKTOP: PNG Wallpaper Loaded from Disk Successfully\n");
         valid = 1;
         for (int sy = 0; sy < screen_height; sy++) {
           for (int sx = 0; sx < screen_width; sx++) {

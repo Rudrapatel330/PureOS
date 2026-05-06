@@ -22,7 +22,11 @@ extern int ctrl_pressed;
 typedef struct {
   window_t *win;
   char buffer[8192];
+<<<<<<< HEAD
   char filename[64];
+=======
+  char filename[128];
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
   int scroll_y;
   int dialog_mode;
   int cursor_blink;
@@ -34,7 +38,10 @@ typedef struct {
   FileInfo files[32];
   int file_count;
   char current_dir[128];
+<<<<<<< HEAD
   char full_path[160];
+=======
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
 } editor_app_t;
 
 static inline editor_app_t *get_editor(void *w) {
@@ -45,9 +52,9 @@ static uint8_t ed_read_buf[8192];
 
 /* ======================== DRAW ======================== */
 
-#define MENU_Y 24
+#define MENU_Y 32
 #define MENU_H 22
-#define TEXT_Y 46
+#define TEXT_Y 54
 #define STATUS_H 18
 
 static void editor_handle_input(window_t *win, char c);
@@ -287,6 +294,14 @@ static void editor_draw(void *w) {
       int cl = strlen(ed->filename);
       winmgr_fill_rect(win, dx + 14 + cl * 8, dy + 258, 2, 16, theme->accent);
     }
+<<<<<<< HEAD
+=======
+
+    winmgr_draw_text(win, dx + 10, dy + 290, "Enter=OK  Esc=Cancel", theme->fg_secondary);
+
+    winmgr_fill_rect(win, dx + dw - 60, dy + dh - 30, 50, 20, theme->accent);
+    winmgr_draw_text(win, dx + dw - 50, dy + dh - 26, "OK", theme->button_text);
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
   }
 }
 
@@ -443,6 +458,36 @@ static void editor_on_mouse(void *w, int rx, int ry, int buttons) {
             }
             ui_dirty = 1;
             win->needs_redraw = 1;
+<<<<<<< HEAD
+=======
+        }
+    }
+
+    /* OK button */
+    if (rx >= dx + dw - 60 && rx < dx + dw - 10 && ry >= dy + dh - 30 &&
+        ry < dy + dh - 10) {
+      if (ed->dialog_mode == 1) {
+          /* Prepend path for the write operation */
+          char full[128];
+          strcpy(full, ed->current_dir);
+          if (full[strlen(full)-1] != '/') strcat(full, "/");
+          strcat(full, ed->filename);
+          fs_write(full, (uint8_t *)ed->buffer, strlen(ed->buffer));
+          
+          /* Update filename to the full path so subsequent saves overwrite this file */
+          strcpy(ed->filename, full);
+      }
+      else if (ed->dialog_mode == 2) {
+        char *fname = (char *)kmalloc(128); // Increased size
+        if (fname) {
+          strcpy(fname, ed->current_dir);
+          if (fname[strlen(fname)-1] != '/') strcat(fname, "/");
+          strcat(fname, ed->filename);
+          msg_t m = {0};
+          m.type = MSG_USER + 1;
+          m.ptr = fname;
+          msg_send_to_name("Editor", &m);
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
         }
     }
 
@@ -462,14 +507,24 @@ static void editor_on_mouse(void *w, int rx, int ry, int buttons) {
 
   if (ry >= MENU_Y && ry < MENU_Y + MENU_H && click) {
     if (rx >= 6 && rx < 48) {
+<<<<<<< HEAD
       if (strlen(ed->full_path) == 0) {
+=======
+      if (strcmp(ed->filename, "untitled.txt") == 0) {
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
         ed->dialog_mode = 1;
         ed->file_count = fs_list_files(ed->current_dir, ed->files, 32);
       } else {
         int blen = strlen(ed->buffer);
+<<<<<<< HEAD
         fs_write(ed->full_path, (uint8_t *)ed->buffer, blen);
         print_serial("EDITOR: Saved to ");
         print_serial(ed->full_path);
+=======
+        fs_write(ed->filename, (uint8_t *)ed->buffer, blen);
+        print_serial("EDITOR: Saved to ");
+        print_serial(ed->filename);
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
         print_serial("\n");
       }
     } else if (rx >= 48 && rx < 90) {
@@ -517,17 +572,29 @@ static void editor_on_key(void *w, int key, char ascii) {
           ui_dirty = 1;
           win->needs_redraw = 1;
       } else if (ascii == 's' || ascii == 'S') {
+<<<<<<< HEAD
           if (strlen(ed->full_path) == 0) {
+=======
+          if (strcmp(ed->filename, "untitled.txt") == 0) {
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
               ed->dialog_mode = 1;
               ed->file_count = fs_list_files(ed->current_dir, ed->files, 32);
           } else {
               int blen = len;
               spinlock_irq_release(&ed->lock);
+<<<<<<< HEAD
               fs_write(ed->full_path, (uint8_t *)ed->buffer, blen);
               ui_dirty = 1;
               win->needs_redraw = 1;
               print_serial("EDITOR: Saved via Ctrl+S to ");
               print_serial(ed->full_path);
+=======
+              fs_write(ed->filename, (uint8_t *)ed->buffer, blen);
+              ui_dirty = 1;
+              win->needs_redraw = 1;
+              print_serial("EDITOR: Saved via Ctrl+S to ");
+              print_serial(ed->filename);
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
               print_serial("\n");
               return;
           }
@@ -721,6 +788,7 @@ void editor_open_internal(window_t *win, const char *filename) {
   if (!ed || !filename || filename[0] == 0) return;
 
   int i = 0;
+<<<<<<< HEAD
   while (filename[i] && i < 159) { ed->full_path[i] = filename[i]; i++; }
   ed->full_path[i] = 0;
 
@@ -728,6 +796,10 @@ void editor_open_internal(window_t *win, const char *filename) {
   char *last_slash = strrchr(ed->full_path, '/');
   if (last_slash) strcpy(ed->filename, last_slash + 1);
   else strcpy(ed->filename, ed->full_path);
+=======
+  while (filename[i] && i < 127) { ed->filename[i] = filename[i]; i++; }
+  ed->filename[i] = 0;
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
 
   ed_read_buf[0] = 0;
   int bytes = fs_read(ed->filename, ed_read_buf);

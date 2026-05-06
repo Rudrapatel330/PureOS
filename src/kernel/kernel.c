@@ -11,6 +11,7 @@
 #include "../net/net.h"
 #include "clipboard.h"
 #include "compositor.h"
+#include "config.h"
 #include "desktop.h"
 #include "hal/hal.h"
 #include "heap.h"
@@ -579,7 +580,43 @@ void kernel_draw_mouse(int erase_only) {
   kernel_draw_mouse_to_buffer(target, mouse_x, mouse_y);
 }
 
-void kernel_poll_events(void) { desktop_process_messages(); }
+void kernel_poll_events(void) {
+  static int in_poll = 0;
+  if (in_poll)
+    return;
+  in_poll = 1;
+
+  desktop_process_messages();
+
+  // If we are in a blocking loop (e.g. browser navigation), we still want the
+  // screen to update.
+  extern int ui_dirty, mouse_moved;
+  if (ui_dirty || mouse_moved) {
+    if (mouse_moved) {
+      extern int last_mouse_x, last_mouse_y, mouse_x, mouse_y;
+      extern void compositor_invalidate_rect(int x, int y, int w, int h);
+      int inv_size = 32;
+      int half_size = inv_size / 2;
+      if (last_mouse_x != -1) {
+        compositor_invalidate_rect(last_mouse_x - half_size,
+                                   last_mouse_y - half_size, inv_size, inv_size);
+      }
+      compositor_invalidate_rect(mouse_x - half_size, mouse_y - half_size,
+                                 inv_size, inv_size);
+      last_mouse_x = mouse_x;
+      last_mouse_y = mouse_y;
+      mouse_moved = 0;
+    }
+
+    extern void winmgr_flush_updates(void);
+    winmgr_flush_updates();
+    extern void compositor_render(void);
+    compositor_render();
+    ui_dirty = 0;
+  }
+
+  in_poll = 0;
+}
 
 void kernel_poll_events_only(void) { desktop_process_messages(); }
 
@@ -718,7 +755,9 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   create_task(desktop_task, "desktop");
 
   extern window_t *sysmon_create(void);
-  sysmon_win = sysmon_create();
+  if (global_config.show_sysmon_widget) {
+    sysmon_win = sysmon_create();
+  }
 
   extern void gfx_test_run(void);
   gfx_test_run();
@@ -758,6 +797,24 @@ void draw_text_32bpp(int x, int y, const char *text, uint32_t color) {
     draw_char_32bpp(x, y, *text, color);
     x += 8;
     text++;
+  }
+}
+
+void winmgr_toggle_sysmon(int show) {
+  extern window_t *sysmon_win;
+  extern window_t *sysmon_create(void);
+  extern void winmgr_close_window(window_t *);
+  
+  if (show) {
+    if (!sysmon_win) {
+      sysmon_win = sysmon_create();
+    }
+  } else {
+    if (sysmon_win) {
+      sysmon_win->flags &= ~0x80; // Clear WINDOW_FLAG_NO_CLOSE
+      winmgr_close_window(sysmon_win);
+      sysmon_win = 0;
+    }
   }
 }
 

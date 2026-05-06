@@ -7,7 +7,7 @@
 
 // Canvas Settings
 #define CANVAS_OFFSET_X 20
-#define CANVAS_OFFSET_Y 120
+#define CANVAS_OFFSET_Y 128
 
 // Tools
 #define TOOL_PENCIL 0
@@ -321,7 +321,7 @@ void paint_draw_ui() {
   // DYNAMIC CANVAS RESIZE CHECK
   int new_w = w->width - 40;
   if (new_w < 10) new_w = 10;
-  int new_h = w->height - 180;
+  int new_h = w->height - 188;
   if (new_h < 10) new_h = 10;
 
   if (paint_state.canvas_w != new_w || paint_state.canvas_h != new_h) {
@@ -346,23 +346,23 @@ void paint_draw_ui() {
   winmgr_fill_rect(w, 0, 0, w->width, w->height, theme->bg);
 
   // Top Menu Bar
-  winmgr_fill_rect(w, 0, 24, w->width, 30, theme->titlebar);
-  winmgr_draw_text(w, 15, 34, "File", theme->titlebar_text);
-  winmgr_draw_text(w, 60, 34, "Edit", theme->titlebar_text);
-  winmgr_draw_text(w, 105, 34, "View", theme->titlebar_text);
-  winmgr_draw_rect(w, 8, 28, 42, 22, theme->border);
+  winmgr_fill_rect(w, 0, 32, w->width, 30, theme->titlebar);
+  winmgr_draw_text(w, 15, 42, "File", theme->titlebar_text);
+  winmgr_draw_text(w, 60, 42, "Edit", theme->titlebar_text);
+  winmgr_draw_text(w, 105, 42, "View", theme->titlebar_text);
+  winmgr_draw_rect(w, 8, 36, 42, 22, theme->border);
 
   // Main Ribbon Toolbar
-  winmgr_fill_rect(w, 0, 54, w->width, 60, theme->menu_bg);
-  winmgr_fill_rect(w, 0, 114, w->width, 1, theme->border);
+  winmgr_fill_rect(w, 0, 62, w->width, 60, theme->menu_bg);
+  winmgr_fill_rect(w, 0, 122, w->width, 1, theme->border);
 
   // Section 1: Tools (3x2 Grid)
-  winmgr_draw_text(w, 40, 100, "Tools", 0xFFAAAAAA);
+  winmgr_draw_text(w, 40, 108, "Tools", 0xFFAAAAAA);
   for (int i = 0; i < 6; i++) {
     int col = i % 3;
     int row = i / 3;
     int tx = 20 + (col * 30);
-    int ty = 56 + (row * 22);
+    int ty = 64 + (row * 22);
     uint32_t bg = (paint_state.current_tool == i) ? theme->accent : theme->button;
     winmgr_fill_rect(w, tx, ty, 26, 20, bg);
     winmgr_draw_rect(w, tx, ty, 26, 20, theme->border);
@@ -396,12 +396,12 @@ void paint_draw_ui() {
   winmgr_fill_rect(w, 115, 60, 1, 40, 0xFF444444); // Divider
 
   // Section 2: Shapes (3x2 Grid)
-  winmgr_draw_text(w, 150, 100, "Shapes", 0xFFAAAAAA);
+  winmgr_draw_text(w, 150, 108, "Shapes", 0xFFAAAAAA);
   for (int i = 0; i < 6; i++) {
     int col = i % 3;
     int row = i / 3;
     int tx = 130 + (col * 30);
-    int ty = 56 + (row * 22);
+    int ty = 64 + (row * 22);
     int tool_id = SHAPE_LINE + i;
     uint32_t bg = (paint_state.current_tool == tool_id) ? 0xFF404040 : 0xFF252526;
     winmgr_fill_rect(w, tx, ty, 26, 20, bg);
@@ -442,25 +442,25 @@ void paint_draw_ui() {
   }
 
   // Clear Button
-  winmgr_fill_rect(w, 230, 80, 50, 16, 0xFF252526);
-  winmgr_draw_rect(w, 230, 80, 50, 16, 0xFF111111);
-  winmgr_draw_text(w, 230 + 4, 80 + 4, "Clear", 0xFFFF6666);
+  winmgr_fill_rect(w, 230, 88, 50, 16, 0xFF252526);
+  winmgr_draw_rect(w, 230, 88, 50, 16, 0xFF111111);
+  winmgr_draw_text(w, 230 + 4, 88 + 4, "Clear", 0xFFFF6666);
 
   winmgr_fill_rect(w, 290, 60, 1, 40, 0xFF444444); 
 
   // Section 2: Size
-  winmgr_draw_text(w, 305, 100, "Size", theme->fg_secondary);
-  winmgr_fill_rect(w, 295, 65, 45, 20, theme->input_bg);
-  winmgr_draw_rect(w, 295, 65, 45, 20, theme->input_border);
+  winmgr_draw_text(w, 305, 108, "Size", theme->fg_secondary);
+  winmgr_fill_rect(w, 295, 73, 45, 20, theme->input_bg);
+  winmgr_draw_rect(w, 295, 73, 45, 20, theme->input_border);
   int s = paint_state.brush_size;
-  winmgr_fill_rect(w, 317 - (s / 2), 75 - (s / 2), s, s, 0xFFFFFFFF);
+  winmgr_fill_rect(w, 317 - (s / 2), 83 - (s / 2), s, s, 0xFFFFFFFF);
 
   winmgr_fill_rect(w, 355, 60, 1, 40, 0xFF444444); 
 
   // Section 3: Color Palette
-  winmgr_draw_text(w, 465, 100, "Colors", 0xFFAAAAAA);
-  winmgr_fill_rect(w, 370, 60, 30, 30, paint_state.current_color);
-  winmgr_draw_rect(w, 370, 60, 30, 30, 0xFFFFFFFF); 
+  winmgr_draw_text(w, 465, 108, "Colors", 0xFFAAAAAA);
+  winmgr_fill_rect(w, 370, 68, 30, 30, paint_state.current_color);
+  winmgr_draw_rect(w, 370, 68, 30, 30, 0xFFFFFFFF); 
 
   uint32_t colors[] = {
       0xFF000000, 0xFF7F7F7F, 0xFF880015, 0xFFED1C24, 0xFFFF7F27, 0xFFFFF200, 0xFF22B14C, 0xFF00A2E8, 0xFF3F48CC, 0xFFA349A4,
@@ -471,7 +471,7 @@ void paint_draw_ui() {
      int row = i / 10;
      int col = i % 10;
      int cx = 415 + col * 20;
-     int cy = 60 + row * 20;
+     int cy = 68 + row * 20;
      winmgr_fill_rect(w, cx, cy, 16, 16, colors[i]);
      winmgr_draw_rect(w, cx, cy, 16, 16, 0xFF111111);
      if (paint_state.current_color == colors[i]) {
@@ -482,13 +482,13 @@ void paint_draw_ui() {
   winmgr_fill_rect(w, 625, 60, 1, 40, 0xFF444444); // Divider
 
   // Save/Open Actions
-  winmgr_fill_rect(w, 635, 60, 35, 18, 0xFF18181A);
-  winmgr_draw_rect(w, 635, 60, 35, 18, 0xFF444444);
-  winmgr_draw_text(w, 638, 65, "Save", 0xFFFFFFFF);
+  winmgr_fill_rect(w, 635, 68, 35, 18, 0xFF18181A);
+  winmgr_draw_rect(w, 635, 68, 35, 18, 0xFF444444);
+  winmgr_draw_text(w, 638, 73, "Save", 0xFFFFFFFF);
 
-  winmgr_fill_rect(w, 635, 82, 35, 18, 0xFF18181A);
-  winmgr_draw_rect(w, 635, 82, 35, 18, 0xFF444444);
-  winmgr_draw_text(w, 638, 87, "Open", 0xFFFFFFFF);
+  winmgr_fill_rect(w, 635, 90, 35, 18, 0xFF18181A);
+  winmgr_draw_rect(w, 635, 90, 35, 18, 0xFF444444);
+  winmgr_draw_text(w, 638, 95, "Open", 0xFFFFFFFF);
 
   // Canvas Frame
   winmgr_draw_rect(w, CANVAS_OFFSET_X - 1, CANVAS_OFFSET_Y - 1, paint_state.canvas_w + 2, paint_state.canvas_h + 2, 0xFF000000);
@@ -582,13 +582,13 @@ void paint_handle_mouse(window_t *w, int mx, int my, int buttons) {
   if (paint_state.dialog_mode > 0) return; // Prevent interaction when dialog active
 
   // Top Ribbon Selection
-  if (rel_y >= 54 && rel_y <= 114 && (buttons & 1)) {
+  if (rel_y >= 62 && rel_y <= 122 && (buttons & 1)) {
     // Tools (0-5)
     for (int i = 0; i < 6; i++) {
       int col = i % 3;
       int row = i / 3;
       int tx = 20 + (col * 30);
-      int ty = 56 + (row * 22);
+      int ty = 64 + (row * 22);
       if (rel_x >= tx && rel_x <= tx + 26 && rel_y >= ty && rel_y <= ty + 20) {
         paint_state.current_tool = i;
         w->needs_redraw = 1;
@@ -601,7 +601,7 @@ void paint_handle_mouse(window_t *w, int mx, int my, int buttons) {
       int col = i % 3;
       int row = i / 3;
       int tx = 130 + (col * 30);
-      int ty = 56 + (row * 22);
+      int ty = 64 + (row * 22);
       if (rel_x >= tx && rel_x <= tx + 26 && rel_y >= ty && rel_y <= ty + 20) {
         paint_state.current_tool = SHAPE_LINE + i;
         w->needs_redraw = 1;
@@ -610,14 +610,14 @@ void paint_handle_mouse(window_t *w, int mx, int my, int buttons) {
     }
     
     // Clear All
-    if (rel_x >= 230 && rel_x <= 280 && rel_y >= 80 && rel_y <= 96) {
+    if (rel_x >= 230 && rel_x <= 280 && rel_y >= 88 && rel_y <= 104) {
       paint_clear();
       w->needs_redraw = 1;
       return;
     }
 
     // Size Menu (Toggle 1->3->5->7->9)
-    if (rel_x >= 295 && rel_x <= 340 && rel_y >= 65 && rel_y <= 85) {
+    if (rel_x >= 295 && rel_x <= 340 && rel_y >= 73 && rel_y <= 93) {
       paint_state.brush_size += 2;
       if (paint_state.brush_size > 9) paint_state.brush_size = 1;
       w->needs_redraw = 1;
@@ -634,7 +634,7 @@ void paint_handle_mouse(window_t *w, int mx, int my, int buttons) {
        int row = i / 10;
        int col = i % 10;
        int cx = 415 + col * 20;
-       int cy = 60 + row * 20;
+       int cy = 68 + row * 20;
        if (rel_x >= cx && rel_x <= cx + 16 && rel_y >= cy && rel_y <= cy + 16) {
           paint_state.current_color = colors[i];
           w->needs_redraw = 1;
@@ -643,14 +643,14 @@ void paint_handle_mouse(window_t *w, int mx, int my, int buttons) {
     }
 
     // Save
-    if (rel_x >= 635 && rel_x <= 670 && rel_y >= 60 && rel_y <= 78) {
+    if (rel_x >= 635 && rel_x <= 670 && rel_y >= 68 && rel_y <= 86) {
        paint_state.dialog_mode = 1;
        paint_state.cursor_timer = 0;
        w->needs_redraw = 1;
        return;
     }
     // Open
-    if (rel_x >= 635 && rel_x <= 670 && rel_y >= 82 && rel_y <= 100) {
+    if (rel_x >= 635 && rel_x <= 670 && rel_y >= 90 && rel_y <= 108) {
        paint_state.dialog_mode = 2;
        paint_state.cursor_timer = 0;
        w->needs_redraw = 1;

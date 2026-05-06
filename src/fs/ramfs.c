@@ -221,14 +221,6 @@ int ramfs_list(char *buffer, int max_len) {
   return ramfs_count;
 }
 
-file_entry_t *fs_find(const char *name) {
-  for (int i = 0; i < ramfs_count; i++) {
-    if (strcmp(ramfs_files[i].name, name) == 0) {
-      return &ramfs_files[i];
-    }
-  }
-  return 0;
-}
 
 int ramfs_read(const char *name, uint8_t *buffer) {
   file_entry_t *file = fs_find(name);

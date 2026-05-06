@@ -226,20 +226,20 @@ static void taskbar_update_magnification(int mx, int my) {
   int total_base_w = g_taskbar.icon_count * min_size;
 
   if (!is_vertical) {
-    float base_start_x =
-        (float)(screen_width - (total_base_w + 66 + 55)) / 2.0f + 60.0f;
     for (int i = 0; i < g_taskbar.icon_count; i++) {
-      float base_x = base_start_x + i * min_size;
-      float icon_center_x = base_x + min_size / 2.0f;
-      float distance =
-          (mx > icon_center_x) ? (mx - icon_center_x) : (icon_center_x - mx);
-
-      if (g_taskbar.hovered_index == -1 || distance > (float)effect_width) {
+      if (g_taskbar.hovered_index == -1) {
         g_taskbar.icons[i].target_scale = 1.0f;
       } else {
-        float theta = distance / (float)effect_width * 3.14159f;
-        float factor = (kcos(theta) + 1.0f) / 2.0f;
-        g_taskbar.icons[i].target_scale = 1.0f + (max_scale - 1.0f) * factor;
+        int dist = i - g_taskbar.hovered_index;
+        if (dist < 0) dist = -dist; // absolute value
+        
+        if (dist == 0) {
+          g_taskbar.icons[i].target_scale = max_scale;
+        } else if (dist == 1) {
+          g_taskbar.icons[i].target_scale = 1.3f; // Just a little bit
+        } else {
+          g_taskbar.icons[i].target_scale = 1.0f;
+        }
       }
     }
 
@@ -257,20 +257,20 @@ static void taskbar_update_magnification(int mx, int my) {
       cur_x += sw;
     }
   } else {
-    float base_start_y =
-        (float)(screen_height - (total_base_w + 66 + 55)) / 2.0f + 60.0f;
     for (int i = 0; i < g_taskbar.icon_count; i++) {
-      float base_y = base_start_y + i * min_size;
-      float icon_center_y = base_y + min_size / 2.0f;
-      float distance =
-          (my > icon_center_y) ? (my - icon_center_y) : (icon_center_y - my);
-
-      if (g_taskbar.hovered_index == -1 || distance > (float)effect_width) {
+      if (g_taskbar.hovered_index == -1) {
         g_taskbar.icons[i].target_scale = 1.0f;
       } else {
-        float theta = distance / (float)effect_width * 3.14159f;
-        float factor = (kcos(theta) + 1.0f) / 2.0f;
-        g_taskbar.icons[i].target_scale = 1.0f + (max_scale - 1.0f) * factor;
+        int dist = i - g_taskbar.hovered_index;
+        if (dist < 0) dist = -dist; // absolute value
+        
+        if (dist == 0) {
+          g_taskbar.icons[i].target_scale = max_scale;
+        } else if (dist == 1) {
+          g_taskbar.icons[i].target_scale = 1.3f; // Just a little bit
+        } else {
+          g_taskbar.icons[i].target_scale = 1.0f;
+        }
       }
     }
 
@@ -551,9 +551,9 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
   int dock_w, dock_h, dock_x, dock_y;
   if (!is_vertical) {
     dock_h = 54;
-    dock_w = 66 + 55 + (int)total_icon_w;
-    dock_x = (screen_width - dock_w) / 2;
-    dock_y = screen_height - dock_h - 8;
+    dock_w = screen_width;
+    dock_x = 0;
+    dock_y = screen_height - dock_h;
   } else {
     dock_w = 54;
     dock_h = 66 + 55 + (int)total_icon_w;
@@ -612,15 +612,19 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
   if (!rect_intersect(clip, dock_r, &overlap))
     return;
 
-  // 2. Glass Background (Fixed Translucent Black)
-  compositor_blur_rect(bd_x, bd_y, bd_w, bd_h, 14);
+  // 2. Glass Background (Fixed Translucent Black) - No rounded corners
+  compositor_blur_rect(bd_x, bd_y, bd_w, bd_h, 0);
   vga_draw_rect_blend_lfb_ex(bd_x, bd_y, bd_w, bd_h, 0xA0000000, 1, 0x40FFFFFF,
-                             buffer, 14);
+                             buffer, 0);
+
+  // Calculate centered content bounds to keep icons grouped together
+  int content_w = 66 + 55 + (int)total_icon_w;
+  int content_x = (screen_width - content_w) / 2;
 
   // 3. Eagle/Start Icon & Separator
   if (!is_vertical) {
-    draw_eagle_icon(bd_x + 16, bd_y + 8, buffer);
-    vga_draw_rect_lfb(bd_x + 56, bd_y + 10, 1, bd_h - 20, 0x50FFFFFF, buffer);
+    draw_eagle_icon(content_x + 16, bd_y + 8, buffer);
+    vga_draw_rect_lfb(content_x + 56, bd_y + 10, 1, bd_h - 20, 0x50FFFFFF, buffer);
   } else {
     draw_eagle_icon(bd_x + 12, bd_y + 16, buffer);
     vga_draw_rect_lfb(bd_x + 10, bd_y + 56, bd_w - 20, 1, 0x50FFFFFF, buffer);
@@ -648,7 +652,7 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
     extern os_config_t global_config;
 
     int icon_radius = sq_size / 2;
-    compositor_blur_rect(sq_x, sq_y, sq_size, sq_size, icon_radius);
+    // compositor_blur_rect(sq_x, sq_y, sq_size, sq_size, icon_radius); // Disabled for performance
 
     uint32_t base_color = 0x60000000; // Fixed dark translucent icons for all themes
     if (g_taskbar.edit_mode) {
@@ -687,7 +691,7 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
 
   // Draw Trash
   if (!is_vertical) {
-    int x_trash = bd_x + 60 + total_icon_w;
+    int x_trash = content_x + 60 + total_icon_w;
     vga_draw_rect_lfb(x_trash + 2, bd_y + 10, 1, bd_h - 20, 0x50FFFFFF, buffer);
     x_trash += 10;
     vga_draw_rect_lfb(x_trash + 4, bd_y + 14, 24, 26, 0xFFcbd5e1, buffer);
@@ -837,8 +841,14 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
     return 0;
 
   if (!is_vertical) {
-    if (mx >= g_taskbar.dock_x && mx < g_taskbar.dock_x + 55) {
-      startmenu_show(g_taskbar.dock_x, g_taskbar.dock_y);
+    float total_icon_w = 0.0f;
+    for (int i = 0; i < g_taskbar.icon_count; i++)
+      total_icon_w += (48.0f * g_taskbar.icons[i].scale);
+    int content_w = 66 + 55 + (int)total_icon_w;
+    int content_x = (screen_width - content_w) / 2;
+
+    if (mx >= content_x && mx < content_x + 55) {
+      startmenu_show(content_x, g_taskbar.dock_y);
       return 1;
     }
   } else {

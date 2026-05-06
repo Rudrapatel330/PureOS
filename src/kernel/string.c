@@ -201,6 +201,66 @@ int atoi(const char *s) {
   return res * sign;
 }
 
+double strtod(const char *nptr, char **endptr) {
+    const char *s = nptr;
+    double res = 0.0;
+    double sign = 1.0;
+    
+    // Skip whitespace
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
+    
+    if (*s == '-') {
+        sign = -1.0;
+        s++;
+    } else if (*s == '+') {
+        s++;
+    }
+    
+    // Integer part
+    while (*s >= '0' && *s <= '9') {
+        res = res * 10.0 + (*s - '0');
+        s++;
+    }
+    
+    // Fractional part
+    if (*s == '.') {
+        s++;
+        double fraction = 0.1;
+        while (*s >= '0' && *s <= '9') {
+            res += (*s - '0') * fraction;
+            fraction /= 10.0;
+            s++;
+        }
+    }
+    
+    // Exponent part (basic support)
+    if (*s == 'e' || *s == 'E') {
+        s++;
+        int exp_sign = 1;
+        if (*s == '-') {
+            exp_sign = -1;
+            s++;
+        } else if (*s == '+') {
+            s++;
+        }
+        
+        int exponent = 0;
+        while (*s >= '0' && *s <= '9') {
+            exponent = exponent * 10 + (*s - '0');
+            s++;
+        }
+        
+        if (exp_sign > 0) {
+            for (int i = 0; i < exponent; i++) res *= 10.0;
+        } else {
+            for (int i = 0; i < exponent; i++) res /= 10.0;
+        }
+    }
+    
+    if (endptr) *endptr = (char *)s;
+    return res * sign;
+}
+
 void k_itoa_hex(uint32_t n, char *s) {
   int i = 0;
   if (n == 0) {

@@ -34,6 +34,34 @@ void vga_put_pixel(int x, int y, uint32_t color) {
   vga_put_pixel_lfb_legacy(x, y, color);
 }
 
+// Alpha blending helper for surface
+static void vga_put_pixel_aa_surface(int x, int y, uint32_t color, uint8_t alpha, uint32_t *buffer, int buf_w, int buf_h) {
+  if (!buffer || alpha == 0) return;
+  if (x < 0 || x >= buf_w || y < 0 || y >= buf_h) return;
+
+  if (alpha == 255) {
+    buffer[y * buf_w + x] = 0xFF000000 | (color & 0x00FFFFFF);
+    return;
+  }
+
+  uint32_t dst = buffer[y * buf_w + x];
+  uint32_t src = color;
+
+  uint32_t s_r = (src >> 16) & 0xFF;
+  uint32_t s_g = (src >> 8) & 0xFF;
+  uint32_t s_b = src & 0xFF;
+
+  uint32_t d_r = (dst >> 16) & 0xFF;
+  uint32_t d_g = (dst >> 8) & 0xFF;
+  uint32_t d_b = dst & 0xFF;
+
+  uint32_t r = ((s_r - d_r) * alpha >> 8) + d_r;
+  uint32_t g = ((s_g - d_g) * alpha >> 8) + d_g;
+  uint32_t b = ((s_b - d_b) * alpha >> 8) + d_b;
+
+  buffer[y * buf_w + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+}
+
 void vga_draw_rect(int x, int y, int w, int h, uint32_t color) {
   for (int cy = 0; cy < h; cy++) {
     int py = y + cy;
@@ -97,18 +125,14 @@ void vga_draw_char_lfb(int x, int y, char c, uint32_t color, uint32_t *buffer) {
 // NEW - Draws char to a specified buffer with custom dimensions
 void vga_draw_char_surface(int x, int y, char c, uint32_t color,
                            uint32_t *buffer, int buf_w, int buf_h) {
-  extern const uint8_t font8x8_basic[256][8];
-  const uint8_t *glyph = font8x8_basic[(unsigned char)c];
+  extern uint8_t font_get_aa_pixel(unsigned char c, int x, int y);
+  uint32_t c_rgb = color & 0x00FFFFFF;
 
-  for (int cy = 0; cy < 8; cy++) {
-    uint8_t row = glyph[cy];
-    for (int cx = 0; cx < 8; cx++) {
-      if (row & (1 << (7 - cx))) {
-        int px = x + cx;
-        int py = y + cy;
-        if (px >= 0 && px < buf_w && py >= 0 && py < buf_h) {
-          buffer[py * buf_w + px] = color;
-        }
+  for (int cy = -1; cy < 9; cy++) {
+    for (int cx = -1; cx < 9; cx++) {
+      uint8_t alpha = font_get_aa_pixel((unsigned char)c, cx, cy);
+      if (alpha > 0) {
+        vga_put_pixel_aa_surface(x + cx, y + cy, c_rgb, alpha, buffer, buf_w, buf_h);
       }
     }
   }

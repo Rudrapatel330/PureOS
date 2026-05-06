@@ -21,14 +21,14 @@
 // Standard Spring Constants (Mass=1.0)
 // Lower stiffness (K) = slower animation (macOS is around 0.4s duration)
 // Critical damping (D) = ~2*sqrt(K)
-#define SPRING_STIFF_K 300.0f
-#define SPRING_STIFF_D 35.0f
-#define SPRING_SOFT_K 200.0f
-#define SPRING_SOFT_D 30.0f
-#define SPRING_BOUNCY_K 250.0f
-#define SPRING_BOUNCY_D 10.0f
-#define SPRING_SNAPPY_K 350.0f
-#define SPRING_SNAPPY_D 28.0f
+#define SPRING_STIFF_K 500.0f
+#define SPRING_STIFF_D 45.0f
+#define SPRING_SOFT_K 400.0f
+#define SPRING_SOFT_D 40.0f
+#define SPRING_BOUNCY_K 450.0f
+#define SPRING_BOUNCY_D 15.0f
+#define SPRING_SNAPPY_K 650.0f
+#define SPRING_SNAPPY_D 50.0f
 
 typedef struct {
   int mode; // ANIM_MODE_EASE or ANIM_MODE_SPRING

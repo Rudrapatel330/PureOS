@@ -31,6 +31,7 @@ void config_init(void) {
   global_config.calendar_h = 240;
   global_config.timezone_offset_m = 0; // Default to UTC
   global_config.taskbar_position = 0;  // 0 = bottom
+  global_config.show_sysmon_widget = 1;
 }
 
 #include "../fs/fat.h"

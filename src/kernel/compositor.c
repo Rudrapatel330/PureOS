@@ -949,6 +949,10 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
   if (!backbuffer || w <= 0 || h <= 0 || radius <= 0)
     return;
 
+<<<<<<< HEAD
+=======
+  // Clamp rect to screen bounds
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
   int x1 = (x < 0) ? 0 : x;
   int y1 = (y < 0) ? 0 : y;
   int x2 = (x + w > screen_width) ? screen_width : x + w;
@@ -956,19 +960,37 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
 
   int bw = x2 - x1;
   int bh = y2 - y1;
-  if (bw <= 0 || bh <= 0 || bw >= 4096 || bh >= 4096)
+  if (bw <= 0 || bh <= 0)
     return;
 
+  // Cap radius for performance and stability
+  // Cap radius for performance and stability
+  if (radius > 16) radius = 16;
+  
   const int r = radius;
   const int div = (2 * r + 1);
+  const uint32_t inv_div = (1 << 16) / div; // Fast division multiplier
+  const int32_t max_sum = 255 * div;
+  
+  // Use a slightly larger local buffer for safety, but cap it
   static uint32_t line_buf[4096];
+  if (bw > 4096) bw = 4096;
+  if (bh > 4096) bh = 4096;
 
+<<<<<<< HEAD
   // Horizontal pass
+=======
+  // Horizontal pass - Robust sliding window
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
   for (int j = y1; j < y2; j++) {
-    uint32_t r_sum = 0, g_sum = 0, b_sum = 0;
+    int32_t r_sum = 0, g_sum = 0, b_sum = 0; // Use signed to detect drift/underflow
     uint32_t *row = &backbuffer[j * screen_width];
 
+<<<<<<< HEAD
     // Initialize sum with clamping
+=======
+    // Initial sum for the first window [x1-r, x1+r]
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     for (int i = -r; i <= r; i++) {
       int sx = x1 + i;
       if (sx < 0) sx = 0;
@@ -980,11 +1002,24 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
     }
 
     for (int i = 0; i < bw; i++) {
+<<<<<<< HEAD
       line_buf[i] = 0xFF000000 | ((r_sum / div) << 16) | ((g_sum / div) << 8) |
                     (b_sum / div);
       
       int out_x = x1 + i - r;
       int in_x = x1 + i + r + 1;
+=======
+      // Store current average using fast multiplicative division
+      line_buf[i] = 0xFF000000 | 
+                    ((((r_sum * inv_div) >> 16) & 0xFF) << 16) | 
+                    ((((g_sum * inv_div) >> 16) & 0xFF) << 8) | 
+                    (((b_sum * inv_div) >> 16) & 0xFF);
+      
+      // Slide window: remove left, add right
+      int out_x = x1 + i - r;
+      int in_x = x1 + i + r + 1;
+      
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
       if (out_x < 0) out_x = 0;
       if (out_x >= screen_width) out_x = screen_width - 1;
       if (in_x < 0) in_x = 0;
@@ -992,18 +1027,38 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
 
       uint32_t p_out = row[out_x];
       uint32_t p_in = row[in_x];
+<<<<<<< HEAD
       r_sum = r_sum - ((p_out >> 16) & 0xFF) + ((p_in >> 16) & 0xFF);
       g_sum = g_sum - ((p_out >> 8) & 0xFF) + ((p_in >> 8) & 0xFF);
       b_sum = b_sum - (p_out & 0xFF) + (p_in & 0xFF);
+=======
+      
+      r_sum += (int32_t)((p_in >> 16) & 0xFF) - (int32_t)((p_out >> 16) & 0xFF);
+      g_sum += (int32_t)((p_in >> 8) & 0xFF) - (int32_t)((p_out >> 8) & 0xFF);
+      b_sum += (int32_t)(p_in & 0xFF) - (int32_t)(p_out & 0xFF);
+
+      // Safety clamp to prevent neon color glitches from drift
+      if (r_sum < 0) r_sum = 0; else if (r_sum > max_sum) r_sum = max_sum;
+      if (g_sum < 0) g_sum = 0; else if (g_sum > max_sum) g_sum = max_sum;
+      if (b_sum < 0) b_sum = 0; else if (b_sum > max_sum) b_sum = max_sum;
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     }
     memcpy(&row[x1], line_buf, bw * 4);
   }
 
+<<<<<<< HEAD
   // Vertical pass
   for (int i = x1; i < x2; i++) {
     uint32_t r_sum = 0, g_sum = 0, b_sum = 0;
     
     // Initialize sum with clamping
+=======
+  // Vertical pass - Robust sliding window
+  for (int i = x1; i < x2; i++) {
+    int32_t r_sum = 0, g_sum = 0, b_sum = 0;
+    
+    // Initial sum for the first window [y1-r, y1+r]
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     for (int j = -r; j <= r; j++) {
       int sy = y1 + j;
       if (sy < 0) sy = 0;
@@ -1015,11 +1070,23 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
     }
 
     for (int j = 0; j < bh; j++) {
+<<<<<<< HEAD
       line_buf[j] = 0xFF000000 | ((r_sum / div) << 16) |
                          ((g_sum / div) << 8) | (b_sum / div);
       
       int out_y = y1 + j - r;
       int in_y = y1 + j + r + 1;
+=======
+      // Fast multiplicative division
+      line_buf[j] = 0xFF000000 | 
+                    ((((r_sum * inv_div) >> 16) & 0xFF) << 16) |
+                    ((((g_sum * inv_div) >> 16) & 0xFF) << 8) | 
+                    (((b_sum * inv_div) >> 16) & 0xFF);
+      
+      int out_y = y1 + j - r;
+      int in_y = y1 + j + r + 1;
+      
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
       if (out_y < 0) out_y = 0;
       if (out_y >= screen_height) out_y = screen_height - 1;
       if (in_y < 0) in_y = 0;
@@ -1027,10 +1094,22 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
 
       uint32_t p_out = backbuffer[out_y * screen_width + i];
       uint32_t p_in = backbuffer[in_y * screen_width + i];
+<<<<<<< HEAD
       r_sum = r_sum - ((p_out >> 16) & 0xFF) + ((p_in >> 16) & 0xFF);
       g_sum = g_sum - ((p_out >> 8) & 0xFF) + ((p_in >> 8) & 0xFF);
       b_sum = b_sum - (p_out & 0xFF) + (p_in & 0xFF);
+=======
+      
+      r_sum += (int32_t)((p_in >> 16) & 0xFF) - (int32_t)((p_out >> 16) & 0xFF);
+      g_sum += (int32_t)((p_in >> 8) & 0xFF) - (int32_t)((p_out >> 8) & 0xFF);
+      b_sum += (int32_t)(p_in & 0xFF) - (int32_t)(p_out & 0xFF);
+
+      if (r_sum < 0) r_sum = 0; else if (r_sum > max_sum) r_sum = max_sum;
+      if (g_sum < 0) g_sum = 0; else if (g_sum > max_sum) g_sum = max_sum;
+      if (b_sum < 0) b_sum = 0; else if (b_sum > max_sum) b_sum = max_sum;
+>>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     }
+    
     for (int j = 0; j < bh; j++) {
       backbuffer[(y1 + j) * screen_width + i] = line_buf[j];
     }

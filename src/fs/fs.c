@@ -14,6 +14,55 @@ void fs_init() {
   ext2_init();
 }
 
+file_entry_t *fs_find(const char *name) {
+  if (!name) return 0;
+  
+  extern void print_serial(const char *str);
+  print_serial("fs_find: ");
+  print_serial(name);
+  print_serial("\n");
+
+  // 1. Check RamFS
+  extern file_entry_t ramfs_files[];
+  extern int ramfs_count;
+  
+  const char *ram_name = name;
+  if (name[0] == '/') ram_name = name + 1;
+
+  for (int i = 0; i < ramfs_count; i++) {
+    if (strcmp(ramfs_files[i].name, ram_name) == 0 || strcmp(ramfs_files[i].name, name) == 0) {
+      return &ramfs_files[i];
+    }
+  }
+  
+  // 2. Check FAT
+  static file_entry_t fat_fe;
+  fat_dir_entry_t fat_entry;
+  if (fat_find_file(name, &fat_entry)) {
+      int len = 0;
+      while (name[len]) len++;
+      int start = 0;
+      // Strip path for the name field in file_entry_t if it's too long, but usually we just want the basename or the full path if it fits
+      if (len >= FS_MAX_FILENAME) {
+          // Find last slash
+          for (int i = len - 1; i >= 0; i--) {
+              if (name[i] == '/') {
+                  start = i + 1;
+                  break;
+              }
+          }
+      }
+      strncpy(fat_fe.name, name + start, FS_MAX_FILENAME - 1);
+      fat_fe.name[FS_MAX_FILENAME - 1] = 0;
+      fat_fe.size = fat_entry.file_size;
+      fat_fe.content = 0; // Not cached in memory yet
+      fat_fe.flags = (fat_entry.attributes & 0x10) ? 1 : 0; // 0x10 is FAT_ATTR_DIRECTORY
+      return &fat_fe;
+  }
+
+  return 0;
+}
+
 int fs_list(const char *path, char *buffer, int max_len) {
   int total = 0;
   uint32_t cluster = fat_resolve_path(path, fat_get_root_cluster());
@@ -58,8 +107,13 @@ int fs_list_files(const char *path, FileInfo *buffer, int max_files) {
 
 int fs_read(const char *filename, uint8_t *buffer) {
   int bytes = fat_read_file(filename, buffer);
-  if (bytes > 0)
+  if (bytes > 0) {
+    extern void print_serial(const char *str);
+    print_serial("fs_read: read ");
+    print_serial(filename);
+    print_serial(" OK\n");
     return bytes;
+  }
   return ramfs_read(filename, buffer);
 }
 

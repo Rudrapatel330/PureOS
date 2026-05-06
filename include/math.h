@@ -39,8 +39,16 @@ float acosf(float x);
 
 double log(double x);
 double exp(double x);
+double sinh(double x);
+double cosh(double x);
+double tanh(double x);
+double log2(double x);
+double log10(double x);
 double frexp(double x, int *exp);
 double ldexp(double x, int exp);
+double trunc(double x);
+double cbrt(double x);
+double atan(double x);
 
 long int lrintf(float x);
 

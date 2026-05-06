@@ -74,5 +74,15 @@ def create_debug_disk():
         f.write(disk)
     print("Created pureos.img")
 
+    # 6. Upload Icons
+    try:
+        from bulk_upload_icons import main as upload_icons
+        print("Uploading icons...")
+        upload_icons()
+    except ImportError:
+        print("Warning: bulk_upload_icons.py not found, skipping icon upload")
+    except Exception as e:
+        print(f"Error uploading icons: {e}")
+
 if __name__ == '__main__':
     create_debug_disk()

@@ -6,6 +6,8 @@
 extern void print_serial(const char *);
 extern void kernel_poll_events(void);
 
+#define MAX_TAG_STACK 128
+
 // Simple global allocator helper for strings
 static char *dom_strdup(const char *src) {
   if (!src)
@@ -18,19 +20,28 @@ static char *dom_strdup(const char *src) {
   return str;
 }
 
-// Case-insensitive tag matcher
-static int tag_match(const char *p, const char *tag, int len) {
-  for (int i = 0; i < len; i++) {
-    char c1 = p[i];
-    char c2 = tag[i];
-    if (c1 >= 'A' && c1 <= 'Z')
-      c1 += 32;
-    if (c2 >= 'A' && c2 <= 'Z')
-      c2 += 32;
-    if (c1 != c2)
-      return 1; // Not match
-  }
-  return 0; // Match
+static int dom_strcasecmp(const char *s1, const char *s2) {
+    while (*s1 && *s2) {
+        char c1 = *s1;
+        char c2 = *s2;
+        if (c1 >= 'A' && c1 <= 'Z') c1 += 32;
+        if (c2 >= 'A' && c2 <= 'Z') c2 += 32;
+        if (c1 != c2) return c1 - c2;
+        s1++; s2++;
+    }
+    return (unsigned char)*s1 - (unsigned char)*s2;
+}
+
+static const char* void_tags[] = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr", "!doctype", 0
+};
+
+static int is_void_tag(const char* tag) {
+    for (int i = 0; void_tags[i]; i++) {
+        if (dom_strcasecmp(tag, void_tags[i]) == 0) return 1;
+    }
+    return 0;
 }
 
 dom_node_t *dom_create_element(const char *tag) {
@@ -139,6 +150,12 @@ void dom_free_node(dom_node_t *node) {
     dom_node_t *next = child->next_sibling;
     dom_free_node(child);
     child = next;
+    
+    static int free_poll = 0;
+    if (++free_poll > 100) {
+      kernel_poll_events();
+      free_poll = 0;
+    }
   }
 
   kfree(node);
@@ -148,9 +165,6 @@ static void clean_html_text(char *dest, const char *src, int max_len) {
   int d = 0;
   int s = 0;
   int in_space = 0;
-
-  // Optional: trim leading whitespace unconditionally. For now, we just
-  // collapse.
   int iters = 0;
   while (src[s] && d < max_len - 1) {
     if (++iters > 100) {
@@ -191,17 +205,12 @@ static void clean_html_text(char *dest, const char *src, int max_len) {
           s++;
         if (src[s] == ';')
           s++;
-        dest[d++] = ' '; // Replace unknown numerical entities with space
+        dest[d++] = ' ';
       } else {
         dest[d++] = '&';
         s++;
       }
     } else if (c >= 0x80) {
-      // Non-ASCII detected.
-      // PureBrowser's font only handles ASCII.
-      // UTF-8 lead bytes and continuation bytes should be skipped/merged.
-      // For now, let's just skip all high-bit characters to avoid "???"
-      // rendering.
       s++;
       in_space = 0;
     } else {
@@ -210,222 +219,166 @@ static void clean_html_text(char *dest, const char *src, int max_len) {
       s++;
     }
   }
-
-  // Trim trailing space if any
-  if (d > 0 && dest[d - 1] == ' ')
-    d--;
+  if (d > 0 && dest[d - 1] == ' ') d--;
   dest[d] = '\0';
 }
 
-// Returns the advancing pointer. Null on error.
-static const char *parse_node_recursive(const char *p, dom_node_t *stack_parent,
-                                        int depth) {
-  if (depth > 32)
-    return p; // Recursion limit
+dom_node_t *dom_parse_html(const char *html) {
+    if (!html) return NULL;
+    
+    dom_node_t *root = dom_create_element("root");
+    dom_node_t *current_parent = root;
+    dom_node_t *stack[MAX_TAG_STACK];
+    int stack_ptr = 0;
+    stack[stack_ptr++] = root;
 
-  int node_iters = 0;
-  while (*p) {
-    if (++node_iters > 50) {
-      kernel_poll_events();
-      node_iters = 0;
-    }
-    // Skip whitespace if not in a text node logically
-    while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')
-      p++;
-    if (!*p)
-      break;
+    const char *p = html;
+    int iters = 0;
 
-    if (*p == '<') {
-      p++; // Skip '<'
-
-      // Check closing tag
-      if (*p == '/') {
-        p++; // Skip '/'
-        // We assume well-formed for now. Advance past tag name and closing '>'
-        while (*p && *p != '>')
-          p++;
-        if (*p == '>')
-          p++;
-        return p; // Returning drops us up a level
-      }
-
-      // Handle Comments (rudimentary)
-      if (strncmp(p, "!--", 3) == 0) {
-        while (*p && strncmp(p, "-->", 3) != 0)
-          p++;
-        if (*p)
-          p += 3;
-        continue;
-      }
-
-      // Read Tag Name
-      char tag[DOM_MAX_TAG_LEN] = {0};
-      int t_idx = 0;
-      while (*p && *p != ' ' && *p != '>' && *p != '/' &&
-             t_idx < DOM_MAX_TAG_LEN - 1) {
-        char c = *p++;
-        if (c >= 'A' && c <= 'Z')
-          c += 32; // Lowercase normalize
-        tag[t_idx++] = c;
-      }
-      tag[t_idx] = '\0';
-
-      dom_node_t *element = dom_create_element(tag);
-      if (stack_parent) {
-        dom_append_child(stack_parent, element);
-      }
-
-      // Read attributes (very simplified)
-      while (*p && *p != '>' && *p != '/') {
-        while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')
-          p++;
-
-        if (*p == '>' || *p == '/')
-          break;
-
-        char attr_name[DOM_MAX_ATTR_NAME] = {0};
-        char attr_val[DOM_MAX_ATTR_VAL] = {0};
-        int a_idx = 0;
-
-        while (*p && *p != '=' && *p != ' ' && *p != '>' &&
-               a_idx < DOM_MAX_ATTR_NAME - 1) {
-          attr_name[a_idx++] = *p++;
+    while (*p) {
+        if (++iters > 100) {
+            kernel_poll_events();
+            iters = 0;
         }
-        attr_name[a_idx] = '\0';
 
-        if (*p == '=') {
-          p++; // Skip '='
-          char quote = 0;
-          if (*p == '"' || *p == '\'') {
-            quote = *p++;
-          }
-
-          int v_idx = 0;
-          while (*p && *p != '>' && v_idx < DOM_MAX_ATTR_VAL - 1) {
-            if (quote && *p == quote) {
-              p++; // Skip closing quote
-              break;
-            } else if (!quote && (*p == ' ' || *p == '>')) {
-              break;
-            }
-            attr_val[v_idx++] = *p++;
-          }
-          attr_val[v_idx] = '\0';
-
-          if (attr_name[0] != '\0') {
-            dom_set_attribute(element, attr_name, attr_val);
-          }
-        }
-      }
-
-      // Check self-closing things like <img />
-      int self_closing = 0;
-      if (*p == '/') {
-        self_closing = 1;
-        p++;
-      }
-      // Void elements in HTML5 don't need closing tags
-      if (strcmp(tag, "br") == 0 || strcmp(tag, "img") == 0 ||
-          strcmp(tag, "hr") == 0 || strcmp(tag, "meta") == 0 ||
-          strcmp(tag, "link") == 0 || strcmp(tag, "input") == 0) {
-        self_closing = 1;
-      }
-
-      if (*p == '>')
-        p++;
-
-      // If script or style, capture content into a text node but don't parse it
-      // as HTML.
-      if (strcmp(tag, "script") == 0 || strcmp(tag, "style") == 0) {
-        const char *content_start = p;
-        int content_len = 0;
-
-        // Skip until closing tag
-        while (*p) {
-          if (*p == '<' && *(p + 1) == '/') {
-            const char *cp = p + 2;
-            int cl_idx = 0;
-            char cl_tag[32] = {0};
-            while (*cp && *cp != '>' && cl_idx < 31) {
-              char c = *cp++;
-              if (c >= 'A' && c <= 'Z')
-                c += 32;
-              cl_tag[cl_idx++] = c;
-            }
-            if (strcmp(cl_tag, tag) == 0) {
-              // Found closing tag. Create a text node
-              if (content_len > 0) {
-                char *buf = (char *)kmalloc(content_len + 1);
-                if (buf) {
-                  strncpy(buf, content_start, content_len);
-                  buf[content_len] = '\0';
-                  dom_node_t *text_el = dom_create_text(buf);
-                  dom_append_child(element, text_el);
-                  kfree(buf);
+        if (*p == '<') {
+            if (p[1] == '!') {
+                p += 2;
+                if (strncmp(p, "DOCTYPE", 7) == 0 || strncmp(p, "doctype", 7) == 0) {
+                    while (*p && *p != '>') p++;
+                    if (*p) p++;
+                    continue;
                 }
-              }
-
-              p = cp;
-              if (*p == '>')
-                p++;
-              break;
+                while (*p && !(*p == '-' && *(p+1) == '-' && *(p+2) == '>')) p++;
+                if (*p) p += 3;
+                continue;
             }
-          }
-          content_len++;
-          p++;
+
+            if (p[1] == '/') {
+                p += 2;
+                char tag_name[64];
+                int i = 0;
+                while (*p && *p != '>' && *p != ' ' && i < 63) tag_name[i++] = *p++;
+                tag_name[i] = 0;
+                while (*p && *p != '>') p++;
+                if (*p) p++;
+
+                if (stack_ptr > 1) {
+                    stack_ptr--;
+                    current_parent = stack[stack_ptr-1];
+                }
+                continue;
+            }
+
+            p++;
+            char tag_name[64];
+            int i = 0;
+            while (*p && *p != '>' && *p != ' ' && *p != '/' && i < 63) tag_name[i++] = *p++;
+            tag_name[i] = 0;
+
+            dom_node_t *node = dom_create_element(tag_name);
+            
+            while (*p && *p != '>' && *p != '/') {
+                while (*p && (*p == ' ' || *p == '\t' || *p == '\n')) p++;
+                if (*p == '>' || *p == '/') break;
+                
+                char attr_name[64];
+                int ai = 0;
+                while (*p && *p != '=' && *p != ' ' && *p != '>' && ai < 63) attr_name[ai++] = *p++;
+                attr_name[ai] = 0;
+                
+                if (*p == '=') {
+                    p++;
+                    char quote = 0;
+                    if (*p == '"' || *p == '\'') quote = *p++;
+                    char attr_val[512];
+                    int vi = 0;
+                    if (quote) {
+                        while (*p && *p != quote && vi < 511) attr_val[vi++] = *p++;
+                        if (*p) p++;
+                    } else {
+                        while (*p && *p != ' ' && *p != '>' && vi < 511) attr_val[vi++] = *p++;
+                    }
+                    attr_val[vi] = 0;
+                    dom_set_attribute(node, attr_name, attr_val);
+                }
+            }
+
+            int self_closing = (*p == '/');
+            if (self_closing) p++;
+            while (*p && *p != '>') p++;
+            if (*p) p++;
+
+            dom_append_child(current_parent, node);
+
+            // Special handling for scripts and styles: don't parse children as HTML
+            if (strcmp(tag_name, "script") == 0 || strcmp(tag_name, "style") == 0) {
+                const char *content_start = p;
+                int content_len = 0;
+                while (*p) {
+                    if (*p == '<' && *(p + 1) == '/') {
+                        const char *tp = p + 2;
+                        if (strncmp(tp, tag_name, strlen(tag_name)) == 0) break;
+                    }
+                    content_len++;
+                    p++;
+                }
+
+                if (content_len > 0) {
+                    char *buf = kmalloc(content_len + 1);
+                    strncpy(buf, content_start, content_len);
+                    buf[content_len] = 0;
+                    
+                    if (strcmp(tag_name, "script") == 0) {
+                        extern void js_execute(const char *);
+                        js_execute(buf);
+                    } else {
+                        // Styles handled separately or stored in node
+                    }
+                    
+                    // Also add as a text node so it's in the DOM
+                    dom_node_t *tnode = dom_create_text(buf);
+                    dom_append_child(node, tnode);
+                    kfree(buf);
+                }
+
+                if (*p) {
+                    while (*p && *p != '>') p++;
+                    if (*p) p++;
+                }
+                self_closing = 1;
+            }
+
+            if (!self_closing && !is_void_tag(tag_name)) {
+                if (stack_ptr < MAX_TAG_STACK) {
+                    stack[stack_ptr++] = node;
+                    current_parent = node;
+                }
+            }
+        } else {
+            const char *start = p;
+            while (*p && *p != '<') p++;
+            int len = p - start;
+            if (len > 0) {
+                char *raw_text = kmalloc(len + 1);
+                memcpy(raw_text, start, len);
+                raw_text[len] = 0;
+                
+                char *clean_text = kmalloc(len + 1);
+                clean_html_text(clean_text, raw_text, len + 1);
+                kfree(raw_text);
+                
+                if (strlen(clean_text) > 0) {
+                    dom_node_t *tnode = dom_create_text(clean_text);
+                    dom_append_child(current_parent, tnode);
+                }
+                kfree(clean_text);
+            }
         }
-        self_closing = 1; // don't parse children recursively.
-      }
-
-      if (!self_closing) {
-        // Parse children recursively
-        p = parse_node_recursive(p, element, depth + 1);
-      }
-
-    } else {
-      // It's a Text Node
-      char *buf =
-          (char *)kmalloc(4096); // Increased for larger chunks, but capped
-      if (!buf)
-        return p;
-      memset(buf, 0, 4096);
-
-      int idx = 0;
-      while (*p && *p != '<' && idx < 4095) {
-        buf[idx++] = *p++;
-      }
-      buf[idx] = '\0';
-
-      char *clean_buf = (char *)kmalloc(4096);
-      if (clean_buf) {
-        memset(clean_buf, 0, 4096);
-        clean_html_text(clean_buf, buf, 4096);
-
-        if (clean_buf[0] != '\0' && stack_parent) {
-          dom_node_t *text_el = dom_create_text(clean_buf);
-          dom_append_child(stack_parent, text_el);
-        }
-        kfree(clean_buf);
-      }
-      kfree(buf);
     }
-  }
-  return p;
+    return root;
 }
 
-dom_node_t *dom_parse_html(const char *html_str) {
-  if (!html_str)
-    return 0;
-
-  // Creates a pseudo-document root
-  dom_node_t *document = dom_create_element("document");
-
-  parse_node_recursive(html_str, document, 0);
-
-  return document;
-}
-
-// Debug Print
 void dom_print_tree(dom_node_t *root, int depth) {
   if (!root)
     return;
@@ -456,16 +409,13 @@ void dom_print_tree(dom_node_t *root, int depth) {
 
   } else if (root->type == DOM_NODE_TEXT) {
     print_serial("\"");
-    // Limit print size
     int len = strlen(root->text_content);
     if (len > 40)
       len = 40;
-    char tmp[48]; // Increased size from 42 to 48 for safety
+    char tmp[48];
     strncpy(tmp, root->text_content, len);
     tmp[len] = '\0';
     if (strlen(root->text_content) > 40) {
-      // tmp has len(40) + \0 = 41 bytes.
-      // index 40 is \0. index 41, 42, 43 can take "..."
       tmp[40] = '.';
       tmp[41] = '.';
       tmp[42] = '.';

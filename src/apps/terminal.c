@@ -208,8 +208,8 @@ void terminal_on_key(void *win, int key, char c) {
   // Page Up = Scroll up
   if (key == 0x49) {
     t->scroll_offset += 5;
-    int visible_lines = ((window_t *)win)->height > 30
-                            ? (((window_t *)win)->height - 30) / 10
+    int visible_lines = ((window_t *)win)->height > 38
+                            ? (((window_t *)win)->height - 38) / 10
                             : 16;
     int max_scroll = t->count > visible_lines ? t->count - visible_lines : 0;
     if (t->scroll_offset > max_scroll)
@@ -260,8 +260,8 @@ void terminal_on_scroll(void *win, int direction) {
 
   if (direction > 0) {
     t->scroll_offset += 1;
-    int visible_lines = ((window_t *)win)->height > 30
-                            ? (((window_t *)win)->height - 30) / 10
+    int visible_lines = ((window_t *)win)->height > 38
+                            ? (((window_t *)win)->height - 38) / 10
                             : 16;
     int max_scroll = t->count > visible_lines ? t->count - visible_lines : 0;
     if (t->scroll_offset > max_scroll)
@@ -279,7 +279,7 @@ void terminal_draw(window_t *win) {
   if (!t)
     return;
 
-  int content_h = win->height - 30;
+  int content_h = win->height - 38;
   int visible_lines = content_h / 10;
 
   int max_scroll = t->count > visible_lines ? t->count - visible_lines : 0;
@@ -295,7 +295,7 @@ void terminal_draw(window_t *win) {
   if (start < 0)
     start = 0;
 
-  int cy = 28;
+  int cy = 36;
   for (int i = start; i < end && i < MAX_LINES; i++) {
     winmgr_draw_text(win, 6, cy, t->lines[i], 0xFFFFFFFF); // Fixed white text
     cy += 10;
@@ -309,7 +309,7 @@ void terminal_draw(window_t *win) {
   winmgr_draw_text(win, 6, cy, prompt, 0xFFFFFFFF); // Fixed white prompt
 
   if (t->scroll_offset > 0) {
-    winmgr_draw_text(win, win->width - 30, 28, "^^^", 0xFF89B4FA); // Fixed blue accent
+    winmgr_draw_text(win, win->width - 30, 36, "^^^", 0xFF89B4FA); // Fixed blue accent
   }
 }
 

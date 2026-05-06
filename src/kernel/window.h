@@ -192,6 +192,9 @@ void winmgr_blend_blit(window_t *dst, int dx, int dy, const uint32_t *src,
                        uint8_t alpha);
 void winmgr_fill_rect(window_t *win, int x, int y, int w, int h,
                       uint32_t color);
+void winmgr_draw_rounded_rect_ex(window_t *win, int x, int y, int w, int h,
+                                 uint32_t bg_color, int border_thickness,
+                                 uint32_t border_color, int radius);
 void winmgr_draw_rect(window_t *win, int x, int y, int w, int h,
                       uint32_t color);
 void winmgr_draw_line(window_t *win, int x1, int y1, int x2, int y2,

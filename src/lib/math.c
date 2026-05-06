@@ -113,14 +113,22 @@ double acos(double x) {
 }
 float acosf(float x) { return (float)acos(x); }
 
+double log2(double x) {
+    double res;
+    __asm__("fldln2\n\t"
+            "fxch\n\t"
+            "fyl2x" : "=t"(res) : "0"(x) : "st(1)");
+    return res;
+}
+
 double log(double x) {
-  (void)x;
-  return 0.0;
+    // log(x) = ln(x) = log2(x) * ln(2)
+    return log2(x) * 0.6931471805599453;
 }
 
 double exp(double x) {
-  (void)x;
-  return 0.0;
+    // exp(x) = e^x = 2^(x * log2(e))
+    return pow(2.0, x * 1.4426950408889634);
 }
 
 double frexp(double x, int *exp) {
@@ -133,4 +141,37 @@ double ldexp(double x, int exp) {
   (void)x;
   (void)exp;
   return 0.0;
+}
+
+double trunc(double x) {
+    if (x >= 0.0) return floor(x);
+    return ceil(x);
+}
+
+double log10(double x) {
+    // log10(x) = log2(x) / log2(10)
+    return log2(x) / 3.321928094887362;
+}
+
+double cbrt(double x) {
+    if (x == 0.0) return 0.0;
+    if (x > 0.0) return pow(x, 1.0/3.0);
+    return -pow(-x, 1.0/3.0);
+}
+
+double atan(double x) {
+    return atan2(x, 1.0);
+}
+
+double sinh(double x) {
+    return (exp(x) - exp(-x)) / 2.0;
+}
+
+double cosh(double x) {
+    return (exp(x) + exp(-x)) / 2.0;
+}
+
+double tanh(double x) {
+    double e2x = exp(2.0 * x);
+    return (e2x - 1.0) / (e2x + 1.0);
 }

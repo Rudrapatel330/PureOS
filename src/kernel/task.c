@@ -80,8 +80,8 @@ task_t *create_task(void (*entry)(), char *name) {
   strcpy(t->name, name);
   t->state = TASK_READY;
 
-  // Allocate 128KB stack
-  uint32_t stack_size = 128 * 1024;
+  // Allocate 512KB stack
+  uint32_t stack_size = 512 * 1024;
   uint64_t stack_phys = (uint64_t)kmalloc(stack_size + 16);
   if (!stack_phys) {
     print_serial("TASK: Failed to allocate stack for '");

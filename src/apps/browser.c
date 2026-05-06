@@ -20,6 +20,7 @@ static char url_bar[256] = "about:home";
 static int url_cursor = 10;
 static int url_editing = 0;
 static dom_node_t *focused_node = 0;
+static window_t *browser_win = 0;
 char input_buffer[256];
 int input_cursor = 0;
 
@@ -78,6 +79,7 @@ typedef struct {
 #define MAX_ELEMENTS 128
 static page_element_t elements[MAX_ELEMENTS];
 static int element_count = 0;
+extern void kernel_poll_events(void);
 
 // Link hitboxes for click navigation (relative to window)
 typedef struct {
@@ -209,6 +211,11 @@ static void extract_styles_recursive(dom_node_t *node, char *css_buf,
 
   dom_node_t *child = node->first_child;
   while (child) {
+    static int ext_poll = 0;
+    if (++ext_poll > 50) {
+      kernel_poll_events();
+      ext_poll = 0;
+    }
     extract_styles_recursive(child, css_buf, max_len);
     child = child->next_sibling;
   }
@@ -232,6 +239,11 @@ static void execute_scripts_recursive(dom_node_t *node) {
 
   dom_node_t *child = node->first_child;
   while (child) {
+    static int script_poll = 0;
+    if (++script_poll > 20) {
+      kernel_poll_events();
+      script_poll = 0;
+    }
     execute_scripts_recursive(child);
     child = child->next_sibling;
   }
@@ -476,6 +488,9 @@ static void browser_navigate(const char *input) {
   strcpy(status_text, "Loading...");
   is_loading = 1;
   backing_store_dirty = 1;
+  if (browser_win)
+    browser_win->needs_redraw = 1;
+  ui_dirty = 1;
 
   __asm__ volatile("cli");
   browser_updating = 1;
@@ -488,6 +503,7 @@ static void browser_navigate(const char *input) {
     dom_free_node(current_document);
     current_document = 0;
   }
+  js_init();
   __asm__ volatile("sti");
 
   if (history_pos < 0 || strcmp(history[history_pos], url) != 0) {
@@ -796,6 +812,10 @@ static void browser_draw_cb(void *w) {
     current_render_tree = 0;
   }
 
+  int sy = win->height - 18;
+  winmgr_draw_rect(win, cx, sy, cw, 16, 0xFFDDDDDD);
+  winmgr_draw_text(win, cx + 4, sy + 4, status_text, 0xFF444444);
+
   if (browser_updating) {
     __asm__ volatile("sti");
     return;
@@ -862,10 +882,6 @@ static void browser_draw_cb(void *w) {
     }
   }
   __asm__ volatile("sti");
-
-  int sy = win->height - 18;
-  winmgr_draw_rect(win, cx, sy, cw, 16, 0xFFDDDDDD);
-  winmgr_draw_text(win, cx + 4, sy + 4, status_text, 0xFF444444);
 }
 
 static void browser_key_cb(void *w, int key, char c) {
@@ -1009,10 +1025,11 @@ void browser_init(void) {
   is_loading = 0;
   js_init();
   print_serial("BROWSER: JS init done\n");
-  window_t *win = winmgr_create_window(-1, -1, 850, 650, "PureBrowser");
+  browser_win = winmgr_create_window(-1, -1, 850, 650, "PureBrowser");
   print_serial("BROWSER: Window created\n");
-  if (!win)
+  if (!browser_win)
     return;
+  window_t *win = browser_win;
   win->draw = browser_draw_cb;
   win->on_key = browser_key_cb;
   win->on_mouse = browser_mouse_cb;

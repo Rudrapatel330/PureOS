@@ -88,8 +88,8 @@ void capture_screenshot() {
     char filename[64] = "shot.png";
     rtc_time_t now;
     rtc_read(&now);
-    // "shot_HHMMSS.png"
-    strcpy(filename, "shot_");
+    // "S_HHMMSS.png" (Fits 8.3 FAT limit)
+    strcpy(filename, "S");
     char h_str[4], m_str[4], s_str[4];
     k_itoa(now.hour, h_str);
     k_itoa(now.minute, m_str);

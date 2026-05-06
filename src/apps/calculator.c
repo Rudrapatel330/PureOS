@@ -112,10 +112,10 @@ void calculator_draw(window_t *win) {
   const theme_t *theme = theme_get();
  
   // Draw Background
-  winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, theme->bg);
+  winmgr_fill_rect(win, 0, 32, win->width, win->height - 32, theme->bg);
 
   // 1. Draw Display Area (Top part)
-  winmgr_fill_rect(win, 0, 24, win->width, 80, theme->bg);
+  winmgr_fill_rect(win, 0, 32, win->width, 80, theme->bg);
 
   // Draw display text
   char display_str[64];
@@ -162,14 +162,14 @@ void calculator_draw(window_t *win) {
       for (int px = 0; px < 8; px++) {
         if (row & (1 << (7 - px))) {
           winmgr_fill_rect(win, txt_x + i * char_w + px * scale,
-                           45 + py * scale, scale, scale, theme->fg);
+                           53 + py * scale, scale, scale, theme->fg);
         }
       }
     }
   }
 
   // 2. Draw Button Grid
-  int start_y = 104;
+  int start_y = 112;
   int bw = win->width / 4;
   int bh = (win->height - start_y) / 5;
 
@@ -218,7 +218,7 @@ void calculator_click(window_t *win, int mx, int my, int buttons) {
   if (!calc || !(buttons & 1))
     return;
 
-  int start_y = 104;
+  int start_y = 112;
   if (my < start_y)
     return;
 

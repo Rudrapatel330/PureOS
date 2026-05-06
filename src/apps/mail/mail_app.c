@@ -170,22 +170,23 @@ void mail_app_draw(window_t *win) {
     return;
 
   const theme_t *theme = theme_get();
- 
+
   // Background
   winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, theme->bg);
 
   // 1. TOOLBAR
   winmgr_fill_rect(win, 0, 24, win->width, 30, theme->titlebar);
   winmgr_fill_rect(win, 0, 53, win->width, 1, theme->border);
- 
+
   // Buttons
   winmgr_fill_rect(win, 10, 28, 60, 20, theme->button);
   winmgr_draw_text(win, 20, 32, "Sync", theme->fg);
- 
-  winmgr_fill_rect(win, 80, 28, 80, 20, compose_mode ? theme->accent : theme->button);
+
+  winmgr_fill_rect(win, 80, 28, 80, 20,
+                   compose_mode ? theme->accent : theme->button);
   winmgr_draw_text(win, 90, 32, "Compose",
                    compose_mode ? theme->button_text : theme->fg);
- 
+
   winmgr_draw_text(win, win->width - 150, 32, status_text, theme->fg_secondary);
 
   // 2. SIDEBAR (Accounts)
@@ -193,7 +194,7 @@ void mail_app_draw(window_t *win) {
                    theme->menu_bg);
   winmgr_fill_rect(win, MAIL_SIDEBAR_WIDTH, 54, 1, win->height - 54 - 26,
                    theme->border);
- 
+
   winmgr_draw_text(win, 5, 60, "ACCOUNTS", theme->fg_secondary);
   for (int i = 0; i < account_count; i++) {
     int y = 80 + i * MAIL_ROW_HEIGHT;
@@ -211,7 +212,7 @@ void mail_app_draw(window_t *win) {
   if (compose_mode) {
     winmgr_fill_rect(win, list_x, 54, win->width - list_x,
                      win->height - 54 - 26, theme->bg);
- 
+
     // "To:" field
     uint32_t to_border = (compose_field == 0) ? theme->accent : theme->border;
     winmgr_draw_text(win, list_x + 10, 82, "To:", theme->fg_secondary);
@@ -229,10 +230,10 @@ void mail_app_draw(window_t *win) {
     winmgr_fill_rect(win, list_x + 70, 134, win->width - list_x - 90, 1,
                      subj_border);
     winmgr_draw_text(win, list_x + 75, 118, compose_subject, theme->fg);
- 
+
     // Divider
     winmgr_fill_rect(win, list_x, 140, win->width - list_x, 1, theme->border);
- 
+
     // Body field
     uint32_t body_border = (compose_field == 2) ? theme->accent : theme->border;
     winmgr_fill_rect(win, list_x + 10, 148, win->width - list_x - 20,
@@ -240,14 +241,15 @@ void mail_app_draw(window_t *win) {
     winmgr_fill_rect(win, list_x + 10, win->height - 72,
                      win->width - list_x - 20, 1, body_border);
     winmgr_draw_text(win, list_x + 15, 155, compose_body, theme->fg);
- 
+
     // Field hint
     winmgr_draw_text(win, list_x + 10, win->height - 60,
                      "Tab=Next Field  Backspace=Delete", theme->fg_secondary);
- 
+
     // Send Button
     winmgr_fill_rect(win, list_x + 10, win->height - 48, 70, 26, theme->accent);
-    winmgr_draw_text(win, list_x + 22, win->height - 41, "SEND", theme->button_text);
+    winmgr_draw_text(win, list_x + 22, win->height - 41, "SEND",
+                     theme->button_text);
     return;
   }
 
@@ -255,24 +257,27 @@ void mail_app_draw(window_t *win) {
                    theme->bg);
   winmgr_fill_rect(win, list_x + MAIL_LIST_WIDTH, 54, 1, win->height - 54 - 26,
                    theme->border);
- 
+
   for (int i = 0; i < msg_count; i++) {
     int y = 54 + i * (MAIL_ROW_HEIGHT + 14);
     if (i == selected_msg_idx) {
       winmgr_fill_rect(win, list_x + 2, y + 2, MAIL_LIST_WIDTH - 4,
                        MAIL_ROW_HEIGHT + 10, theme->accent);
     }
- 
+
     char sender[26];
     strncpy(sender, msg_headers[i].from, 22);
     sender[22] = 0; // Force null termination
-    winmgr_draw_text(win, list_x + 8, y + 6, sender, (i == selected_msg_idx) ? theme->button_text : theme->fg);
- 
+    winmgr_draw_text(win, list_x + 8, y + 6, sender,
+                     (i == selected_msg_idx) ? theme->button_text : theme->fg);
+
     char subj[26];
     strncpy(subj, msg_headers[i].subject, 22);
     subj[22] = 0; // Force null termination
-    winmgr_draw_text(win, list_x + 8, y + 20, subj, (i == selected_msg_idx) ? theme->button_text : theme->fg_secondary);
- 
+    winmgr_draw_text(win, list_x + 8, y + 20, subj,
+                     (i == selected_msg_idx) ? theme->button_text
+                                             : theme->fg_secondary);
+
     winmgr_fill_rect(win, list_x, y + MAIL_ROW_HEIGHT + 12, MAIL_LIST_WIDTH, 1,
                      theme->border);
   }
@@ -282,21 +287,21 @@ void mail_app_draw(window_t *win) {
   if (has_msg_loaded) {
     winmgr_draw_text(win, view_x + 10, 60, "From: ", theme->fg_secondary);
     winmgr_draw_text(win, view_x + 60, 60, current_msg.header.from, theme->fg);
- 
+
     winmgr_draw_text(win, view_x + 10, 80, "Subject: ", theme->fg_secondary);
     winmgr_draw_text(win, view_x + 80, 80, current_msg.header.subject,
                      theme->fg);
- 
+
     winmgr_fill_rect(win, view_x + 10, 100, win->width - view_x - 20, 1,
                      theme->border);
- 
+
     // Body (Simple)
     winmgr_draw_text(win, view_x + 10, 110, current_msg.body, theme->fg);
   } else {
     winmgr_draw_text(win, view_x + 50, win->height / 2,
                      "Select a message to read.", theme->fg_secondary);
   }
- 
+
   // 5. STATUS BAR
   int sb_y = win->height - 26;
   winmgr_fill_rect(win, 0, sb_y, win->width, 26, theme->titlebar_inactive);
@@ -377,7 +382,7 @@ void mail_app_on_mouse(window_t *win, int mx, int my, int buttons) {
         print_serial("MAIL: Beginning SMTP Transmission...\n");
         // User MUST change this string to a real 16 character App Password!
         const char *user = "rudraptl2611@gmail.com";
-        const char *pass = "jhik kzcx uroy diwz";
+        const char *pass = "uhtd gcsg xlih bcjm";
 
         int res = smtp_send_email("smtp.gmail.com", 465, user, pass, compose_to,
                                   compose_subject, compose_body);

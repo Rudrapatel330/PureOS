@@ -397,9 +397,9 @@ window_t *winmgr_create_window(int x, int y, int w, int h, const char *title) {
     sy = win->taskbar_y;
   }
 
-  // macOS Genie: fast initial pull, soft decelerating spring finish
-  float kw = 280.0f;
-  float dw = 30.0f;
+  // Snappy Genie: very fast pull, high-stiffness spring finish
+  float kw = 550.0f;
+  float dw = 48.0f;
 
   extern int screen_height;
   win->pinch_top = (win->launch_y >= 0 && win->launch_y < screen_height / 2);
@@ -637,6 +637,131 @@ void winmgr_fill_rect(window_t *win, int x, int y, int w, int h,
   for (int cy = 0; cy < h; cy++) {
     uint32_t *line = &win->surface[(y + cy) * stride + x];
     simd_fill_32(line, c32, w);
+  }
+
+  winmgr_invalidate_rect(win, x, y, w, h);
+}
+
+static int int_sqrt(int n) {
+  if (n <= 0)
+    return 0;
+  int x = n;
+  int y = (x + 1) / 2;
+  while (y < x) {
+    x = y;
+    y = (x + n / x) / 2;
+  }
+  return x;
+}
+
+void winmgr_draw_rounded_rect_ex(window_t *win, int x, int y, int w, int h,
+                                 uint32_t bg_color, int border_thickness,
+                                 uint32_t border_color, int radius) {
+  if (!win || !win->surface)
+    return;
+
+  uint32_t bg_a = (bg_color >> 24) & 0xFF;
+  uint32_t bd_a = (border_color >> 24) & 0xFF;
+
+  if (bg_a == 0 && bd_a == 0)
+    return;
+
+  uint32_t bg_rb = bg_color & 0xFF00FF;
+  uint32_t bg_g = bg_color & 0x00FF00;
+
+  uint32_t bd_rb = border_color & 0xFF00FF;
+  uint32_t bd_g = border_color & 0x00FF00;
+
+  for (int cy = 0; cy < h; cy++) {
+    int py = y + cy;
+    if (py < 0 || py >= win->surface_h)
+      continue;
+    uint32_t *line = &win->surface[py * win->surface_w];
+    for (int cx = 0; cx < w; cx++) {
+      int px = x + cx;
+      if (px < 0 || px >= win->surface_w)
+        continue;
+
+      int cur_a = 0;
+      uint32_t target_rb = 0, target_g = 0;
+
+      if (radius > 0) {
+        int dx = 0, dy = 0;
+        if (cx < radius)
+          dx = radius * 2 - (cx * 2 + 1);
+        else if (cx >= w - radius)
+          dx = (cx * 2 + 1) - (w - radius) * 2;
+
+        if (cy < radius)
+          dy = radius * 2 - (cy * 2 + 1);
+        else if (cy >= h - radius)
+          dy = (cy * 2 + 1) - (h - radius) * 2;
+
+        int dist_x2 = 0;
+        if (dx > 0 && dy > 0) {
+          dist_x2 = int_sqrt(dx * dx + dy * dy);
+        } else {
+          dist_x2 = dx > dy ? dx : dy;
+        }
+
+        int shape_dist_x2 = dist_x2 - (radius * 2);
+
+        if (shape_dist_x2 >= 2)
+          continue;
+
+        if (border_thickness > 0 &&
+            shape_dist_x2 >= -(border_thickness * 2) - 1) {
+          cur_a = bd_a;
+          target_rb = bd_rb;
+          target_g = bd_g;
+        } else {
+          cur_a = bg_a;
+          target_rb = bg_rb;
+          target_g = bg_g;
+        }
+
+        if (shape_dist_x2 > -2) {
+          int coverage = 255 - (shape_dist_x2 + 2) * 255 / 4;
+          if (coverage < 0)
+            coverage = 0;
+          if (coverage > 255)
+            coverage = 255;
+          cur_a = (cur_a * coverage) >> 8;
+        }
+      } else {
+        int dist_to_l = cx;
+        int dist_to_r = w - 1 - cx;
+        int dist_to_t = cy;
+        int dist_to_b = h - 1 - cy;
+        int min_x = dist_to_l < dist_to_r ? dist_to_l : dist_to_r;
+        int min_y = dist_to_t < dist_to_b ? dist_to_t : dist_to_b;
+        int min_dist = min_x < min_y ? min_x : min_y;
+
+        if (min_dist < border_thickness) {
+          cur_a = bd_a;
+          target_rb = bd_rb;
+          target_g = bd_g;
+        } else {
+          cur_a = bg_a;
+          target_rb = bg_rb;
+          target_g = bg_g;
+        }
+      }
+
+      if (cur_a == 0)
+        continue;
+
+      uint32_t dst = line[px];
+      if (cur_a == 255) {
+        line[px] = 0xFF000000 | target_rb | target_g;
+      } else {
+        uint32_t d_rb = dst & 0xFF00FF;
+        uint32_t d_g = dst & 0x00FF00;
+        uint32_t rb = (((target_rb - d_rb) * cur_a) >> 8) + d_rb;
+        uint32_t g = (((target_g - d_g) * cur_a) >> 8) + d_g;
+        line[px] = 0xFF000000 | (rb & 0xFF00FF) | (g & 0x00FF00);
+      }
+    }
   }
 
   winmgr_invalidate_rect(win, x, y, w, h);
@@ -912,22 +1037,14 @@ static void draw_char_surface(window_t *win, int x, int y, char c,
   if (!win || !win->surface)
     return;
 
-  const uint8_t *glyph = font8x8_basic[(unsigned char)c];
-  uint32_t c32 = validate_color_32(color);
-  int stride = win->surface_w;
+  extern uint8_t font_get_aa_pixel(unsigned char c, int x, int y);
+  uint32_t c_rgb = color & 0x00FFFFFF;
 
-  for (int cy = 0; cy < 8; cy++) {
-    uint8_t row = glyph[cy];
-    int py = y + cy;
-    if (py < 0 || py >= win->surface_h)
-      continue;
-
-    for (int cx = 0; cx < 8; cx++) {
-      if (row & (1 << (7 - cx))) {
-        int px = x + cx;
-        if (px >= 0 && px < win->surface_w) {
-          win->surface[py * stride + px] = c32;
-        }
+  for (int cy = -1; cy < 9; cy++) {
+    for (int cx = -1; cx < 9; cx++) {
+      uint8_t alpha = font_get_aa_pixel((unsigned char)c, cx, cy);
+      if (alpha > 0) {
+        winmgr_put_pixel_aa(win, x + cx, y + cy, c_rgb, alpha);
       }
     }
   }
@@ -1032,7 +1149,7 @@ void winmgr_render_window(window_t *win) {
   } else {
     title_col = (win == active_window) ? theme->titlebar : theme->titlebar_inactive;
   }
-  winmgr_fill_rect(win, 0, 0, win->width, 24, title_col);
+  winmgr_fill_rect(win, 0, 0, win->width, 32, title_col);
 
   // 2. Draw border lines (Solid, only for straight sections)
   // Shorten them by 2px more to ensure they don't even touch the curves
@@ -1054,49 +1171,50 @@ void winmgr_render_window(window_t *win) {
   // transparent content areas that appear as black rectangles.
   if (win->app_type == 0) {
     // Terminal ALWAYS black regardless of theme
-    winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, 0xFF000000);
+    winmgr_fill_rect(win, 2, 32, win->width - 4, win->height - 34, 0xFF000000);
   } else if (win->app_type == 2) {
     // Editor uses theme input_bg (staying dark for now or following theme)
-    winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, theme->input_bg);
+    winmgr_fill_rect(win, 2, 32, win->width - 4, win->height - 34, theme->input_bg);
   } else {
     // Solid base from theme
-    winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, theme->bg);
+    winmgr_fill_rect(win, 2, 32, win->width - 4, win->height - 34, theme->bg);
   }
 
   win->blur_strength = 0; // Disable blur globally
 
   // === Window Buttons (Shifted to avoid curve) ===
-  int btn_x = win->width - 24; // 24px from right to avoid the 8px curve
+  int btn_x = win->width - 30; // 30px from right for better spacing
+  int btn_y = 6;               // Centered in 32px title bar
+  int btn_sz = 20;
 
   // Minimize button (yellow with border)
   uint32_t min_col = (win->hover_btn == 1) ? 0xFFFFFF00 : 0xFFC0C000;
-  winmgr_draw_rect(win, btn_x - 36, 5, 14, 14, min_col);
-  winmgr_draw_rect(win, btn_x - 36, 5, 14, 1, 0xFFFFFF80);
-  winmgr_draw_rect(win, btn_x - 36, 5, 1, 14, 0xFFFFFF80);
-  winmgr_draw_rect(win, btn_x - 36, 18, 14, 1, 0xFF808000);
-  winmgr_draw_rect(win, btn_x - 23, 5, 1, 14, 0xFF808000);
+  winmgr_draw_rect(win, btn_x - 52, btn_y, btn_sz, btn_sz, min_col);
+  winmgr_draw_rect(win, btn_x - 52, btn_y, btn_sz, 1, 0xFFFFFF80);
+  winmgr_draw_rect(win, btn_x - 52, btn_y, 1, btn_sz, 0xFFFFFF80);
+  winmgr_draw_rect(win, btn_x - 52, btn_y + btn_sz - 1, btn_sz, 1, 0xFF808000);
+  winmgr_draw_rect(win, btn_x - 52 + btn_sz - 1, btn_y, 1, btn_sz, 0xFF808000);
 
   // Maximize button (green with border)
   uint32_t max_col = (win->hover_btn == 2) ? 0xFF00FFFF : 0xFF00FF00;
-  winmgr_draw_rect(win, btn_x - 18, 5, 14, 14, max_col);
-  winmgr_draw_rect(win, btn_x - 18, 5, 14, 1, 0xFF80FF80);
-  winmgr_draw_rect(win, btn_x - 18, 5, 1, 14, 0xFF80FF80);
-  winmgr_draw_rect(win, btn_x - 18, 18, 14, 1, 0xFF008000);
-  winmgr_draw_rect(win, btn_x - 5, 5, 1, 14, 0xFF008000);
+  winmgr_draw_rect(win, btn_x - 26, btn_y, btn_sz, btn_sz, max_col);
+  winmgr_draw_rect(win, btn_x - 26, btn_y, btn_sz, 1, 0xFF80FF80);
+  winmgr_draw_rect(win, btn_x - 26, btn_y, 1, btn_sz, 0xFF80FF80);
+  winmgr_draw_rect(win, btn_x - 26, btn_y + btn_sz - 1, btn_sz, 1, 0xFF008000);
+  winmgr_draw_rect(win, btn_x - 26 + btn_sz - 1, btn_y, 1, btn_sz, 0xFF008000);
 
   // Close button (red with border)
   uint32_t close_col = (win->hover_btn == 3) ? 0xFFFF6666 : 0xFFFF0000;
-  winmgr_draw_rect(win, btn_x, 5, 14, 14, close_col);
-  winmgr_draw_rect(win, btn_x, 5, 14, 1, 0xFFFF8080);      // Light top
-  winmgr_draw_rect(win, btn_x, 5, 1, 14, 0xFFFF8080);      // Light left
-  winmgr_draw_rect(win, btn_x, 18, 14, 1, 0xFF800000);     // Dark bottom
-  winmgr_draw_rect(win, btn_x + 13, 5, 1, 14, 0xFF800000); // Dark right
+  winmgr_draw_rect(win, btn_x, btn_y, btn_sz, btn_sz, close_col);
+  winmgr_draw_rect(win, btn_x, btn_y, btn_sz, 1, 0xFFFF8080);      // Light top
+  winmgr_draw_rect(win, btn_x, btn_y, 1, btn_sz, 0xFFFF8080);      // Light left
+  winmgr_draw_rect(win, btn_x, btn_y + btn_sz - 1, btn_sz, 1, 0xFF800000);     // Dark bottom
+  winmgr_draw_rect(win, btn_x + btn_sz - 1, btn_y, 1, btn_sz, 0xFF800000); // Dark right
 
   // Button labels
-  // Use better glyphs if possible, or just center them better
-  winmgr_draw_text(win, btn_x - 32, 8, "_", 0xFFFFFFFF);
-  winmgr_draw_text(win, btn_x - 14, 8, "#", 0xFFFFFFFF); // # as square
-  winmgr_draw_text(win, btn_x + 3, 8, "x", 0xFFFFFFFF);
+  winmgr_draw_text(win, btn_x - 46, btn_y + 4, "_", 0xFFFFFFFF);
+  winmgr_draw_text(win, btn_x - 20, btn_y + 4, "#", 0xFFFFFFFF);
+  winmgr_draw_text(win, btn_x + 6, btn_y + 4, "x", 0xFFFFFFFF);
 
   // === Custom Draw ===
   if (win->draw) {
@@ -1143,9 +1261,9 @@ void winmgr_render_window(window_t *win) {
   }
 
   // === Title Text (with shadow) ===
-  winmgr_draw_text(win, 7, 7, win->title, 0x80101010); // Subtle dark shadow
+  winmgr_draw_text(win, 7, 9, win->title, 0x80101010); // Subtle dark shadow
   uint32_t title_text_col = (win->app_type == 0) ? 0xFFFFFFFF : theme->titlebar_text;
-  winmgr_draw_text(win, 6, 6, win->title, title_text_col); // Theme or Fixed text color
+  winmgr_draw_text(win, 6, 8, win->title, title_text_col); // Theme or Fixed text color
 
   // Text Buffer Draw
   if (win->text_buffer[0] != 0 || win->cursor_pos >= 0) {
@@ -1823,6 +1941,16 @@ extern int ui_dirty;
 // Key/Mouse Handlers (Unchanged logic, just ensure 16bpp doesn't break logic)
 // Logic uses coordinates, untouched by bpp.
 void window_handle_key(int key, char c) {
+  // ESC key closes Start Menu if open
+  if (key == 0x01) {
+    extern int startmenu_is_active();
+    if (startmenu_is_active()) {
+      extern void startmenu_show(int x, int y);
+      startmenu_show(0, 0); // Toggle off
+      return;
+    }
+  }
+
   if (!active_window) {
     // Only print if not in lock screen phase (heuristic)
     // Actually, let's just ignore it for now to avoid spam
@@ -1916,14 +2044,14 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
     // Hover detection
     int old_hover = win->hover_btn;
     win->hover_btn = 0;
-    if (my < win->y + 24) {
+    if (my < win->y + 32) {
       int rx = mx - win->x;
-      int btn_x_close = win->width - 20;
-      if (rx >= btn_x_close && rx < btn_x_close + 14)
+      int btn_x_close = win->width - 30;
+      if (rx >= btn_x_close && rx < btn_x_close + 20)
         win->hover_btn = 3;
-      else if (rx >= btn_x_close - 18 && rx < btn_x_close - 4)
+      else if (rx >= btn_x_close - 26 && rx < btn_x_close - 6)
         win->hover_btn = 2;
-      else if (rx >= btn_x_close - 36 && rx < btn_x_close - 22)
+      else if (rx >= btn_x_close - 52 && rx < btn_x_close - 32)
         win->hover_btn = 1;
     }
     if (win->hover_btn != old_hover) {
@@ -1935,12 +2063,12 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
 
     if (buttons & 1) {
       // 1. Check for Click on Min/Max/Close Buttons FIRST (Priority)
-      if (!win->is_dragging && my < win->y + 24) {
+      if (!win->is_dragging && my < win->y + 32) {
         int rx = mx - win->x;
-        int btn_x_close = win->width - 20;
+        int btn_x_close = win->width - 30;
 
         // Close
-        if (rx >= btn_x_close && rx < btn_x_close + 14) {
+        if (rx >= btn_x_close && rx < btn_x_close + 20) {
           if (!(win->flags & WINDOW_FLAG_NO_CLOSE)) {
             winmgr_close_window(win);
             ui_dirty = 1;
@@ -1948,7 +2076,7 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
           return 1;
         }
         // Maximize
-        else if (rx >= btn_x_close - 18 && rx < btn_x_close - 4) {
+        else if (rx >= btn_x_close - 26 && rx < btn_x_close - 6) {
           compositor_invalidate_window(win); // Invalidate old
           if (!win->is_maximized) {
             win->saved_x = win->x;
@@ -1998,9 +2126,9 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
           // Set pinch direction based on dock position
           win->pinch_top = (ty < win->y);
 
-          // macOS Genie minimize: fast pull, soft decelerating spring
-          float min_k = 280.0f;
-          float min_d = 30.0f;
+          // Snappy Genie minimize: fast pull, stiff decelerating spring
+          float min_k = 550.0f;
+          float min_d = 48.0f;
           win->is_animating = 1;
           anim_start_spring(&win->anim_x, (float)win->x, (float)tx, min_k, min_d);
           anim_start_spring(&win->anim_y, (float)win->y, (float)ty, min_k, min_d);
@@ -2467,9 +2595,9 @@ void winmgr_close_window(window_t *win) {
     }
   }
 
-  // macOS Genie close: fast pull, soft decelerating spring
-  float close_k = 280.0f;
-  float close_d = 30.0f;
+  // Snappy Genie close: fast pull, stiff decelerating spring
+  float close_k = 550.0f;
+  float close_d = 48.0f;
 
   // Opacity fade-out with spring physics
   if (win->anim_opacity.active) {

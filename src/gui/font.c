@@ -1,4 +1,46 @@
 #include "font.h"
+#include <stdint.h>
+
+// Anti-aliased font cache (grayscale alpha values)
+static uint8_t font8x8_aa[256][10][10];
+static int font_aa_initialized = 0;
+
+void font_init_aa() {
+    if (font_aa_initialized) return;
+    extern const uint8_t font8x8_basic[256][8];
+    
+    for (int c = 0; c < 256; c++) {
+        const uint8_t *glyph = font8x8_basic[c];
+        for (int y = -1; y < 9; y++) {
+            for (int x = -1; x < 9; x++) {
+                int total = 0;
+                // 3x3 Weighted Smoothing Kernel
+                for (int ky = -1; ky <= 1; ky++) {
+                    for (int kx = -1; kx <= 1; kx++) {
+                        int sy = y + ky;
+                        int sx = x + kx;
+                        if (sy >= 0 && sy < 8 && sx >= 0 && sx < 8) {
+                            if (glyph[sy] & (1 << (7 - sx))) {
+                                if (ky == 0 && kx == 0) total += 140; // Center weight
+                                else if (ky == 0 || kx == 0) total += 40; // Orthogonal
+                                else total += 20; // Diagonal
+                            }
+                        }
+                    }
+                }
+                if (total > 255) total = 255;
+                font8x8_aa[c][y + 1][x + 1] = (uint8_t)total;
+            }
+        }
+    }
+    font_aa_initialized = 1;
+}
+
+uint8_t font_get_aa_pixel(unsigned char c, int x, int y) {
+    if (!font_aa_initialized) font_init_aa();
+    if (x < -1 || x > 8 || y < -1 || y > 8) return 0;
+    return font8x8_aa[c][y + 1][x + 1];
+}
 
 // Use full ASCII set and ensure alignment
 const uint8_t font8x8_basic[256][8] __attribute__((aligned(16))) = {
