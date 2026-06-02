@@ -1,7 +1,40 @@
 #include "string.h"
-#include <stdarg.h>
 
-int abs(int n) { return (n < 0) ? -n : n; }
+void *memcpy(void *dest, const void *src, size_t n) {
+  unsigned char *d = (unsigned char *)dest;
+  const unsigned char *s = (const unsigned char *)src;
+  while (n--) *d++ = *s++;
+  return dest;
+}
+
+void *memmove(void *dest, const void *src, size_t n) {
+  unsigned char *d = (unsigned char *)dest;
+  const unsigned char *s = (const unsigned char *)src;
+  if (d < s) {
+    while (n--) *d++ = *s++;
+  } else {
+    d += n;
+    s += n;
+    while (n--) *--d = *--s;
+  }
+  return dest;
+}
+
+void *memset(void *s, int c, size_t n) {
+  unsigned char *p = (unsigned char *)s;
+  while (n--) *p++ = (unsigned char)c;
+  return s;
+}
+
+size_t strlen(const char *str) {
+  const char *s = str;
+  while (*s) s++;
+  return (size_t)(s - str);
+}
+
+int abs(int n) {
+  return n < 0 ? -n : n;
+}
 
 int strcmp(const char *s1, const char *s2) {
   while (*s1 && (*s1 == *s2)) {
@@ -9,73 +42,6 @@ int strcmp(const char *s1, const char *s2) {
     s2++;
   }
   return *(const unsigned char *)s1 - *(const unsigned char *)s2;
-}
-
-size_t strlen(const char *str) {
-  size_t i = 0;
-  while (str[i] != (char)0)
-    i++;
-  return i;
-}
-
-void *memset(void *dest, int c, size_t n) {
-  uint64_t val = (uint8_t)c;
-  val |= (val << 8);
-  val |= (val << 16);
-  val |= (val << 24);
-  val |= (val << 32);
-  val |= (val << 40);
-  val |= (val << 48);
-  val |= (val << 56);
-
-  uint64_t *d8 = (uint64_t *)dest;
-  size_t n8 = n / 8;
-  size_t rem = n % 8;
-
-  __asm__ volatile("rep stosq" : "+D"(d8), "+c"(n8) : "a"(val) : "memory");
-
-  uint8_t *d1 = (uint8_t *)d8;
-  while (rem--) {
-    *d1++ = (uint8_t)c;
-  }
-  return dest;
-}
-
-void memset16(void *dest, uint16_t val, size_t count) {
-  uint16_t *d = (uint16_t *)dest;
-  while (count--) {
-    *d++ = val;
-  }
-}
-
-void *memcpy(void *dest, const void *src, size_t n) {
-  uint64_t *d8 = (uint64_t *)dest;
-  const uint64_t *s8 = (const uint64_t *)src;
-  size_t n8 = n / 8;
-  size_t rem = n % 8;
-
-  __asm__ volatile("rep movsq" : "+D"(d8), "+S"(s8), "+c"(n8) : : "memory");
-
-  uint8_t *d1 = (uint8_t *)d8;
-  const uint8_t *s1 = (const uint8_t *)s8;
-  while (rem--) {
-    *d1++ = *s1++;
-  }
-  return dest;
-}
-
-void *memmove(void *dest, const void *src, size_t n) {
-  uint8_t *d = (uint8_t *)dest;
-  const uint8_t *s = (const uint8_t *)src;
-
-  if (d < s) {
-    for (size_t i = 0; i < n; i++)
-      d[i] = s[i];
-  } else {
-    for (size_t i = n; i > 0; i--)
-      d[i - 1] = s[i - 1];
-  }
-  return dest;
 }
 
 int memcmp(const void *s1, const void *s2, size_t n) {
@@ -205,6 +171,7 @@ double strtod(const char *nptr, char **endptr) {
     const char *s = nptr;
     double res = 0.0;
     double sign = 1.0;
+    int parsed_digits = 0;
     
     // Skip whitespace
     while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
@@ -219,6 +186,7 @@ double strtod(const char *nptr, char **endptr) {
     // Integer part
     while (*s >= '0' && *s <= '9') {
         res = res * 10.0 + (*s - '0');
+        parsed_digits = 1;
         s++;
     }
     
@@ -229,12 +197,14 @@ double strtod(const char *nptr, char **endptr) {
         while (*s >= '0' && *s <= '9') {
             res += (*s - '0') * fraction;
             fraction /= 10.0;
+            parsed_digits = 1;
             s++;
         }
     }
     
     // Exponent part (basic support)
-    if (*s == 'e' || *s == 'E') {
+    if (parsed_digits && (*s == 'e' || *s == 'E')) {
+        const char *exp_start = s;
         s++;
         int exp_sign = 1;
         if (*s == '-') {
@@ -245,19 +215,29 @@ double strtod(const char *nptr, char **endptr) {
         }
         
         int exponent = 0;
+        int exp_parsed = 0;
         while (*s >= '0' && *s <= '9') {
             exponent = exponent * 10 + (*s - '0');
+            exp_parsed = 1;
             s++;
         }
         
-        if (exp_sign > 0) {
-            for (int i = 0; i < exponent; i++) res *= 10.0;
+        if (exp_parsed) {
+            if (exp_sign > 0) {
+                for (int i = 0; i < exponent; i++) res *= 10.0;
+            } else {
+                for (int i = 0; i < exponent; i++) res /= 10.0;
+            }
         } else {
-            for (int i = 0; i < exponent; i++) res /= 10.0;
+            // rollback exponent parsing if no digits found
+            s = exp_start;
         }
     }
     
-    if (endptr) *endptr = (char *)s;
+    if (endptr) {
+        if (parsed_digits) *endptr = (char *)s;
+        else *endptr = (char *)nptr;
+    }
     return res * sign;
 }
 
@@ -307,6 +287,25 @@ static char to_upper(char c) {
   if (c >= 'a' && c <= 'z')
     return c - 'a' + 'A';
   return c;
+}
+
+int strcasecmp(const char *s1, const char *s2) {
+  while (*s1 && (to_upper(*s1) == to_upper(*s2))) {
+    s1++;
+    s2++;
+  }
+  return to_upper(*s1) - to_upper(*s2);
+}
+
+int strncasecmp(const char *s1, const char *s2, size_t n) {
+  while (n && *s1 && (to_upper(*s1) == to_upper(*s2))) {
+    s1++;
+    s2++;
+    n--;
+  }
+  if (n == 0)
+    return 0;
+  return to_upper(*s1) - to_upper(*s2);
 }
 
 char *strcasestr(const char *haystack, const char *needle) {

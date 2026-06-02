@@ -56,72 +56,6 @@ extern void phone_init();
 extern void recorder_init();
 
 // --- Launch wrappers ---
-<<<<<<< HEAD
-static void launch_term() {
-  terminal_init();
-  menu_active = 0;
-}
-static void launch_editor() {
-  editor_init();
-  menu_active = 0;
-}
-static void launch_calc() {
-  calculator_init();
-  menu_active = 0;
-}
-static void launch_paint() {
-  paint_init();
-  menu_active = 0;
-}
-static void launch_files() {
-  explorer_init();
-  menu_active = 0;
-}
-static void launch_settings() {
-  settings_init();
-  menu_active = 0;
-}
-static void launch_taskmgr() {
-  taskmgr_init();
-  menu_active = 0;
-}
-static void launch_browser() {
-  browser_init();
-  menu_active = 0;
-}
-static void launch_video() {
-  videoplayer_init(0);
-  menu_active = 0;
-}
-static void launch_lock() {
-  menu_active = 0;
-  lockscreen_show();
-}
-static void launch_pdfreader() {
-  pdfreader_init();
-  menu_active = 0;
-}
-static void launch_photos() {
-  photos_init();
-  menu_active = 0;
-}
-static void launch_mail() {
-  mail_app_init();
-  menu_active = 0;
-}
-static void launch_chat() {
-  chat_init();
-  menu_active = 0;
-}
-static void launch_phone() {
-  phone_init();
-  menu_active = 0;
-}
-static void launch_recorder() {
-  recorder_init();
-  menu_active = 0;
-}
-=======
 static void launch_term() { terminal_init(); }
 static void launch_editor() { editor_init(); }
 static void launch_calc() { calculator_init(); }
@@ -138,53 +72,8 @@ static void launch_mail() { mail_app_init(); }
 static void launch_chat() { chat_init(); }
 static void launch_phone() { phone_init(); }
 static void launch_recorder() { recorder_init(); }
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
 
 static menu_item_t pinned_items[] = {
-<<<<<<< HEAD
-    {"Terminal", 0xFF38B764, launch_term},
-    {"Editor", 0xFF5B8BF5, launch_editor},
-    {"Calculator", 0xFF00ADEF, launch_calc},
-    {"Paint", 0xFFFF6B6B, launch_paint},
-    {"Explorer", 0xFFFFC107, launch_files},
-    {"Settings", 0xFF607D8B, launch_settings},
-    {"Browser", 0xFF4FC3F7, launch_browser},
-    {"Video", 0xFFE040FB, launch_video},
-    {"Task Mgr", 0xFF66BB6A, launch_taskmgr},
-    {"Lock", 0xFFE53935, launch_lock},
-    {"PDF Reader", 0xFFCC3333, launch_pdfreader},
-    {"Photos", 0xFFE91E63, launch_photos},
-    {"Mail", 0xFF00AADD, launch_mail},
-    {"Chat", 0xFF25D366, launch_chat},
-    {"Phone", 0xFF0078D4, launch_phone},
-    {"Recorder", 0xFFFF6600, launch_recorder}};
-#define PINNED_COUNT (sizeof(pinned_items) / sizeof(pinned_items[0]))
-
-// All apps alphabetical
-static menu_item_t all_apps_items[] = {
-    {"Browser", 0xFF4FC3F7, launch_browser},
-    {"Calculator", 0xFF00ADEF, launch_calc},
-    {"Chat", 0xFF25D366, launch_chat},
-    {"Editor", 0xFF5B8BF5, launch_editor},
-    {"Explorer", 0xFFFFC107, launch_files},
-    {"Lock", 0xFFE53935, launch_lock},
-    {"Mail", 0xFF00AADD, launch_mail},
-    {"Paint", 0xFFFF6B6B, launch_paint},
-    {"PDF Reader", 0xFFCC3333, launch_pdfreader},
-    {"Phone", 0xFF0078D4, launch_phone},
-    {"Photos", 0xFFE91E63, launch_photos},
-    {"Recorder", 0xFFFF6600, launch_recorder},
-    {"Settings", 0xFF607D8B, launch_settings},
-    {"Task Mgr", 0xFF66BB6A, launch_taskmgr},
-    {"Terminal", 0xFF38B764, launch_term},
-    {"Video", 0xFFE040FB, launch_video}};
-#define ALL_APPS_COUNT (sizeof(all_apps_items) / sizeof(all_apps_items[0]))
-
-static int startmenu_view_mode = 0;
-static int hovered_item = -1; // Index of hovered item (-1 = none)
-
-extern void print_serial(const char *);
-=======
     {"Terminal", 0xFF38B764, 0, 0, launch_term},
     {"Editor", 0xFF5B8BF5, "/NOTES.PNG", 0, launch_editor},
     {"Calculator", 0xFF00ADEF, "/CALCULAT.PNG", 0, launch_calc},
@@ -205,7 +94,6 @@ extern void print_serial(const char *);
 
 static int hovered_item = -1;
 
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
 extern void compositor_invalidate_rect(int x, int y, int w, int h);
 extern int screen_width, screen_height;
 extern void compositor_blur_rect(int x, int y, int w, int h, int radius);
@@ -308,39 +196,6 @@ static void draw_app_icon(int x, int y, int idx, uint32_t *buffer) {
         kfree(raw);
       }
     }
-<<<<<<< HEAD
-  } else if (strcmp(name, "Chat") == 0) {
-    // Speech bubble
-    vga_draw_rect_surface(x + 4, y + 6, 24, 16, 0xFFFFFFFF, buffer, MENU_W,
-                          MENU_H);
-    vga_draw_rect_surface(x + 6, y + 22, 6, 4, 0xFFFFFFFF, buffer, MENU_W,
-                          MENU_H);
-    // Text lines
-    vga_draw_rect_surface(x + 8, y + 10, 12, 2, 0xFF25D366, buffer, MENU_W,
-                          MENU_H);
-    vga_draw_rect_surface(x + 8, y + 15, 16, 2, 0xFF25D366, buffer, MENU_W,
-                          MENU_H);
-  } else if (strcmp(name, "Phone") == 0) {
-    // Phone handset
-    vga_draw_rect_surface(x + 8, y + 6, 6, 8, 0xFFFFFFFF, buffer, MENU_W,
-                          MENU_H);
-    vga_draw_rect_surface(x + 12, y + 12, 8, 4, 0xFFFFFFFF, buffer, MENU_W,
-                          MENU_H);
-    vga_draw_rect_surface(x + 18, y + 14, 6, 8, 0xFFFFFFFF, buffer, MENU_W,
-                          MENU_H);
-  } else if (strcmp(name, "Recorder") == 0) {
-    // Microphone
-    vga_draw_rect_surface(x + 12, y + 6, 8, 14, 0xFFFFFFFF, buffer, MENU_W,
-                          MENU_H);
-    // Stand
-    vga_draw_rect_surface(x + 15, y + 20, 2, 4, 0xFFCCCCCC, buffer, MENU_W,
-                          MENU_H);
-    vga_draw_rect_surface(x + 10, y + 24, 12, 2, 0xFFCCCCCC, buffer, MENU_W,
-                          MENU_H);
-    // Red dot
-    vga_draw_rect_surface(x + 22, y + 6, 4, 4, 0xFFFF0000, buffer, MENU_W,
-                          MENU_H);
-=======
     // If loading failed, set icon_path to NULL so we don't retry every frame
     if (!item->icon_data) item->icon_path = 0;
   }
@@ -401,7 +256,6 @@ static void draw_app_icon(int x, int y, int idx, uint32_t *buffer) {
     const char *name = item->label;
     if (strcmp(name, "Terminal") == 0) vga_draw_string_surface(cx - 8, cy - 4, ">_", 0xFFFFFFFF, buffer, menu_w, menu_h);
     else if (strcmp(name, "Explorer") == 0) vga_draw_rect_surface(cx - 14, cy - 8, 28, 20, 0xFFFFF176, buffer, menu_w, menu_h);
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
   }
 }
 
@@ -603,53 +457,32 @@ void startmenu_draw(uint32_t *buffer, rect_t clip) {
 
   // Draw hover overlay on hovered item
   if (hovered_item >= 0) {
-    int hx = 0, hy_start = 0, hw = 0, hh = 0;
-    int search_bottom = PADDING + SEARCH_H;
-    int head_y_h = search_bottom + 20;
-
-    if (startmenu_view_mode == 0) {
-      // Pinned grid
-      int grid_y_h = head_y_h + 24;
-      int col = hovered_item % GRID_COLS;
-      int row = hovered_item / GRID_COLS;
-      hx = PADDING + col * CELL_W;
-      hy_start = grid_y_h + row * CELL_H;
-      hw = CELL_W;
-      hh = CELL_H;
-    } else {
-      // All apps list - compute position by iterating
-      int list_y_h = head_y_h + 30;
-      char cur_l = '\0';
-      for (int i = 0; i <= hovered_item && i < (int)ALL_APPS_COUNT; i++) {
-        char first = all_apps_items[i].label[0];
-        if (first != cur_l && cur_l != '\0') list_y_h += 8;
-        if (first != cur_l) cur_l = first;
-        if (i == hovered_item) {
-          hx = PADDING;
-          hy_start = list_y_h;
-          hw = MENU_W - PADDING * 2;
-          hh = 40;
-          break;
-        }
-        list_y_h += 40;
-      }
-    }
+    int cell_w_loc = (menu_w - PADDING * 2) / GRID_COLS;
+    int grid_y_h = 60 + SEARCH_H + 60;
+    int col = hovered_item % GRID_COLS;
+    int row = hovered_item / GRID_COLS;
+    int hx = PADDING + col * cell_w_loc;
+    int hy = grid_y_h + row * CELL_H;
+    int hw = cell_w_loc;
+    int hh = CELL_H;
 
     // Draw transparent gray hover overlay
-    if (hw > 0 && hh > 0) {
-      for (int oy = 0; oy < hh; oy++) {
-        int py = cy + hy_start + oy;
-        if (py < clip.y || py >= clip.y + clip.h) continue;
-        for (int ox = 0; ox < hw; ox++) {
-          int px_x = menu_x + hx + ox;
-          if (px_x < 0 || px_x >= screen_width || py < 0 || py >= screen_height) continue;
-          uint32_t dst = buffer[py * screen_width + px_x];
-          // 25% white blend
-          uint32_t r = (((dst >> 16) & 0xFF) * 192 + 255 * 64) >> 8;
-          uint32_t g = (((dst >> 8) & 0xFF) * 192 + 255 * 64) >> 8;
-          uint32_t b = ((dst & 0xFF) * 192 + 255 * 64) >> 8;
-          buffer[py * screen_width + px_x] = 0xFF000000 | (r << 16) | (g << 8) | b;
-        }
+    for (int oy = 0; oy < hh; oy++) {
+      int dst_y = start_y_abs + hy + oy - menu_y_offset;
+      if (dst_y < clip.y || dst_y >= clip.y + clip.h) continue;
+      if (dst_y < start_y_abs || dst_y >= start_y_abs + menu_h) continue;
+      
+      uint32_t *dst_row = &buffer[dst_y * screen_width];
+      for (int ox = 0; ox < hw; ox++) {
+        int dst_x = hx + ox;
+        if (dst_x < clip.x || dst_x >= clip.x + clip.w) continue;
+        
+        uint32_t dst = dst_row[dst_x];
+        // 25% white blend
+        uint32_t r = (((dst >> 16) & 0xFF) * 192 + 255 * 64) >> 8;
+        uint32_t g = (((dst >> 8) & 0xFF) * 192 + 255 * 64) >> 8;
+        uint32_t b = ((dst & 0xFF) * 192 + 255 * 64) >> 8;
+        dst_row[dst_x] = 0xFF000000 | (r << 16) | (g << 8) | b;
       }
     }
   }
@@ -661,131 +494,6 @@ int startmenu_handle_mouse(int mx, int my, int buttons) {
   sm_last_btn = buttons;
   if (!startmenu_is_active() || menu_closing) return 0;
 
-<<<<<<< HEAD
-  int cy = (int)anim_y.current_val;
-  if (mx < menu_x || mx >= menu_x + MENU_W || my < cy || my >= cy + MENU_H) {
-    if (hovered_item != -1) {
-      hovered_item = -1;
-      compositor_invalidate_rect(menu_x, cy, MENU_W, MENU_H);
-    }
-    if (down_edge) {
-      startmenu_show(menu_x, screen_height);
-      return 1;
-    }
-    return 0;
-  }
-
-  // Convert to local menu coordinates for hover
-  int lx = mx - menu_x;
-  int ly = my - cy;
-  int search_bottom_h = PADDING + SEARCH_H;
-  int head_y_h = search_bottom_h + 20;
-
-  // Compute hover index on every mouse move
-  int new_hover = -1;
-  if (startmenu_view_mode == 0) {
-    int grid_y_h = head_y_h + 24;
-    for (int i = 0; i < (int)PINNED_COUNT; i++) {
-      int col = i % GRID_COLS;
-      int row = i / GRID_COLS;
-      int ix = PADDING + col * CELL_W;
-      int iy = grid_y_h + row * CELL_H;
-      if (lx >= ix && lx < ix + CELL_W && ly >= iy && ly < iy + CELL_H) {
-        new_hover = i;
-        break;
-      }
-    }
-  } else {
-    int list_y_h = head_y_h + 30;
-    char cur_l = '\0';
-    for (int i = 0; i < (int)ALL_APPS_COUNT; i++) {
-      char first = all_apps_items[i].label[0];
-      if (first != cur_l && cur_l != '\0') list_y_h += 8;
-      if (first != cur_l) cur_l = first;
-      if (ly >= list_y_h && ly < list_y_h + 40 && lx >= PADDING && lx < MENU_W - PADDING) {
-        new_hover = i;
-        break;
-      }
-      list_y_h += 40;
-    }
-  }
-  if (new_hover != hovered_item) {
-    hovered_item = new_hover;
-    compositor_invalidate_rect(menu_x, cy, MENU_W, MENU_H);
-  }
-
-  if (!down_edge)
-    return 1;
-
-  // Convert to local menu coordinates
-  // Conver to local menu coordinates - ALREADY DONE ABOVE
-  lx = mx - menu_x;
-  ly = my - cy;
-
-  int search_bottom = PADDING + SEARCH_H;
-  int head_y = search_bottom + 20;
-
-  if (startmenu_view_mode == 0) {
-    // --- PINNED VIEW ---
-
-    // "All apps >" click
-    if (lx >= MENU_W - PADDING - 80 && lx <= MENU_W - PADDING &&
-        ly >= head_y - 4 && ly <= head_y + 14) {
-      startmenu_view_mode = 1;
-      startmenu_render_to_cache();
-      compositor_invalidate_rect(menu_x, cy, MENU_W, MENU_H);
-      return 1;
-    }
-
-    // Hit test pinned grid
-    int grid_y = head_y + 24;
-    for (int i = 0; i < (int)PINNED_COUNT; i++) {
-      int col = i % GRID_COLS;
-      int row = i / GRID_COLS;
-      int ix = PADDING + col * CELL_W;
-      int iy = grid_y + row * CELL_H;
-
-      // Click anywhere in the cell
-      if (lx >= ix && lx < ix + CELL_W && ly >= iy && ly < iy + CELL_H) {
-        if (pinned_items[i].launch) {
-          pinned_items[i].launch();
-          startmenu_show(0, 0);
-        }
-        return 1;
-      }
-    }
-  } else {
-    // --- ALL APPS VIEW ---
-
-    // "< Back" click
-    if (lx >= PADDING && lx <= PADDING + 60 && ly >= head_y - 4 &&
-        ly <= head_y + 14) {
-      startmenu_view_mode = 0;
-      startmenu_render_to_cache();
-      compositor_invalidate_rect(menu_x, cy, MENU_W, MENU_H);
-      return 1;
-    }
-
-    // App list hit testing
-    int list_y = head_y + 30;
-    char cur_letter = '\0';
-    for (int i = 0; i < (int)ALL_APPS_COUNT; i++) {
-      char first = all_apps_items[i].label[0];
-      if (first != cur_letter && cur_letter != '\0')
-        list_y += 8;
-      if (first != cur_letter)
-        cur_letter = first;
-
-      if (ly >= list_y && ly < list_y + 40 && lx >= PADDING &&
-          lx <= MENU_W - PADDING) {
-        if (all_apps_items[i].launch) {
-          all_apps_items[i].launch();
-          startmenu_show(0, 0);
-        }
-        return 1;
-      }
-      list_y += 40;
-=======
   int sy = 24;
   if (my < sy || my >= sy + menu_h) {
     if (down_edge) startmenu_show(0, 0);
@@ -806,7 +514,6 @@ int startmenu_handle_mouse(int mx, int my, int buttons) {
     if (lx >= ix && lx < ix + cell_w && ly >= iy && ly < iy + CELL_H) {
       new_hover = i;
       break;
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     }
   }
 

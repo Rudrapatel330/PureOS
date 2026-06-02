@@ -1,0 +1,32 @@
+#ifndef STD_BRIDGE_ALGORITHM_H
+#define STD_BRIDGE_ALGORITHM_H
+
+#include <EASTL/algorithm.h>
+#include <EASTL/sort.h>
+
+namespace std {
+    using eastl::sort;
+    using eastl::find;
+    using eastl::find_if;
+    using eastl::max;
+    using eastl::min;
+    using eastl::remove;
+    using eastl::remove_if;
+    using eastl::replace;
+    using eastl::copy;
+    using eastl::reverse;
+    using eastl::swap;
+    using eastl::lower_bound;
+    using eastl::upper_bound;
+    using eastl::search;
+    using eastl::count;
+    using eastl::for_each;
+    using eastl::stable_sort;
+    
+    template<class T>
+    constexpr const T& clamp(const T& v, const T& lo, const T& hi) {
+        return (v < lo) ? lo : (hi < v) ? hi : v;
+    }
+}
+
+#endif

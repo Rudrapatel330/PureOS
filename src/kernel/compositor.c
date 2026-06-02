@@ -22,6 +22,12 @@ static inline uint64_t rdtsc(void) {
   return ((uint64_t)hi << 32) | lo;
 }
 
+extern void desktop_render_icons(uint32_t *target, rect_t clip);
+extern void desktop_render_widgets(uint32_t *target, rect_t clip);
+extern int start_menu_open;
+extern window_t windows[];
+extern int window_count;
+
 int current_fps = 0;
 uint64_t compositor_cycles = 0;
 static uint32_t last_fps_tick = 0;
@@ -60,6 +66,8 @@ extern uint32_t *real_lfb;
 int disable_animations = 0; // Default to enabled
 
 static int debug_mode = 0;
+static int current_should_blur = 0; // Global blur state for the current frame
+static int last_bg_blurred = 0;    // Persistence for state change detection
 static rect_t overlay_rect = {0, 0, 0, 0};
 static int overlay_active = 0;
 static int force_full_redraw = 0;
@@ -538,8 +546,14 @@ static void compositor_render_rect(rect_t clip) {
   extern void menubar_draw(uint32_t *buffer, rect_t clip);
   extern void taskbar_draw(uint32_t *buffer, rect_t clip);
   extern void startmenu_draw(uint32_t *buffer, rect_t clip);
+  extern int start_menu_open;
 
   // 1. Desktop/Clear Pass
+  extern int lockscreen_active;
+  if (lockscreen_active) {
+    return; // Do not render anything if lockscreen is active; it handles its own display
+  }
+
   int skip_desktop = 0;
   if (active_window && active_window->id != 0 && active_window->is_maximized &&
       active_window->opacity == 255 && !active_window->is_animating &&
@@ -552,21 +566,53 @@ static void compositor_render_rect(rect_t clip) {
 
   if (!skip_desktop) {
     if (desktop_buffer) {
-      uint32_t *dst = &backbuffer[clip.y * screen_width + clip.x];
-      uint32_t *src = &desktop_buffer[clip.y * screen_width + clip.x];
-      gfx_blit_rect(dst, src, clip.w, clip.h, screen_width, screen_width);
+      // Use padded rendering for blur context to prevent flickering at edges
+      // Using a radius of 10 for padding to match a single-pass radius 8 blur
+      int r = current_should_blur ? 10 : 0;
+      rect_t padded = {clip.x - r, clip.y - r, clip.w + r * 2, clip.h + r * 2};
+      
+      // Clamp padded rect to screen bounds with strict positive checks
+      if (padded.x < 0) { padded.w += padded.x; padded.x = 0; }
+      if (padded.y < 0) { padded.h += padded.y; padded.y = 0; }
+      if (padded.x + padded.w > screen_width) padded.w = screen_width - padded.x;
+      if (padded.y + padded.h > screen_height) padded.h = screen_height - padded.y;
+
+      if (padded.w > 0 && padded.h > 0) {
+        // 1. Fill from wallpaper
+        uint32_t *dst = &backbuffer[padded.y * screen_width + padded.x];
+        uint32_t *src = &desktop_buffer[padded.y * screen_width + padded.x];
+        gfx_blit_rect(dst, src, padded.w, padded.h, screen_width, screen_width);
+        
+        // 2. Render icons and widgets into the padded area
+        desktop_render_icons(backbuffer, padded);
+        desktop_render_widgets(backbuffer, padded);
+      }
     } else {
-      // Fallback: Fill with solid black if wallpaper isn't loaded or memory
-      // failed
+      // Fallback: Fill with solid black
       extern void simd_fill_32(uint32_t *dest, uint32_t value, size_t count);
       for (int i = 0; i < clip.h; i++) {
         uint32_t *dst = &backbuffer[(clip.y + i) * screen_width + clip.x];
         simd_fill_32(dst, 0xFF000000, clip.w);
       }
     }
-    desktop_render_icons(backbuffer, clip);
-    extern void desktop_render_widgets(uint32_t *target, rect_t clip);
-    desktop_render_widgets(backbuffer, clip);
+
+    // Apply Premium Background Blur when apps are open or Start Menu is active
+    if (current_should_blur) {
+      // Optimized single-pass blur for better performance during window movement
+      compositor_blur_rect(clip.x, clip.y, clip.w, clip.h, 8);
+
+      // Add a subtle dark tint to increase focus on windows
+      for (int y = 0; y < clip.h; y++) {
+        uint32_t *row = &backbuffer[(clip.y + y) * screen_width + clip.x];
+        for (int x = 0; x < clip.w; x++) {
+          uint32_t c = row[x];
+          uint32_t r = ((c >> 16) & 0xFF) * 220 >> 8;
+          uint32_t g = ((c >> 8) & 0xFF) * 220 >> 8;
+          uint32_t b = (c & 0xFF) * 220 >> 8;
+          row[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+        }
+      }
+    }
   }
 
   // 2. Window Pass (3-layered)
@@ -730,6 +776,26 @@ void compositor_draw_magnifier(uint32_t *target, int mx, int my) {
 
 void compositor_render() {
   uint64_t comp_start = rdtsc();
+
+  // 1. Determine Global Blur State
+  current_should_blur = (start_menu_open) ? 1 : 0;
+  if (!current_should_blur) {
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+      window_t *w = &windows[i];
+      // Check if the window is an active, visible application (not a widget or closing)
+      if (w->id != 0 && w->exists && !w->is_minimized && 
+          w->fading_mode != 2 && !(w->flags & WINDOW_FLAG_WIDGET)) {
+        current_should_blur = 1;
+        break;
+      }
+    }
+  }
+
+  // Detect state change and force a full-screen redraw to cover all buffers (triple buffering)
+  if (current_should_blur != last_bg_blurred) {
+    last_bg_blurred = current_should_blur;
+    force_full_redraw = 3; // Redraw next 3 frames completely
+  }
 
   if (dirty_count == 0 && prev_dirty_count == 0 && prev_2_dirty_count == 0 &&
       force_full_redraw <= 0)
@@ -949,10 +1015,7 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
   if (!backbuffer || w <= 0 || h <= 0 || radius <= 0)
     return;
 
-<<<<<<< HEAD
-=======
   // Clamp rect to screen bounds
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
   int x1 = (x < 0) ? 0 : x;
   int y1 = (y < 0) ? 0 : y;
   int x2 = (x + w > screen_width) ? screen_width : x + w;
@@ -965,7 +1028,9 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
 
   // Cap radius for performance and stability
   // Cap radius for performance and stability
-  if (radius > 16) radius = 16;
+  // Cap radius for performance and stability
+  if (radius > 20) radius = 20;
+  if (radius < 2) radius = 2;
   
   const int r = radius;
   const int div = (2 * r + 1);
@@ -977,20 +1042,12 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
   if (bw > 4096) bw = 4096;
   if (bh > 4096) bh = 4096;
 
-<<<<<<< HEAD
-  // Horizontal pass
-=======
   // Horizontal pass - Robust sliding window
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
   for (int j = y1; j < y2; j++) {
     int32_t r_sum = 0, g_sum = 0, b_sum = 0; // Use signed to detect drift/underflow
     uint32_t *row = &backbuffer[j * screen_width];
 
-<<<<<<< HEAD
-    // Initialize sum with clamping
-=======
     // Initial sum for the first window [x1-r, x1+r]
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     for (int i = -r; i <= r; i++) {
       int sx = x1 + i;
       if (sx < 0) sx = 0;
@@ -1002,13 +1059,6 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
     }
 
     for (int i = 0; i < bw; i++) {
-<<<<<<< HEAD
-      line_buf[i] = 0xFF000000 | ((r_sum / div) << 16) | ((g_sum / div) << 8) |
-                    (b_sum / div);
-      
-      int out_x = x1 + i - r;
-      int in_x = x1 + i + r + 1;
-=======
       // Store current average using fast multiplicative division
       line_buf[i] = 0xFF000000 | 
                     ((((r_sum * inv_div) >> 16) & 0xFF) << 16) | 
@@ -1019,7 +1069,6 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
       int out_x = x1 + i - r;
       int in_x = x1 + i + r + 1;
       
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
       if (out_x < 0) out_x = 0;
       if (out_x >= screen_width) out_x = screen_width - 1;
       if (in_x < 0) in_x = 0;
@@ -1027,11 +1076,6 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
 
       uint32_t p_out = row[out_x];
       uint32_t p_in = row[in_x];
-<<<<<<< HEAD
-      r_sum = r_sum - ((p_out >> 16) & 0xFF) + ((p_in >> 16) & 0xFF);
-      g_sum = g_sum - ((p_out >> 8) & 0xFF) + ((p_in >> 8) & 0xFF);
-      b_sum = b_sum - (p_out & 0xFF) + (p_in & 0xFF);
-=======
       
       r_sum += (int32_t)((p_in >> 16) & 0xFF) - (int32_t)((p_out >> 16) & 0xFF);
       g_sum += (int32_t)((p_in >> 8) & 0xFF) - (int32_t)((p_out >> 8) & 0xFF);
@@ -1041,24 +1085,15 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
       if (r_sum < 0) r_sum = 0; else if (r_sum > max_sum) r_sum = max_sum;
       if (g_sum < 0) g_sum = 0; else if (g_sum > max_sum) g_sum = max_sum;
       if (b_sum < 0) b_sum = 0; else if (b_sum > max_sum) b_sum = max_sum;
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     }
     memcpy(&row[x1], line_buf, bw * 4);
   }
 
-<<<<<<< HEAD
-  // Vertical pass
-  for (int i = x1; i < x2; i++) {
-    uint32_t r_sum = 0, g_sum = 0, b_sum = 0;
-    
-    // Initialize sum with clamping
-=======
   // Vertical pass - Robust sliding window
   for (int i = x1; i < x2; i++) {
     int32_t r_sum = 0, g_sum = 0, b_sum = 0;
     
     // Initial sum for the first window [y1-r, y1+r]
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     for (int j = -r; j <= r; j++) {
       int sy = y1 + j;
       if (sy < 0) sy = 0;
@@ -1070,13 +1105,6 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
     }
 
     for (int j = 0; j < bh; j++) {
-<<<<<<< HEAD
-      line_buf[j] = 0xFF000000 | ((r_sum / div) << 16) |
-                         ((g_sum / div) << 8) | (b_sum / div);
-      
-      int out_y = y1 + j - r;
-      int in_y = y1 + j + r + 1;
-=======
       // Fast multiplicative division
       line_buf[j] = 0xFF000000 | 
                     ((((r_sum * inv_div) >> 16) & 0xFF) << 16) |
@@ -1086,7 +1114,6 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
       int out_y = y1 + j - r;
       int in_y = y1 + j + r + 1;
       
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
       if (out_y < 0) out_y = 0;
       if (out_y >= screen_height) out_y = screen_height - 1;
       if (in_y < 0) in_y = 0;
@@ -1094,11 +1121,6 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
 
       uint32_t p_out = backbuffer[out_y * screen_width + i];
       uint32_t p_in = backbuffer[in_y * screen_width + i];
-<<<<<<< HEAD
-      r_sum = r_sum - ((p_out >> 16) & 0xFF) + ((p_in >> 16) & 0xFF);
-      g_sum = g_sum - ((p_out >> 8) & 0xFF) + ((p_in >> 8) & 0xFF);
-      b_sum = b_sum - (p_out & 0xFF) + (p_in & 0xFF);
-=======
       
       r_sum += (int32_t)((p_in >> 16) & 0xFF) - (int32_t)((p_out >> 16) & 0xFF);
       g_sum += (int32_t)((p_in >> 8) & 0xFF) - (int32_t)((p_out >> 8) & 0xFF);
@@ -1107,7 +1129,6 @@ void compositor_blur_rect(int x, int y, int w, int h, int radius) {
       if (r_sum < 0) r_sum = 0; else if (r_sum > max_sum) r_sum = max_sum;
       if (g_sum < 0) g_sum = 0; else if (g_sum > max_sum) g_sum = max_sum;
       if (b_sum < 0) b_sum = 0; else if (b_sum > max_sum) b_sum = max_sum;
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     }
     
     for (int j = 0; j < bh; j++) {

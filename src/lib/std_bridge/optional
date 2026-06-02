@@ -1,0 +1,12 @@
+#ifndef STD_BRIDGE_OPTIONAL_H
+#define STD_BRIDGE_OPTIONAL_H
+
+#include <EASTL/optional.h>
+
+namespace std {
+    using eastl::optional;
+    using eastl::nullopt;
+    using eastl::make_optional;
+}
+
+#endif

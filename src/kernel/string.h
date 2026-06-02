@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int abs(int n);
 int strcmp(const char *s1, const char *s2);
 size_t strlen(const char *str);
@@ -32,5 +36,9 @@ void *memchr(const void *s, int c, size_t n);
 char *strpbrk(const char *s, const char *accept);
 char *strrchr(const char *s, int c);
 char *realpath(const char *path, char *resolved_path);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

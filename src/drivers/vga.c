@@ -123,20 +123,22 @@ void vga_draw_char_lfb(int x, int y, char c, uint32_t color, uint32_t *buffer) {
 }
 
 // NEW - Draws char to a specified buffer with custom dimensions
+// Uses full grayscale antialiasing with alpha blending for smooth text
 void vga_draw_char_surface(int x, int y, char c, uint32_t color,
                            uint32_t *buffer, int buf_w, int buf_h) {
   extern uint8_t font_get_aa_pixel(unsigned char c, int x, int y);
-  uint32_t c_rgb = color & 0x00FFFFFF;
 
   for (int cy = -1; cy < 9; cy++) {
     for (int cx = -1; cx < 9; cx++) {
       uint8_t alpha = font_get_aa_pixel((unsigned char)c, cx, cy);
-      if (alpha > 0) {
-        vga_put_pixel_aa_surface(x + cx, y + cy, c_rgb, alpha, buffer, buf_w, buf_h);
-      }
+      if (alpha <= 4) continue;  // Skip nearly-transparent pixels
+      
+      // Use proper alpha blending for smooth anti-aliased edges
+      vga_put_pixel_aa_surface(x + cx, y + cy, color, alpha, buffer, buf_w, buf_h);
     }
   }
 }
+
 
 // External serial print
 extern void print_serial(const char *str);

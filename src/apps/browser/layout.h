@@ -26,6 +26,16 @@ typedef struct render_node {
   int is_block; // 1 if block, 0 if inline
   int is_text;  // 1 if text-only node
   int is_flex;  // 1 if flex container
+  int is_grid;  // 1 if grid container
+  int is_table;      // 1 if <table>
+  int is_table_row;  // 1 if <tr>
+  int is_table_cell; // 1 if <td>/<th>
+  int is_list_item;  // 1 if <li>
+
+  int z_index;
+  int is_positioned;   // 1 if position is not static
+  int position_type;   // CSS_POSITION_*
+  int pos_left, pos_top; // Absolute positioning offsets
 
   struct render_node *parent;
   struct render_node *first_child;
@@ -43,5 +53,9 @@ void layout_calculate(render_node_t *root, int container_w, int start_x,
 
 // Free the render tree
 void layout_free_tree(render_node_t *root);
+
+// Hit-test: find the deepest render node containing point (mx, my)
+// Coordinates are relative to the render tree root (offset_x, offset_y)
+dom_node_t *layout_hit_test(render_node_t *node, int mx, int my);
 
 #endif

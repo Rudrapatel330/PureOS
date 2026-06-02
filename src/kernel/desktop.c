@@ -313,8 +313,6 @@ typedef enum {
 icon_t icons[MAX_ICONS];
 int icon_count = 0;
 static int hovered_icon = -1;
-<<<<<<< HEAD
-=======
 
 // PNG Icon Caching for desktop/taskbar
 static const char *app_icon_paths[] = {
@@ -339,7 +337,7 @@ static const char *app_icon_paths[] = {
 static uint32_t *app_icon_cache[32] = {0};
 #include "../fs/fs.h"
 
-static int draw_icon_png(int x, int y, int type, uint32_t *target) {
+static int draw_icon_png(int x, int y, int draw_w, int draw_h, int type, uint32_t *target) {
   if (type < 0 || type >= 32) return 0;
   if (!app_icon_cache[type] && app_icon_paths[type]) {
     file_entry_t *f = fs_find(app_icon_paths[type]);
@@ -356,16 +354,16 @@ static int draw_icon_png(int x, int y, int type, uint32_t *target) {
           unsigned char *pixels = stbi_load_from_memory(raw, rs, &iw, &ih, &in, 4);
           if (pixels) {
             print_serial("draw_icon_png: decoded OK\n");
-            uint32_t *cached = (uint32_t *)kmalloc(40 * 40 * 4);
+            uint32_t *cached = (uint32_t *)kmalloc(64 * 64 * 4);
             if (cached) {
               uint32_t *p32 = (uint32_t *)pixels;
-              for (int py = 0; py < 40; py++) {
-                int sy = (py * ih) / 40;
-                for (int px = 0; px < 40; px++) {
-                  int sx = (px * iw) / 40;
+              for (int py = 0; py < 64; py++) {
+                int sy = (py * ih) / 64;
+                for (int px = 0; px < 64; px++) {
+                  int sx = (px * iw) / 64;
                   uint32_t p = p32[sy * iw + sx];
                   uint8_t r = p & 0xFF, g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF, a = (p >> 24) & 0xFF;
-                  cached[py * 40 + px] = (a << 24) | (r << 16) | (g << 8) | b;
+                  cached[py * 64 + px] = (a << 24) | (r << 16) | (g << 8) | b;
                 }
               }
               app_icon_cache[type] = cached;
@@ -382,25 +380,54 @@ static int draw_icon_png(int x, int y, int type, uint32_t *target) {
 
   if (app_icon_cache[type]) {
     uint32_t *data = app_icon_cache[type];
-    for (int py = 0; py < 40; py++) {
+    for (int py = 0; py < draw_h; py++) {
       int dy = y + py;
       if (dy < 0 || dy >= screen_height) continue;
-      for (int px = 0; px < 40; px++) {
+      for (int px = 0; px < draw_w; px++) {
         int dx = x + px;
         if (dx < 0 || dx >= screen_width) continue;
-        uint32_t p = data[py * 40 + px];
-        uint8_t a = (p >> 24) & 0xFF;
+        
+        int gx = (px * 64 * 256) / draw_w;
+        int gy = (py * 64 * 256) / draw_h;
+        int bx = gx >> 8;
+        int by = gy >> 8;
+        int u_frac = gx & 0xFF;
+        int v_frac = gy & 0xFF;
+        
+        if (bx >= 63) bx = 62;
+        if (by >= 63) by = 62;
+
+        uint32_t c00 = data[by * 64 + bx];
+        uint32_t c10 = data[by * 64 + bx + 1];
+        uint32_t c01 = data[(by + 1) * 64 + bx];
+        uint32_t c11 = data[(by + 1) * 64 + bx + 1];
+
+        // Bilinear blend
+        int u_inv = 256 - u_frac;
+        int v_inv = 256 - v_frac;
+        int w00 = (u_inv * v_inv) >> 8;
+        int w10 = (u_frac * v_inv) >> 8;
+        int w01 = (u_inv * v_frac) >> 8;
+        int w11 = (u_frac * v_frac) >> 8;
+
+        int aa = ((c00 >> 24) * w00 + (c10 >> 24) * w10 + (c01 >> 24) * w01 + (c11 >> 24) * w11) >> 8;
+        int rr = (((c00 >> 16) & 0xFF) * w00 + ((c10 >> 16) & 0xFF) * w10 + ((c01 >> 16) & 0xFF) * w01 + ((c11 >> 16) & 0xFF) * w11) >> 8;
+        int gg = (((c00 >> 8) & 0xFF) * w00 + ((c10 >> 8) & 0xFF) * w10 + ((c01 >> 8) & 0xFF) * w01 + ((c11 >> 8) & 0xFF) * w11) >> 8;
+        int bb = ((c00 & 0xFF) * w00 + (c10 & 0xFF) * w10 + (c01 & 0xFF) * w01 + (c11 & 0xFF) * w11) >> 8;
+
+        uint32_t p = (aa << 24) | (rr << 16) | (gg << 8) | bb;
+        uint8_t a = aa;
+
         if (a == 0) continue;
         if (a == 255) {
           target[dy * screen_width + dx] = p;
         } else {
           uint32_t d = target[dy * screen_width + dx];
-          uint32_t sr = (p >> 16) & 0xFF, sg = (p >> 8) & 0xFF, sb = p & 0xFF;
           uint32_t dr = (d >> 16) & 0xFF, dg = (d >> 8) & 0xFF, db = d & 0xFF;
-          uint32_t r = ((sr - dr) * a >> 8) + dr;
-          uint32_t g = ((sg - dg) * a >> 8) + dg;
-          uint32_t b = ((sb - db) * a >> 8) + db;
-          target[dy * screen_width + dx] = 0xFF000000 | (r << 16) | (g << 8) | b;
+          uint32_t out_r = ((rr - dr) * a >> 8) + dr;
+          uint32_t out_g = ((gg - dg) * a >> 8) + dg;
+          uint32_t out_b = ((bb - db) * a >> 8) + db;
+          target[dy * screen_width + dx] = 0xFF000000 | (out_r << 16) | (out_g << 8) | out_b;
         }
       }
     }
@@ -408,7 +435,7 @@ static int draw_icon_png(int x, int y, int type, uint32_t *target) {
   }
   return 0;
 }
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
+
 
 void desktop_add_icon(int x, int y, const char *label, int type,
                       uint32_t color) {
@@ -440,23 +467,25 @@ void desktop_add_icon(int x, int y, const char *label, int type,
 
 void desktop_init() {
   icon_count = 0;
-  desktop_add_icon(30, 30, "Computer", APP_COMPUTER, 0x0000AA);
-  desktop_add_icon(30, 105, "Terminal", APP_TERMINAL, 0x000000);
-  desktop_add_icon(30, 180, "Calculator", APP_CALCULATOR, 0x00AA00);
-  desktop_add_icon(30, 255, "Editor", APP_EDITOR, 0xAAAAAA);
-  desktop_add_icon(30, 330, "Paint", APP_PAINT, 0xFF0000);
-  desktop_add_icon(30, 405, "Files", APP_FILEMGR, 0x00AAAA);
-  desktop_add_icon(30, 480, "Task Mgr", APP_TASKMGR, 0x555555);
-  desktop_add_icon(120, 30, "Browser", APP_BROWSER, 0x0055CC);
-  desktop_add_icon(120, 105, "Video", APP_VIDEOPLAYER, 0xFF00AA);
-  desktop_add_icon(120, 180, "Settings", APP_SETTINGS, 0x888888);
-  desktop_add_icon(120, 255, "PDF Reader", APP_PDFREADER, 0xCC3333);
-  desktop_add_icon(120, 330, "Photos", APP_PHOTOS, 0xE91E63);
-  desktop_add_icon(120, 405, "Mail", APP_MAIL, 0x00AADD);
-  desktop_add_icon(120, 480, "Camera", APP_CAMERA, 0x444444);
-  desktop_add_icon(210, 30, "Recorder", APP_RECORDER, 0xFF4400);
-  desktop_add_icon(210, 105, "Chat", APP_CHAT, 0x25D366);
-  desktop_add_icon(210, 180, "Phone", APP_PHONE, 0x0078D4);
+  desktop_add_icon(30, 30, "Computer", APP_COMPUTER, 0);
+  desktop_add_icon(30, 140, "Terminal", APP_TERMINAL, 0);
+  desktop_add_icon(30, 250, "Calculator", APP_CALCULATOR, 0);
+  desktop_add_icon(30, 360, "Editor", APP_EDITOR, 0);
+  desktop_add_icon(30, 470, "Paint", APP_PAINT, 0);
+  desktop_add_icon(30, 580, "Files", APP_FILEMGR, 0);
+
+  desktop_add_icon(140, 30, "Task Mgr", APP_TASKMGR, 0);
+  desktop_add_icon(140, 140, "Browser", APP_BROWSER, 0);
+  desktop_add_icon(140, 250, "Video", APP_VIDEOPLAYER, 0);
+  desktop_add_icon(140, 360, "Settings", APP_SETTINGS, 0);
+  desktop_add_icon(140, 470, "PDF Reader", APP_PDFREADER, 0);
+  desktop_add_icon(140, 580, "Photos", APP_PHOTOS, 0);
+
+  desktop_add_icon(250, 30, "Mail", APP_MAIL, 0);
+  desktop_add_icon(250, 140, "Camera", APP_CAMERA, 0);
+  desktop_add_icon(250, 250, "Recorder", APP_RECORDER, 0);
+  desktop_add_icon(250, 360, "Chat", APP_CHAT, 0);
+  desktop_add_icon(250, 470, "Phone", APP_PHONE, 0);
 
   // Initial draw to populate valid cache
   desktop_draw();
@@ -477,17 +506,19 @@ static void draw_rect_f(int x, int y, int w, int h, uint32_t color,
                     target);
 }
 
-void draw_icon(int x, int y, int type, uint32_t *target) {
-<<<<<<< HEAD
+void draw_icon(int x, int y, int draw_w, int draw_h, int type, uint32_t *target) {
   uint32_t W = 0xFFFFFFFF;
   uint32_t W90 = 0xFFE8E8E8;
   uint32_t W60 = 0xFFBBBBBB;
 
-=======
   if (type >= 0 && type < 32 && app_icon_paths[type]) {
-    if (draw_icon_png(x, y, type, target)) return;
+    if (draw_icon_png(x, y, draw_w, draw_h, type, target)) return;
   }
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
+  
+  // Shift native OS icons to center them inside the requested box
+  x += (draw_w - 40) / 2;
+  y += (draw_h - 40) / 2;
+
   switch (type) {
   case APP_COMPUTER:
     // iMac style silver frame
@@ -710,35 +741,6 @@ void draw_icon(int x, int y, int type, uint32_t *target) {
     draw_rect_f(x + 23, y + 22, 9, 10, W, target);
     draw_rect_f(x + 25, y + 24, 5, 6, 0xFF0078D4, target);   // Mouth hole
     break;
-  case APP_CHAT:
-    // Speech Bubble Icon
-    draw_rect_f(x + 4, y + 6, 32, 22, 0xFF25D366, target);   // Bubble body
-    draw_rect_f(x + 6, y + 8, 28, 18, 0xFF2EE672, target);   // Inner lighter
-    draw_rect_f(x + 6, y + 8, 28, 2, 0xFF5AED8F, target);    // Top highlight
-    // Tail
-    draw_rect_f(x + 8, y + 28, 8, 4, 0xFF25D366, target);
-    draw_rect_f(x + 8, y + 32, 4, 3, 0xFF25D366, target);
-    // Text lines inside bubble
-    draw_rect_f(x + 10, y + 12, 16, 2, 0xFFFFFFFF, target);
-    draw_rect_f(x + 10, y + 17, 20, 2, 0xFFFFFFFF, target);
-    draw_rect_f(x + 10, y + 22, 12, 2, 0xFFE0FFE8, target);
-    break;
-  case APP_PHONE:
-    // Phone Handset Icon
-    draw_rect_f(x + 5, y + 8, 30, 26, 0xFF0078D4, target);   // Body bg
-    draw_rect_f(x + 7, y + 10, 26, 22, 0xFF0088F0, target);  // Inner
-    // Handset earpiece
-    draw_rect_f(x + 10, y + 10, 8, 10, 0xFFFFFFFF, target);
-    draw_rect_f(x + 11, y + 12, 6, 6, 0xFF0088F0, target);   // Hole
-    // Handset mouthpiece
-    draw_rect_f(x + 22, y + 22, 8, 10, 0xFFFFFFFF, target);
-    draw_rect_f(x + 23, y + 24, 6, 6, 0xFF0088F0, target);   // Hole
-    // Handle connecting ear to mouth
-    draw_rect_f(x + 16, y + 16, 8, 4, 0xFFFFFFFF, target);
-    draw_rect_f(x + 14, y + 18, 4, 6, 0xFFFFFFFF, target);
-    // Ring indicators
-    draw_rect_f(x + 28, y + 10, 4, 4, 0xFF66FF66, target);   // Green call dot
-    break;
   } // end switch
 } // end draw_icon
 
@@ -839,28 +841,49 @@ void desktop_draw() {
   }
 
   if (desktop_buffer && !cache_valid) {
+    print_serial("DESKTOP: cache_valid is 0, re-rendering wallpaper...\n");
     uint32_t *target = desktop_buffer;
     extern os_config_t global_config;
     int valid = 0;
 
-    if (global_config.wallpaper_type == 3) {
+    // Choose wallpaper based on index
+    char wall_path[32];
+    char idx_str[4];
+    k_itoa(global_config.wallpaper_index + 1, idx_str);
+    
+    // Try primary path (uppercase, rooted)
+    strcpy(wall_path, "/WALL");
+    strcat(wall_path, idx_str);
+    strcat(wall_path, ".JPG");
+
+    file_entry_t *entry = fs_find(wall_path);
+    if (!entry) {
+        // Try lowercase
+        strcpy(wall_path, "/wall");
+        strcat(wall_path, idx_str);
+        strcat(wall_path, ".jpg");
+        entry = fs_find(wall_path);
+    }
+    
+    if (!entry) entry = fs_find("/wallpaper.png");
+    if (!entry) entry = fs_find("/1desktop.png");
+
+    if (entry) {
+      print_serial("DESKTOP: Found wallpaper file: ");
+      print_serial(entry->name);
+      print_serial("\n");
       int bw, bh, channels;
       unsigned char *pixels = NULL;
+      unsigned char *file_buf = (unsigned char *)kmalloc(entry->size);
       
-      file_entry_t *entry = fs_find("wallpaper.png");
-      if (!entry) entry = fs_find("WALLPAPE.PNG"); // Try 8.3 name
-
-      if (entry) {
-        unsigned char *file_buf = (unsigned char *)kmalloc(entry->size);
-        if (file_buf) {
-            fs_read(entry->name, file_buf);
-            pixels = stbi_load_from_memory(file_buf, entry->size, &bw, &bh, &channels, 4);
-            kfree(file_buf);
-        }
+      if (file_buf) {
+        fs_read(entry->name, file_buf);
+        pixels = stbi_load_from_memory(file_buf, entry->size, &bw, &bh, &channels, 4);
+        kfree(file_buf);
       }
 
       if (pixels) {
-        print_serial("DESKTOP: PNG Wallpaper Loaded from Disk Successfully\n");
+        print_serial("DESKTOP: Wallpaper Loaded from Disk Successfully\n");
         valid = 1;
         for (int sy = 0; sy < screen_height; sy++) {
           for (int sx = 0; sx < screen_width; sx++) {
@@ -997,21 +1020,37 @@ void desktop_draw() {
 }
 
 // Render dynamic icons to target (Backbuffer)
-// Helper to draw string to buffer
+// Helper to draw string to buffer with grayscale antialiasing
 static void draw_string_to_trg(uint32_t *buf, int x, int y, const char *str,
                                uint32_t color) {
-  // Simple 8x8 font
-  extern const uint8_t font8x8_basic[256][8];
+  extern uint8_t font_get_aa_pixel(unsigned char c, int x, int y);
+  
+  uint32_t s_r = (color >> 16) & 0xFF;
+  uint32_t s_g = (color >> 8) & 0xFF;
+  uint32_t s_b = color & 0xFF;
+  
   while (*str) {
-    const uint8_t *glyph = font8x8_basic[(unsigned char)*str];
-    for (int cy = 0; cy < 8; cy++) {
-      for (int cx = 0; cx < 8; cx++) {
-        if (glyph[cy] & (1 << (7 - cx))) {
-          int px = x + cx;
-          int py = y + cy;
-          if (px < screen_width && py < screen_height) {
-            buf[py * screen_width + px] = color;
-          }
+    for (int cy = -1; cy < 9; cy++) {
+      for (int cx = -1; cx < 9; cx++) {
+        int px = x + cx;
+        int py = y + cy;
+        if (px < 0 || px >= screen_width || py < 0 || py >= screen_height)
+          continue;
+        
+        uint8_t alpha = font_get_aa_pixel((unsigned char)*str, cx, cy);
+        if (alpha <= 4) continue;
+        
+        if (alpha >= 250) {
+          buf[py * screen_width + px] = 0xFF000000 | (s_r << 16) | (s_g << 8) | s_b;
+        } else {
+          uint32_t dst = buf[py * screen_width + px];
+          uint32_t d_r = (dst >> 16) & 0xFF;
+          uint32_t d_g = (dst >> 8) & 0xFF;
+          uint32_t d_b = dst & 0xFF;
+          uint32_t r = d_r + (((int)s_r - (int)d_r) * alpha >> 8);
+          uint32_t g = d_g + (((int)s_g - (int)d_g) * alpha >> 8);
+          uint32_t b = d_b + (((int)s_b - (int)d_b) * alpha >> 8);
+          buf[py * screen_width + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
         }
       }
     }
@@ -1019,6 +1058,7 @@ static void draw_string_to_trg(uint32_t *buf, int x, int y, const char *str,
     str++;
   }
 }
+
 
 // Helper to draw pixel to buffer
 static void put_pixel_trg(uint32_t *buf, int x, int y, uint32_t c) {
@@ -1051,23 +1091,23 @@ void desktop_render_icons(uint32_t *target, rect_t clip) {
 
   // Icons
   for (int i = 0; i < icon_count; i++) {
-    // Icon hit box for clipping (approx 50x60)
-    rect_t icon_r = {icons[i].x - 5, icons[i].y - 5, 55, 75};
+    // Icon hit box for clipping (approx 80x100)
+    rect_t icon_r = {icons[i].x - 8, icons[i].y - 8, 80, 100};
     rect_t overlap;
     if (!rect_intersect(clip, icon_r, &overlap))
       continue;
 
     // Selection Highlight — solid gray like Windows
     if (icons[i].selected) {
-      draw_rect_trg(target, icons[i].x - 5, icons[i].y - 5, 50, 70, 0xFF555555);
+      draw_rect_trg(target, icons[i].x - 8, icons[i].y - 8, 80, 96, 0xFF555555);
     }
     // Hover Highlight — transparent gray overlay
     else if (i == hovered_icon) {
       // Blend transparent gray over the background
-      for (int hy = 0; hy < 70; hy++) {
-        for (int hx = 0; hx < 50; hx++) {
-          int px = icons[i].x - 5 + hx;
-          int py = icons[i].y - 5 + hy;
+      for (int hy = 0; hy < 96; hy++) {
+        for (int hx = 0; hx < 80; hx++) {
+          int px = icons[i].x - 8 + hx;
+          int py = icons[i].y - 8 + hy;
           if (px >= 0 && px < screen_width && py >= 0 && py < screen_height) {
             uint32_t dst = target[py * screen_width + px];
             // Blend 25% white over existing pixel
@@ -1080,17 +1120,14 @@ void desktop_render_icons(uint32_t *target, rect_t clip) {
       }
     }
 
-    // Draw white background square (matching taskbar style) with filter
-    uint32_t bg_col =
-        vga_apply_color_filter(0xFFFFFFFF, global_config.icon_filter,
-                               global_config.icon_bg_filter_intensity);
-    vga_draw_rect_blend_lfb_ex(icons[i].x - 1, icons[i].y - 1, 42, 42, bg_col,
-                               1, bg_col, target, 8);
-
-    draw_icon(icons[i].x, icons[i].y, icons[i].type, target);
+    // Draw app icon natively without bounding box background
+    draw_icon(icons[i].x, icons[i].y, 64, 64, icons[i].type, target);
 
     uint32_t text_col = icons[i].selected ? 0xFFFFFFFF : theme_get()->fg;
-    draw_string_to_trg(target, icons[i].x - 2, icons[i].y + 45, icons[i].label,
+    int text_len = 0;
+    for (int c = 0; icons[i].label[c]; c++) text_len += 8;
+    int text_x = icons[i].x + 32 - (text_len / 2); // Center around 64px width
+    draw_string_to_trg(target, text_x, icons[i].y + 70, icons[i].label,
                        text_col);
   }
 }
@@ -1174,20 +1211,99 @@ static void draw_rounded_rect_trg(uint32_t *target, int x, int y, int w, int h,
 
 static void draw_string_large(uint32_t *target, int x, int y, const char *str,
                               uint32_t color, int scale, rect_t clip) {
-  extern const uint8_t font8x8_basic[256][8];
+  extern uint8_t font_get_aa_pixel(unsigned char c, int x, int y);
+  extern uint8_t font_get_aa_pixel_16(unsigned char c, int x, int y);
+  
+  uint32_t s_r = (color >> 16) & 0xFF;
+  uint32_t s_g = (color >> 8) & 0xFF;
+  uint32_t s_b = color & 0xFF;
+  
+  // Total output size per glyph
+  int out_size = 8 * scale;
+  // Use 16x16 source for scale >= 2 (output >= 16px), 8x8 AA for scale 1
+  int use_16 = (scale >= 2);
+  
   while (*str) {
-    const uint8_t *glyph = font8x8_basic[(unsigned char)*str];
-    for (int cy = 0; cy < 8 * scale; cy++) {
-      for (int cx = 0; cx < 8 * scale; cx++) {
-        if (glyph[cy / scale] & (1 << (7 - (cx / scale)))) {
-          put_pixel_blend(target, x + cx, y + cy, color, clip);
+    for (int cy = 0; cy < out_size; cy++) {
+      for (int cx = 0; cx < out_size; cx++) {
+        int gx = x + cx;
+        int gy = y + cy;
+        
+        if (gx < clip.x || gx >= clip.x + clip.w ||
+            gy < clip.y || gy >= clip.y + clip.h)
+          continue;
+        if (gx < 0 || gx >= screen_width || gy < 0 || gy >= screen_height)
+          continue;
+        
+        int alpha;
+        
+        if (use_16) {
+          // Map [0..out_size) -> [0..16) with 8.8 fixed point
+          int src_x_fp = (cx * (16 << 8)) / out_size;
+          int src_y_fp = (cy * (16 << 8)) / out_size;
+          if (src_x_fp > (15 << 8)) src_x_fp = 15 << 8;
+          if (src_y_fp > (15 << 8)) src_y_fp = 15 << 8;
+          
+          int sx = src_x_fp >> 8;
+          int sy = src_y_fp >> 8;
+          int fx = src_x_fp & 0xFF;
+          int fy = src_y_fp & 0xFF;
+          
+          uint8_t a00 = font_get_aa_pixel_16((unsigned char)*str, sx,     sy);
+          uint8_t a10 = font_get_aa_pixel_16((unsigned char)*str, sx + 1, sy);
+          uint8_t a01 = font_get_aa_pixel_16((unsigned char)*str, sx,     sy + 1);
+          uint8_t a11 = font_get_aa_pixel_16((unsigned char)*str, sx + 1, sy + 1);
+          
+          int top    = a00 + ((a10 - a00) * fx >> 8);
+          int bottom = a01 + ((a11 - a01) * fx >> 8);
+          alpha = top + ((bottom - top) * fy >> 8);
+        } else {
+          // Map [0..out_size) -> [-1..9) for 10x10 AA cache
+          int src_x_fp = (cx * (10 << 8)) / out_size - (1 << 8);
+          int src_y_fp = (cy * (10 << 8)) / out_size - (1 << 8);
+          if (src_x_fp < -(1 << 8)) src_x_fp = -(1 << 8);
+          if (src_y_fp < -(1 << 8)) src_y_fp = -(1 << 8);
+          if (src_x_fp > (8 << 8))  src_x_fp = (8 << 8);
+          if (src_y_fp > (8 << 8))  src_y_fp = (8 << 8);
+          
+          int sx = src_x_fp >> 8;
+          int sy = src_y_fp >> 8;
+          int fx = src_x_fp & 0xFF;
+          int fy = src_y_fp & 0xFF;
+          
+          uint8_t a00 = font_get_aa_pixel((unsigned char)*str, sx,     sy);
+          uint8_t a10 = font_get_aa_pixel((unsigned char)*str, sx + 1, sy);
+          uint8_t a01 = font_get_aa_pixel((unsigned char)*str, sx,     sy + 1);
+          uint8_t a11 = font_get_aa_pixel((unsigned char)*str, sx + 1, sy + 1);
+          
+          int top    = a00 + ((a10 - a00) * fx >> 8);
+          int bottom = a01 + ((a11 - a01) * fx >> 8);
+          alpha = top + ((bottom - top) * fy >> 8);
+        }
+        
+        if (alpha <= 4) continue;
+        if (alpha > 255) alpha = 255;
+        
+        if (alpha >= 250) {
+          target[gy * screen_width + gx] = 0xFF000000 | (s_r << 16) | (s_g << 8) | s_b;
+        } else {
+          uint32_t dst = target[gy * screen_width + gx];
+          uint32_t d_r = (dst >> 16) & 0xFF;
+          uint32_t d_g = (dst >> 8) & 0xFF;
+          uint32_t d_b = dst & 0xFF;
+          uint32_t r = d_r + (((int)s_r - (int)d_r) * alpha >> 8);
+          uint32_t g = d_g + (((int)s_g - (int)d_g) * alpha >> 8);
+          uint32_t b = d_b + (((int)s_b - (int)d_b) * alpha >> 8);
+          target[gy * screen_width + gx] = 0xFF000000 | (r << 16) | (g << 8) | b;
         }
       }
     }
     x += 8 * scale;
     str++;
   }
+
 }
+
 
 // Widget State
 static int dragging_widget = 0; // 1=Clock, 2=Calendar
@@ -1582,8 +1698,8 @@ void desktop_mouse_move(int mx, int my) {
   extern os_config_t global_config;
   if (global_config.show_desktop_icons) {
     for (int i = 0; i < icon_count; i++) {
-      if (mx >= icons[i].x - 5 && mx < icons[i].x + 45 &&
-          my >= icons[i].y - 5 && my < icons[i].y + 65) {
+      if (mx >= icons[i].x - 8 && mx < icons[i].x + 72 &&
+          my >= icons[i].y - 8 && my < icons[i].y + 92) {
         new_hover = i;
         break;
       }
@@ -1592,12 +1708,12 @@ void desktop_mouse_move(int mx, int my) {
   if (new_hover != hovered_icon) {
     // Invalidate old hover area
     if (hovered_icon >= 0 && hovered_icon < icon_count) {
-      compositor_invalidate_rect(icons[hovered_icon].x - 5, icons[hovered_icon].y - 5, 55, 75);
+      compositor_invalidate_rect(icons[hovered_icon].x - 8, icons[hovered_icon].y - 8, 80, 100);
     }
     hovered_icon = new_hover;
     // Invalidate new hover area
     if (hovered_icon >= 0 && hovered_icon < icon_count) {
-      compositor_invalidate_rect(icons[hovered_icon].x - 5, icons[hovered_icon].y - 5, 55, 75);
+      compositor_invalidate_rect(icons[hovered_icon].x - 8, icons[hovered_icon].y - 8, 80, 100);
     }
     extern int ui_dirty;
     ui_dirty = 1;
@@ -1629,11 +1745,11 @@ void desktop_mouse_move(int mx, int my) {
         icons[drag_icon].y = screen_height - 60;
 
       // Invalidate OLD position (restores wallpaper)
-      compositor_invalidate_rect(old_x - 5, old_y - 5, 55, 70);
+      compositor_invalidate_rect(old_x - 8, old_y - 8, 80, 100);
 
       // Invalidate NEW position (draws icon)
-      compositor_invalidate_rect(icons[drag_icon].x - 5, icons[drag_icon].y - 5,
-                                 55, 70);
+      compositor_invalidate_rect(icons[drag_icon].x - 8, icons[drag_icon].y - 8,
+                                 80, 100);
 
       extern int ui_dirty;
       ui_dirty = 1;
@@ -1781,8 +1897,8 @@ void desktop_click(int mx, int my, int buttons) {
   extern os_config_t global_config;
   if (global_config.show_desktop_icons) {
     for (int i = 0; i < icon_count; i++) {
-      if (mx >= icons[i].x && mx < icons[i].x + 40 && my >= icons[i].y &&
-          my < icons[i].y + 60) {
+      if (mx >= icons[i].x - 8 && mx < icons[i].x + 72 && my >= icons[i].y - 8 &&
+          my < icons[i].y + 92) {
         clicked_icon = i;
         break;
       }
@@ -1805,7 +1921,7 @@ void desktop_click(int mx, int my, int buttons) {
         icons[i].selected = (i == clicked_icon);
         selection_changed = 1;
         // Invalidate icon area to redraw selection state
-        compositor_invalidate_rect(icons[i].x - 5, icons[i].y - 5, 55, 70);
+        compositor_invalidate_rect(icons[i].x - 8, icons[i].y - 8, 80, 100);
       }
     }
 

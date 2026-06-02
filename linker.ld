@@ -17,6 +17,20 @@ SECTIONS {
         *(.data)
     }
     
+    .init_array : AT(ADDR(.init_array) - 0xC0000000) {
+        __init_array_start = .;
+        KEEP(*(.init_array))
+        KEEP(*(SORT(.init_array.*)))
+        __init_array_end = .;
+    }
+    
+    .ctors : AT(ADDR(.ctors) - 0xC0000000) {
+        __ctors_start = .;
+        KEEP(*(.ctors))
+        KEEP(*(SORT(.ctors.*)))
+        __ctors_end = .;
+    }
+    
     .bss : AT(ADDR(.bss) - 0xC0000000) {
         . = ALIGN(4);
         _bss_start = .;

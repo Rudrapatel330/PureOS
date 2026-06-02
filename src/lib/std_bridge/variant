@@ -1,0 +1,13 @@
+#ifndef STD_BRIDGE_VARIANT_H
+#define STD_BRIDGE_VARIANT_H
+
+#include <EASTL/variant.h>
+
+namespace std {
+    using eastl::variant;
+    using eastl::get;
+    using eastl::holds_alternative;
+    using eastl::visit;
+}
+
+#endif

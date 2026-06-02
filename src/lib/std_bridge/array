@@ -1,0 +1,10 @@
+#ifndef STD_BRIDGE_ARRAY_H
+#define STD_BRIDGE_ARRAY_H
+
+#include <EASTL/array.h>
+
+namespace std {
+    using eastl::array;
+}
+
+#endif

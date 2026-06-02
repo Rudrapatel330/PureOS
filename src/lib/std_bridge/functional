@@ -1,0 +1,12 @@
+#ifndef STD_BRIDGE_FUNCTIONAL_H
+#define STD_BRIDGE_FUNCTIONAL_H
+
+#include <EASTL/functional.h>
+
+namespace std {
+    using eastl::function;
+    using eastl::less;
+    using eastl::greater;
+}
+
+#endif

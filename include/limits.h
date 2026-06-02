@@ -10,4 +10,11 @@
 #define LONG_MIN  (-0x7fffffffffffffffL-1)
 #define ULONG_MAX 0xffffffffffffffffUL
 
+#define CHAR_BIT  8
+#define SCHAR_MIN (-128)
+#define SCHAR_MAX 127
+#define UCHAR_MAX 255
+#define CHAR_MIN  0
+#define CHAR_MAX  255
+
 #endif

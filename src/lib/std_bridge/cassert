@@ -1,0 +1,6 @@
+#ifndef STD_BRIDGE_CASSERT_H
+#define STD_BRIDGE_CASSERT_H
+
+#include <assert.h>
+
+#endif

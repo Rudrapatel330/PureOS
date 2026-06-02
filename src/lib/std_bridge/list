@@ -1,0 +1,10 @@
+#ifndef STD_BRIDGE_LIST_H
+#define STD_BRIDGE_LIST_H
+
+#include <EASTL/list.h>
+
+namespace std {
+    using eastl::list;
+}
+
+#endif

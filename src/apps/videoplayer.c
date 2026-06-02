@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 #include "../drivers/video_dev.h"
 #include "../kernel/heap.h"
 #include "../kernel/string.h"
@@ -17,46 +18,34 @@ static void videoplayer_draw_cb(void *w) {
   videoplayer_state_t *state = (videoplayer_state_t *)win->user_data;
 
   // Draw background (Opaque Black)
-  winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, 0xFF000000);
+  winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, 0xFF000000);
 
   if (state && state->v_ctx && state->v_ctx->frame_buffer) {
-    // ... logic ...
-    int draw_w = state->v_ctx->width;
-    int draw_h = state->v_ctx->height;
+    int src_w = state->v_ctx->width;
+    int src_h = state->v_ctx->height;
+    
+    int dst_w = win->width;
+    int dst_h = win->height - 24;
 
-    // Center video in window
-    int off_x = (win->width - draw_w) / 2;
-    int off_y = (win->height - draw_h) / 2 + 12;
+    if (dst_w <= 0 || dst_h <= 0) return;
 
-    // Strict bounds checking to prevent heap corruption
-    if (off_x < 2)
-      off_x = 2;
-    if (off_y < 24)
-      off_y = 24;
-
-    // Ensure we don't draw outside the actual surface memory
-    if (off_x >= win->surface_w || off_y >= win->surface_h)
-      return;
-
-    // Blit frame directly to window surface, FORCING OPAQUE
+    // Scaling blit
     uint32_t *src = state->v_ctx->frame_buffer;
     uint32_t *dst = win->surface;
 
-    int max_h =
-        (draw_h < (win->surface_h - off_y)) ? draw_h : (win->surface_h - off_y);
-    int max_w =
-        (draw_w < (win->surface_w - off_x)) ? draw_w : (win->surface_w - off_x);
-
-    for (int y = 0; y < max_h; y++) {
-      uint32_t *dst_row = &dst[(off_y + y) * win->surface_w];
-      uint32_t *src_row = &src[y * draw_w];
-      for (int x = 0; x < max_w; x++) {
-        // OR with 0xFF000000 to ensure no transparency
-        dst_row[off_x + x] = 0xFF000000 | src_row[x];
+    for (int y = 0; y < dst_h; y++) {
+      int sy = (y * src_h) / dst_h;
+      uint32_t *src_row = &src[sy * src_w];
+      uint32_t *dst_row = &dst[(y + 24) * win->surface_w];
+      
+      for (int x = 0; x < dst_w; x++) {
+        int sx = (x * src_w) / dst_w;
+        dst_row[x] = 0xFF000000 | src_row[sx];
       }
     }
   } else {
-    winmgr_draw_text(win, 50, 100, "No Video Loaded", 0xFFFFFF);
+    int fs = ui_get_font_scale();
+    winmgr_draw_text(win, (win->width - 120) / 2, (win->height - fs) / 2, "No Video Loaded", 0xFFFFFF);
   }
 }
 

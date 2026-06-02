@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 #include "../kernel/heap.h"
 #include "../kernel/string.h"
 #include "../kernel/theme.h"
@@ -110,12 +111,22 @@ void calculator_draw(window_t *win) {
     return;
 
   const theme_t *theme = theme_get();
- 
+  
+  // Dynamic Layout Calculations
+  int display_h = win->height * 20 / 100; // 20% of height
+  if (display_h < 60) display_h = 60;
+  if (display_h > 120) display_h = 120;
+  
+  int start_y = 32 + display_h;
+  int bw = win->width / 4;
+  int bh = (win->height - start_y) / 5;
+  if (bh < 20) bh = 20;
+
   // Draw Background
   winmgr_fill_rect(win, 0, 32, win->width, win->height - 32, theme->bg);
 
   // 1. Draw Display Area (Top part)
-  winmgr_fill_rect(win, 0, 32, win->width, 80, theme->bg);
+  winmgr_fill_rect(win, 0, 32, win->width, display_h, theme->bg);
 
   // Draw display text
   char display_str[64];
@@ -150,10 +161,17 @@ void calculator_draw(window_t *win) {
 
   // Custom scaled drawing
   int scale = calc->font_scale;
+  // Auto-adjust scale if text is too wide
+  while (len * (8 * scale) > win->width - 40 && scale > 1) {
+    scale--;
+  }
+  
   int char_w = 8 * scale;
-  int txt_x = win->width - (len * char_w) - 15;
-  if (txt_x < 10)
-    txt_x = 10;
+  int txt_x = win->width - (len * char_w) - 20;
+  if (txt_x < 10) txt_x = 10;
+  
+  // Center text vertically in display area
+  int txt_y = 32 + (display_h - (8 * scale)) / 2;
 
   for (int i = 0; i < len; i++) {
     uint8_t c = (uint8_t)display_str[i];
@@ -162,17 +180,13 @@ void calculator_draw(window_t *win) {
       for (int px = 0; px < 8; px++) {
         if (row & (1 << (7 - px))) {
           winmgr_fill_rect(win, txt_x + i * char_w + px * scale,
-                           53 + py * scale, scale, scale, theme->fg);
+                           txt_y + py * scale, scale, scale, theme->fg);
         }
       }
     }
   }
 
   // 2. Draw Button Grid
-  int start_y = 112;
-  int bw = win->width / 4;
-  int bh = (win->height - start_y) / 5;
-
   const char *labels[] = {"AC", "+/-", "%", "/", "7", "8", "9", "*", "4", "5",
                           "6",  "-",   "1", "2", "3", "+", "0", ".", "="};
 
@@ -218,14 +232,21 @@ void calculator_click(window_t *win, int mx, int my, int buttons) {
   if (!calc || !(buttons & 1))
     return;
 
-  int start_y = 112;
+  int display_h = win->height * 20 / 100;
+  if (display_h < 60) display_h = 60;
+  if (display_h > 120) display_h = 120;
+  int start_y = 32 + display_h;
+
   if (my < start_y)
     return;
 
   int bw = win->width / 4;
   int bh = (win->height - start_y) / 5;
+  if (bh <= 0) return;
   int r = (my - start_y) / bh;
   int c = mx / bw;
+
+  if (r < 0 || r >= 5 || c < 0 || c >= 4) return;
 
   char *btn_chars = "An%/789*456-123+0.=";
 

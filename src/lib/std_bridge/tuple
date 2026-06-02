@@ -1,0 +1,12 @@
+#ifndef STD_BRIDGE_TUPLE_H
+#define STD_BRIDGE_TUPLE_H
+
+#include <EASTL/tuple.h>
+
+namespace std {
+    using eastl::tuple;
+    using eastl::make_tuple;
+    using eastl::get;
+}
+
+#endif

@@ -36,6 +36,7 @@ double atan2(double y, double x) {
 float atan2f(float y, float x) { return (float)atan2(y, x); }
 
 double fmod(double x, double y) {
+  if (y == 0.0) return NAN;
   double res;
   __asm__("1: fprem; fnstsw %%ax; testb $4, %%ah; jnz 1b"
           : "=t"(res)
@@ -80,20 +81,26 @@ double ceil(double x) {
 float ceilf(float x) { return (float)ceil(x); }
 
 double pow(double x, double y) {
-  // Simple naive pow, usually MuPDF needs basic stuff or integer powers
-  // We can do real pow using fyl2x and f2xm1, but that's complex.
-  // Let's implement x^y = 2^(y * log2(x))
+  if (x == 0.0) return (y == 0.0) ? 1.0 : 0.0;
+  if (x < 0.0) {
+    long long iy = (long long)y;
+    if ((double)iy == y) {
+      double r = pow(-x, y);
+      return (iy % 2 == 0) ? r : -r;
+    }
+    return NAN;
+  }
   double res;
-  __asm__("fyl2x\n\t"        // st(0) = y * log2(x)
-          "fld %%st(0)\n\t"  // dup
-          "frndint\n\t"      // st(0) = int(y * log2(x))
-          "fxch\n\t"         // swap st(0), st(1)
-          "fsub %%st(1)\n\t" // st(0) = frac(y * log2(x))
-          "f2xm1\n\t"        // st(0) = 2^frac - 1
+  __asm__("fyl2x\n\t"
+          "fld %%st(0)\n\t"
+          "frndint\n\t"
+          "fxch\n\t"
+          "fsub %%st(1)\n\t"
+          "f2xm1\n\t"
           "fld1\n\t"
-          "faddp\n\t"        // st(0) = 2^frac
-          "fscale\n\t"       // st(0) = 2^frac * 2^int
-          "fstp %%st(1)\n\t" // pop int
+          "faddp\n\t"
+          "fscale\n\t"
+          "fstp %%st(1)\n\t"
           : "=t"(res)
           : "0"(x), "u"(y)
           : "st(1)");
@@ -102,18 +109,26 @@ double pow(double x, double y) {
 float powf(float x, float y) { return (float)pow(x, y); }
 
 double asin(double x) {
-  // asin(x) = atan2(x, sqrt(1-x*x))
   return atan2(x, sqrt(1.0 - x * x));
 }
 float asinf(float x) { return (float)asin(x); }
 
 double acos(double x) {
-  // acos(x) = atan2(sqrt(1-x*x), x)
   return atan2(sqrt(1.0 - x * x), x);
 }
 float acosf(float x) { return (float)acos(x); }
 
 double log2(double x) {
+    if (x <= 0.0) return NAN;
+    double res;
+    __asm__("fld1\n\t"
+            "fxch\n\t"
+            "fyl2x" : "=t"(res) : "0"(x) : "st(1)");
+    return res;
+}
+
+double log(double x) {
+    if (x <= 0.0) return NAN;
     double res;
     __asm__("fldln2\n\t"
             "fxch\n\t"
@@ -121,14 +136,8 @@ double log2(double x) {
     return res;
 }
 
-double log(double x) {
-    // log(x) = ln(x) = log2(x) * ln(2)
-    return log2(x) * 0.6931471805599453;
-}
-
 double exp(double x) {
-    // exp(x) = e^x = 2^(x * log2(e))
-    return pow(2.0, x * 1.4426950408889634);
+    return pow(2.718281828459045, x);
 }
 
 double frexp(double x, int *exp) {

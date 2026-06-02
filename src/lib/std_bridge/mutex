@@ -1,0 +1,22 @@
+#ifndef STD_BRIDGE_MUTEX_H
+#define STD_BRIDGE_MUTEX_H
+
+namespace std {
+    class mutex {
+    public:
+        mutex() {}
+        void lock() {}
+        void unlock() {}
+    };
+
+    template <class Mutex>
+    class lock_guard {
+    public:
+        explicit lock_guard(Mutex& m) : m_mutex(m) { m_mutex.lock(); }
+        ~lock_guard() { m_mutex.unlock(); }
+    private:
+        Mutex& m_mutex;
+    };
+}
+
+#endif

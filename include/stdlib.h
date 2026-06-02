@@ -4,6 +4,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #define EXIT_FAILURE 1
 #define EXIT_SUCCESS 0
 
@@ -21,5 +26,9 @@ extern void free(void *ptr);
 extern void *realloc(void *ptr, size_t size);
 extern void *calloc(size_t nmemb, size_t size);
 extern double strtod(const char *nptr, char **endptr);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -1,10 +1,13 @@
+#include "../kernel/ui_layout.h"
 /*
  * lockscreen.c - PureOS Lock Screen (32-bit ARGB optimized)
  * Password: 123456
  */
 #include "../drivers/bga.h"
 #include "../drivers/keyboard.h"
+#include "../fs/fs.h"
 #include "../kernel/config.h"
+#include "../kernel/heap.h"
 #include "../kernel/string.h"
 #define STBI_NO_STDIO
 #include "../kernel/image.h"
@@ -144,11 +147,138 @@ static void ls_fill_circle(uint32_t *buf, int cx, int cy, int r,
     return;
   for (int dy = -r; dy <= r; dy++) {
     for (int dx = -r; dx <= r; dx++) {
-      if (dx * dx + dy * dy <= r * r) {
+      int d2 = dx * dx + dy * dy;
+      if (d2 <= r * r) {
         int px = cx + dx;
         int py = cy + dy;
-        if (px >= 0 && px < screen_width && py >= 0 && py < screen_height)
-          buf[py * screen_width + px] = color;
+        if (px >= 0 && px < screen_width && py >= 0 && py < screen_height) {
+          uint32_t final_col = color;
+          // Simple AA for the circle edge
+          if (d2 > (r - 1) * (r - 1)) {
+            uint32_t bg = buf[py * screen_width + px];
+            uint8_t ba, br, bgg, bb;
+            ls_from_argb(bg, &ba, &br, &bgg, &bb);
+            uint8_t tr = (color >> 16) & 0xFF;
+            uint8_t tg = (color >> 8) & 0xFF;
+            uint8_t tb = color & 0xFF;
+            int alpha = (r * r - d2) * 255 / (2 * r - 1);
+            if (alpha < 0) alpha = 0;
+            if (alpha > 255) alpha = 255;
+            uint32_t nr = (tr * alpha + br * (255 - alpha)) >> 8;
+            uint32_t ng = (tg * alpha + bgg * (255 - alpha)) >> 8;
+            uint32_t nb = (tb * alpha + bb * (255 - alpha)) >> 8;
+            final_col = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
+          }
+          buf[py * screen_width + px] = final_col;
+        }
+      }
+    }
+  }
+}
+
+static void ls_draw_rounded_frosted_rect(uint32_t *buf, int x, int y, int w, int h, int r, uint8_t tr, uint8_t tg, uint8_t tb, int alpha) {
+  if (!buf) return;
+  for (int j = 0; j < h; j++) {
+    for (int i = 0; i < w; i++) {
+      int px = x + i;
+      int py = y + j;
+      if (px < 0 || px >= screen_width || py < 0 || py >= screen_height) continue;
+
+      // High-quality sub-pixel coverage (4x4 sampling)
+      int coverage = 0;
+      for (int sy = 0; sy < 4; sy++) {
+        for (int sx = 0; sx < 4; sx++) {
+          float fx = (float)i + (sx + 0.5f) / 4.0f;
+          float fy = (float)j + (sy + 0.5f) / 4.0f;
+          
+          int in_rect = 1;
+          if (fx < r && fy < r) { // TL
+            float dx = (float)r - fx, dy = (float)r - fy;
+            if (dx*dx + dy*dy > (float)r*r) in_rect = 0;
+          } else if (fx >= (float)w - r && fy < r) { // TR
+            float dx = fx - ((float)w - r), dy = (float)r - fy;
+            if (dx*dx + dy*dy > (float)r*r) in_rect = 0;
+          } else if (fx < r && fy >= (float)h - r) { // BL
+            float dx = (float)r - fx, dy = fy - ((float)h - r);
+            if (dx*dx + dy*dy > (float)r*r) in_rect = 0;
+          } else if (fx >= (float)w - r && fy >= (float)h - r) { // BR
+            float dx = fx - ((float)w - r), dy = fy - ((float)h - r);
+            if (dx*dx + dy*dy > (float)r*r) in_rect = 0;
+          }
+          if (in_rect) coverage++;
+        }
+      }
+
+      if (coverage == 0) continue;
+      int cur_alpha = (alpha * coverage) >> 4;
+
+      uint32_t bg = buf[py * screen_width + px];
+      uint8_t ba, br, bgg, bb;
+      ls_from_argb(bg, &ba, &br, &bgg, &bb);
+
+      uint32_t nr = (tr * cur_alpha + br * (255 - cur_alpha)) >> 8;
+      uint32_t ng = (tg * cur_alpha + bgg * (255 - cur_alpha)) >> 8;
+      uint32_t nb = (tb * cur_alpha + bb * (255 - cur_alpha)) >> 8;
+
+      buf[py * screen_width + px] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
+    }
+  }
+}
+
+static void ls_draw_rounded_rect_outline(uint32_t *buf, int x, int y, int w, int h, int r, uint32_t color) {
+  if (!buf) return;
+  uint8_t tr = (color >> 16) & 0xFF;
+  uint8_t tg = (color >> 8) & 0xFF;
+  uint8_t tb = color & 0xFF;
+
+  for (int j = 0; j < h; j++) {
+    for (int i = 0; i < w; i++) {
+      int px = x + i;
+      int py = y + j;
+      if (px < 0 || px >= screen_width || py < 0 || py >= screen_height) continue;
+
+      int coverage = 0;
+      float inner_r = (float)r - 1.5f;
+      float outer_r = (float)r + 0.5f;
+
+      for (int sy = 0; sy < 4; sy++) {
+        for (int sx = 0; sx < 4; sx++) {
+          float fx = (float)i + (sx + 0.5f) / 4.0f;
+          float fy = (float)j + (sy + 0.5f) / 4.0f;
+          
+          int is_edge = 0;
+          if (fx < r && fy < r) { // TL
+            float dx = (float)r - fx, dy = (float)r - fy;
+            float d2 = dx*dx + dy*dy;
+            if (d2 <= outer_r*outer_r && d2 > inner_r*inner_r) is_edge = 1;
+          } else if (fx >= (float)w - r && fy < r) { // TR
+            float dx = fx - ((float)w - r), dy = (float)r - fy;
+            float d2 = dx*dx + dy*dy;
+            if (d2 <= outer_r*outer_r && d2 > inner_r*inner_r) is_edge = 1;
+          } else if (fx < r && fy >= (float)h - r) { // BL
+            float dx = (float)r - fx, dy = fy - ((float)h - r);
+            float d2 = dx*dx + dy*dy;
+            if (d2 <= outer_r*outer_r && d2 > inner_r*inner_r) is_edge = 1;
+          } else if (fx >= (float)w - r && fy >= (float)h - r) { // BR
+            float dx = fx - ((float)w - r), dy = fy - ((float)h - r);
+            float d2 = dx*dx + dy*dy;
+            if (d2 <= outer_r*outer_r && d2 > inner_r*inner_r) is_edge = 1;
+          } else {
+            if (fx < 1.0f || fx >= (float)w - 1.0f || fy < 1.0f || fy >= (float)h - 1.0f) is_edge = 1;
+          }
+          if (is_edge) coverage++;
+        }
+      }
+
+      if (coverage > 0) {
+        uint32_t bg = buf[py * screen_width + px];
+        uint8_t ba, br, bgg, bb;
+        ls_from_argb(bg, &ba, &br, &bgg, &bb);
+        int alpha = (coverage * 255) >> 4;
+        uint32_t nr = (tr * alpha + br * (255 - alpha)) >> 8;
+        uint32_t ng = (tg * alpha + bgg * (255 - alpha)) >> 8;
+        uint32_t nb = (tb * alpha + bb * (255 - alpha)) >> 8;
+        buf[py * screen_width + px] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
       }
     }
   }
@@ -170,6 +300,76 @@ static void ls_fast_blur(uint32_t *buf) {
 static void ls_render_wallpaper(uint32_t *buf) {
   if (!buf)
     return;
+
+  print_serial("LS: Attempting to load wallpaper...\n");
+
+  // Try multiple possible paths for the wallpaper
+  // Note: bulk_upload_icons.py uploads to the root of the data disk
+  const char *paths[] = {"/WALL4.JPG", "WALL4.JPG", "/WALLPAPER/WALL4.JPG", "/wallpaper/wall4.jpg", "wall4.jpg"};
+  file_entry_t *fe = NULL;
+  for (int i = 0; i < 5; i++) {
+    fe = fs_find(paths[i]);
+    if (fe) {
+      print_serial("LS: Found wallpaper at ");
+      print_serial(paths[i]);
+      print_serial("\n");
+      break;
+    }
+  }
+  
+  if (fe) {
+    print_serial("LS: Allocating buffer for raw data...\n");
+    uint8_t *raw = (uint8_t *)kmalloc(fe->size);
+    if (raw) {
+      if (fs_read(fe->name, raw) > 0) {
+        print_serial("LS: Decoding image data...\n");
+        int bw, bh, channels;
+        unsigned char *pixels = stbi_load_from_memory(raw, fe->size, &bw, &bh, &channels, 4);
+        if (pixels) {
+          print_serial("LS: Image decoded successfully. Rendering...\n");
+          for (int sy = 0; sy < screen_height; sy++) {
+            for (int sx = 0; sx < screen_width; sx++) {
+              int gx = (sx * bw << 8) / screen_width;
+              int gy = (sy * bh << 8) / screen_height;
+              int bx = gx >> 8;
+              int by = gy >> 8;
+              if (bx >= bw - 1) bx = bw - 2;
+              if (by >= bh - 1) by = bh - 2;
+              if (bx < 0) bx = 0;
+              if (by < 0) by = 0;
+              int dx = gx & 0xFF;
+              int dy = gy & 0xFF;
+              const uint8_t *p00 = pixels + (by * bw + bx) * 4;
+              const uint8_t *p10 = p00 + 4;
+              const uint8_t *p01 = pixels + ((by + 1) * bw + bx) * 4;
+              const uint8_t *p11 = p01 + 4;
+              int w00 = (256 - dx) * (256 - dy);
+              int w10 = dx * (256 - dy);
+              int w01 = (256 - dx) * dy;
+              int w11 = dx * dy;
+              uint8_t r = (p00[0] * w00 + p10[0] * w10 + p01[0] * w01 + p11[0] * w11) >> 16;
+              uint8_t g = (p00[1] * w00 + p10[1] * w10 + p01[1] * w01 + p11[1] * w11) >> 16;
+              uint8_t b = (p00[2] * w00 + p10[2] * w10 + p01[2] * w01 + p11[2] * w11) >> 16;
+              buf[sy * screen_width + sx] = 0xFF000000 | (r << 16) | (g << 8) | b;
+            }
+          }
+          stbi_image_free(pixels);
+          kfree(raw);
+          print_serial("LS: Wallpaper rendering complete.\n");
+          return;
+        } else {
+          print_serial("LS: stbi_load_from_memory failed.\n");
+        }
+      } else {
+        print_serial("LS: fs_read failed.\n");
+      }
+      kfree(raw);
+    } else {
+      print_serial("LS: kmalloc failed for raw data.\n");
+    }
+  } else {
+    print_serial("LS: No custom wallpaper file found.\n");
+  }
 
   if (global_config.wallpaper_type == 3) {
     print_serial("LS: PNG Wallpaper loading...\n");
@@ -352,6 +552,30 @@ void lockscreen_show(void) {
   keyboard_reset_buffer();
   print_serial("LS: Entering input loop...\n");
 
+  /* Load logo with multiple path attempts */
+  uint32_t *logo_pixels = NULL;
+  int lw = 0, lh = 0;
+  const char *lpaths[] = {"/ICONS/LOGO.PNG", "LOGO.PNG", "/LOGO.PNG", "/icons/logo.png", "logo.png"};
+  file_entry_t *lfe = NULL;
+  for (int i = 0; i < 5; i++) {
+    lfe = fs_find(lpaths[i]);
+    if (lfe) break;
+  }
+  
+  if (lfe) {
+    uint8_t *lraw = (uint8_t *)kmalloc(lfe->size);
+    if (lraw) {
+      if (fs_read(lfe->name, lraw) > 0) {
+        print_serial("LS: Loading logo: ");
+        print_serial(lfe->name);
+        print_serial("\n");
+        int lc;
+        logo_pixels = (uint32_t *)stbi_load_from_memory(lraw, lfe->size, &lw, &lh, &lc, 4);
+      }
+      kfree(lraw);
+    }
+  }
+
   while (1) {
     /* Use BGA hardware acceleration: Get the inactive VRAM page */
     uint32_t *ls_buffer = bga_get_render_buffer();
@@ -359,49 +583,98 @@ void lockscreen_show(void) {
       ls_buffer = real_lfb;
 
     int center_x = screen_width / 2;
-    int card_y = screen_height / 2 - 50;
+    int center_y = screen_height / 2;
+    
+    /* Layout Constants (Entity spacing) */
+    int logo_radius = 64;
+    int logo_y = center_y - 120; // Move up to make room
+    int name_y = logo_y + logo_radius + 25; // 25px gap after logo
+    int input_y = name_y + 35; // Gap after name
+    int input_w = 300;
+    int input_h = 54; // Increased height
+    int input_r = 18; // Smoother corners for taller box
 
     // Erase UI area (Frosted rect and Avatar)
-    int erase_y = card_y - 100;
-    int erase_h = 250;
+    int erase_y = logo_y - logo_radius - 20;
+    int erase_h = 420;
     for (int j = 0; j < erase_h; j++) {
       int py = erase_y + j;
       if (py >= 0 && py < screen_height) {
-        memcpy(&ls_buffer[py * screen_width + (center_x - 150)],
-               &backbuffer[py * screen_width + (center_x - 150)], 300 * 4);
+        memcpy(&ls_buffer[py * screen_width + (center_x - 200)],
+               &backbuffer[py * screen_width + (center_x - 200)], 400 * 4);
       }
     }
 
-    /* Avatar */
-    ls_fill_circle(ls_buffer, center_x, card_y - 40, 40, 0xFFE06C75);
-    ls_draw_text(ls_buffer, center_x - 12, card_y - 56, "R", 0xFF1E2228, 4);
+    /* Logo Circle with Smooth AA and Correct Byte Order */
+    if (logo_pixels) {
+      for (int dy = -logo_radius; dy <= logo_radius; dy++) {
+        for (int dx = -logo_radius; dx <= logo_radius; dx++) {
+          int d2 = dx * dx + dy * dy;
+          if (d2 <= logo_radius * logo_radius) {
+            int px = center_x + dx;
+            int py = logo_y + dy;
+            if (px >= 0 && px < screen_width && py >= 0 && py < screen_height) {
+              int sx = (dx + logo_radius) * lw / (2 * logo_radius);
+              int sy = (dy + logo_radius) * lh / (2 * logo_radius);
+              if (sx >= 0 && sx < lw && sy >= 0 && sy < lh) {
+                uint32_t c = logo_pixels[sy * lw + sx];
+                uint8_t lr = c & 0xFF;
+                uint8_t lg = (c >> 8) & 0xFF;
+                uint8_t lb = (c >> 16) & 0xFF;
+                uint8_t la = (c >> 24) & 0xFF;
+                
+                if (d2 > (logo_radius - 1) * (logo_radius - 1)) {
+                  la = (la * (logo_radius * logo_radius - d2)) / (2 * logo_radius - 1);
+                }
 
-    /* User name */
-    ls_draw_text(ls_buffer, center_x - 30, card_y + 16, "rudra", theme_get()->fg, 2);
+                if (la == 255) {
+                  ls_buffer[py * screen_width + px] = 0xFF000000 | (lr << 16) | (lg << 8) | lb;
+                } else if (la > 0) {
+                  uint32_t bg = ls_buffer[py * screen_width + px];
+                  uint8_t ba, br, bgg, bb;
+                  ls_from_argb(bg, &ba, &br, &bgg, &bb);
+                  uint8_t nr = (lr * la + br * (255 - la)) >> 8;
+                  uint8_t ng = (lg * la + bgg * (255 - la)) >> 8;
+                  uint8_t nb = (lb * la + bb * (255 - la)) >> 8;
+                  ls_buffer[py * screen_width + px] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
+                }
+              }
+            }
+          }
+        }
+      }
+    } else {
+      ls_fill_circle(ls_buffer, center_x, logo_y, logo_radius, 0xFFE06C75);
+      ls_draw_text(ls_buffer, center_x - 12, logo_y - 16, "R", 0xFF1E2228, 4);
+    }
 
-    /* Password Card */
-    int cw = 280, ch = 44;
-    int cx = center_x - cw / 2, cy = card_y + 48;
-    ls_frosted_rect(ls_buffer, cx, cy, cw, ch, 30, 34, 40, 160);
-    ls_draw_rect(ls_buffer, cx, cy, cw, ch, wrong ? 0xFFFF6464 : theme_get()->accent);
+    /* User name - Perfectly Centered */
+    int name_scale = 2;
+    int name_width = 5 * 8 * name_scale; // "rudra" is 5 chars, each 8px wide base
+    ls_draw_text(ls_buffer, center_x - (name_width / 2), name_y, "rudra", theme_get()->fg, name_scale);
+
+    /* Password Card - Smooth Rounded & Transparent - Perfectly Centered */
+    int cx = center_x - (input_w / 2);
+    ls_draw_rounded_frosted_rect(ls_buffer, cx, input_y, input_w, input_h, input_r, 30, 34, 40, 180);
+    ls_draw_rounded_rect_outline(ls_buffer, cx, input_y, input_w, input_h, input_r, wrong ? 0xFFFF6464 : theme_get()->accent);
 
     /* Dots */
     for (int i = 0; i < pw_len; i++) {
-      ls_fill_circle(ls_buffer, cx + 24 + i * 16, cy + 22, 5, theme_get()->fg);
+      ls_fill_circle(ls_buffer, cx + 24 + i * 18, input_y + input_h / 2, 6, theme_get()->fg);
     }
 
     /* Cursor */
     tick_count++;
     if ((tick_count / 20) % 2 == 0) {
-      ls_fill_rect(ls_buffer, cx + 24 + pw_len * 16, cy + 12, 2, 20,
+      ls_fill_rect(ls_buffer, cx + 24 + pw_len * 18, input_y + input_h / 2 - 12, 2, 24,
                    theme_get()->accent);
     }
 
     if (pw_len == 0)
-      ls_draw_text(ls_buffer, cx + 20, cy + 16, "Enter password...", 0xFF969696,
+      ls_draw_text(ls_buffer, cx + 20, input_y + input_h / 2 - 8, "Enter password...", 0xFF969696,
                    1);
     if (wrong)
-      ls_draw_text(ls_buffer, center_x - 80, cy + 56, "Wrong password!",
+      ls_draw_text(ls_buffer, center_x - 80, input_y + input_h + 12, "Wrong password!",
                    0xFFFF6464, 1);
 
     /* Branding */

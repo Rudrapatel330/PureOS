@@ -1,0 +1,19 @@
+#ifndef STD_BRIDGE_CSTDLIB_H
+#define STD_BRIDGE_CSTDLIB_H
+
+#include <stdlib.h>
+#include <string.h>
+
+namespace std {
+    using ::malloc;
+    using ::free;
+    using ::realloc;
+    using ::calloc;
+    using ::strtol;
+    using ::strtod;
+    using ::atoi;
+    using ::abs;
+    using ::strtol;
+}
+
+#endif

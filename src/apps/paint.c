@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 #include "paint.h"
 #include "../fs/fs.h"
 #include "../kernel/heap.h"
@@ -7,7 +8,7 @@
 
 // Canvas Settings
 #define CANVAS_OFFSET_X 20
-#define CANVAS_OFFSET_Y 128
+static int canvas_offset_y = 128;
 
 // Tools
 #define TOOL_PENCIL 0
@@ -105,7 +106,7 @@ void paint_put_pixel(int x, int y, uint32_t color) {
   paint_state.pixels[y * paint_state.canvas_w + x] = color;
 
   if (paint_state.win) {
-    winmgr_put_pixel(paint_state.win, x + CANVAS_OFFSET_X, y + CANVAS_OFFSET_Y, color);
+    winmgr_put_pixel(paint_state.win, x + CANVAS_OFFSET_X, y + canvas_offset_y, color);
   }
 }
 
@@ -144,10 +145,10 @@ void paint_draw_ellipse(int x0, int y0, int x1, int y1, uint32_t col, int bold, 
         for(int b_x=-bold/2; b_x<=bold/2; b_x++) { \
             for(int b_y=-bold/2; b_y<=bold/2; b_y++) { \
                 if (preview && w) { \
-                    winmgr_put_pixel(w, CANVAS_OFFSET_X + cx+x+b_x, CANVAS_OFFSET_Y + cy+y+b_y, col); \
-                    winmgr_put_pixel(w, CANVAS_OFFSET_X + cx-x+b_x, CANVAS_OFFSET_Y + cy+y+b_y, col); \
-                    winmgr_put_pixel(w, CANVAS_OFFSET_X + cx+x+b_x, CANVAS_OFFSET_Y + cy-y+b_y, col); \
-                    winmgr_put_pixel(w, CANVAS_OFFSET_X + cx-x+b_x, CANVAS_OFFSET_Y + cy-y+b_y, col); \
+                    winmgr_put_pixel(w, CANVAS_OFFSET_X + cx+x+b_x, canvas_offset_y + cy+y+b_y, col); \
+                    winmgr_put_pixel(w, CANVAS_OFFSET_X + cx-x+b_x, canvas_offset_y + cy+y+b_y, col); \
+                    winmgr_put_pixel(w, CANVAS_OFFSET_X + cx+x+b_x, canvas_offset_y + cy-y+b_y, col); \
+                    winmgr_put_pixel(w, CANVAS_OFFSET_X + cx-x+b_x, canvas_offset_y + cy-y+b_y, col); \
                 } else { \
                     paint_put_pixel(cx+x+b_x, cy+y+b_y, col); \
                     paint_put_pixel(cx-x+b_x, cy+y+b_y, col); \
@@ -177,9 +178,9 @@ void paint_draw_triangle(int x0, int y0, int x1, int y1, uint32_t col, int bold,
     int top = (y0 < y1) ? y0 : y1;
     int btm = (y0 > y1) ? y0 : y1;
     if (preview && w) {
-        paint_draw_line_ui(w, CANVAS_OFFSET_X+cx, CANVAS_OFFSET_Y+top, CANVAS_OFFSET_X+x0, CANVAS_OFFSET_Y+btm, col, bold);
-        paint_draw_line_ui(w, CANVAS_OFFSET_X+cx, CANVAS_OFFSET_Y+top, CANVAS_OFFSET_X+x1, CANVAS_OFFSET_Y+btm, col, bold);
-        paint_draw_line_ui(w, CANVAS_OFFSET_X+x0, CANVAS_OFFSET_Y+btm, CANVAS_OFFSET_X+x1, CANVAS_OFFSET_Y+btm, col, bold);
+        paint_draw_line_ui(w, CANVAS_OFFSET_X+cx, canvas_offset_y+top, CANVAS_OFFSET_X+x0, canvas_offset_y+btm, col, bold);
+        paint_draw_line_ui(w, CANVAS_OFFSET_X+cx, canvas_offset_y+top, CANVAS_OFFSET_X+x1, canvas_offset_y+btm, col, bold);
+        paint_draw_line_ui(w, CANVAS_OFFSET_X+x0, canvas_offset_y+btm, CANVAS_OFFSET_X+x1, canvas_offset_y+btm, col, bold);
     } else {
         draw_line(cx, top, x0, btm, col, bold);
         draw_line(cx, top, x1, btm, col, bold);
@@ -353,16 +354,21 @@ void paint_draw_ui() {
   winmgr_draw_rect(w, 8, 36, 42, 22, theme->border);
 
   // Main Ribbon Toolbar
-  winmgr_fill_rect(w, 0, 62, w->width, 60, theme->menu_bg);
-  winmgr_fill_rect(w, 0, 122, w->width, 1, theme->border);
+  int fs = ui_get_font_scale();
+  int ribbon_h = fs * 3 + 12;
+  winmgr_fill_rect(w, 0, 62, w->width, ribbon_h, theme->menu_bg);
+  winmgr_fill_rect(w, 0, 62 + ribbon_h, w->width, 1, theme->border);
+
+  int current_x = 10;
+  int section_y = 64;
 
   // Section 1: Tools (3x2 Grid)
-  winmgr_draw_text(w, 40, 108, "Tools", 0xFFAAAAAA);
+  winmgr_draw_text(w, current_x + 20, section_y + 44, "Tools", 0xFFAAAAAA);
   for (int i = 0; i < 6; i++) {
     int col = i % 3;
     int row = i / 3;
-    int tx = 20 + (col * 30);
-    int ty = 64 + (row * 22);
+    int tx = current_x + (col * 30);
+    int ty = section_y + (row * 22);
     uint32_t bg = (paint_state.current_tool == i) ? theme->accent : theme->button;
     winmgr_fill_rect(w, tx, ty, 26, 20, bg);
     winmgr_draw_rect(w, tx, ty, 26, 20, theme->border);
@@ -393,110 +399,128 @@ void paint_draw_ui() {
     }
   }
 
-  winmgr_fill_rect(w, 115, 60, 1, 40, 0xFF444444); // Divider
+  current_x += 100;
+  winmgr_fill_rect(w, current_x - 5, 62, 1, ribbon_h, 0xFF444444); // Divider
 
   // Section 2: Shapes (3x2 Grid)
-  winmgr_draw_text(w, 150, 108, "Shapes", 0xFFAAAAAA);
-  for (int i = 0; i < 6; i++) {
-    int col = i % 3;
-    int row = i / 3;
-    int tx = 130 + (col * 30);
-    int ty = 64 + (row * 22);
-    int tool_id = SHAPE_LINE + i;
-    uint32_t bg = (paint_state.current_tool == tool_id) ? 0xFF404040 : 0xFF252526;
-    winmgr_fill_rect(w, tx, ty, 26, 20, bg);
-    winmgr_draw_rect(w, tx, ty, 26, 20, 0xFF111111);
-    
-    int ix = tx + 3;
-    int iy = ty + 2;
-    if (tool_id == SHAPE_LINE) {
-        paint_draw_line_ui(w, ix+2, iy+14, ix+14, iy+2, 0xFFFFFFFF, 1);
-    } else if (tool_id == SHAPE_CURVE) {
-        for (int t = 0; t < 12; t++) {
-            int x_val = t - 6; 
-            int y_val = (x_val * x_val * x_val) / 36; 
-            winmgr_put_pixel(w, ix + 8 + x_val, iy + 7 + y_val, 0xFFFFFFFF);
-            winmgr_put_pixel(w, ix + 8 + x_val, iy + 8 + y_val, 0xFFFFFFFF);
-            winmgr_put_pixel(w, ix + 9 + x_val, iy + 7 + y_val, 0xFFFFFFFF);
+  if (current_x + 100 < w->width) {
+    winmgr_draw_text(w, current_x + 20, section_y + 44, "Shapes", 0xFFAAAAAA);
+    for (int i = 0; i < 6; i++) {
+        int col = i % 3;
+        int row = i / 3;
+        int tx = current_x + (col * 30);
+        int ty = section_y + (row * 22);
+        int tool_id = SHAPE_LINE + i;
+        uint32_t bg = (paint_state.current_tool == tool_id) ? 0xFF404040 : 0xFF252526;
+        winmgr_fill_rect(w, tx, ty, 26, 20, bg);
+        winmgr_draw_rect(w, tx, ty, 26, 20, 0xFF111111);
+        
+        int ix = tx + 3;
+        int iy = ty + 2;
+        if (tool_id == SHAPE_LINE) {
+            paint_draw_line_ui(w, ix+2, iy+14, ix+14, iy+2, 0xFFFFFFFF, 1);
+        } else if (tool_id == SHAPE_CURVE) {
+            for (int t = 0; t < 12; t++) {
+                int x_val = t - 6; 
+                int y_val = (x_val * x_val * x_val) / 36; 
+                winmgr_put_pixel(w, ix + 8 + x_val, iy + 7 + y_val, 0xFFFFFFFF);
+                winmgr_put_pixel(w, ix + 8 + x_val, iy + 8 + y_val, 0xFFFFFFFF);
+                winmgr_put_pixel(w, ix + 9 + x_val, iy + 7 + y_val, 0xFFFFFFFF);
+            }
+        } else if (tool_id == SHAPE_OVAL) {
+            for (int dy = -5; dy <= 5; dy++) {
+                for (int dx = -6; dx <= 6; dx++) {
+                    int d = dx*dx + dy*dy;
+                    if (d >= 15 && d <= 23) winmgr_put_pixel(w, ix + 8 + dx, iy + 8 + dy, 0xFFFFFFFF);
+                }
+            }
+        } else if (tool_id == SHAPE_RECT) {
+            winmgr_draw_rect(w, ix+3, iy+4, 12, 8, 0xFFFFFFFF);
+            winmgr_draw_rect(w, ix+4, iy+5, 10, 6, 0xFFFFFFFF); // Bold border
+        } else if (tool_id == SHAPE_TRIANGLE) {
+            paint_draw_line_ui(w, ix+10, iy+2, ix+3, iy+14, 0xFFFFFFFF, 1);
+            paint_draw_line_ui(w, ix+10, iy+2, ix+17, iy+14, 0xFFFFFFFF, 1);
+            paint_draw_line_ui(w, ix+3, iy+14, ix+17, iy+14, 0xFFFFFFFF, 1);
+        } else if (tool_id == SHAPE_DIAMOND) {
+            paint_draw_line_ui(w, ix+10, iy+2, ix+3, iy+8, 0xFFFFFFFF, 1);
+            paint_draw_line_ui(w, ix+10, iy+2, ix+17, iy+8, 0xFFFFFFFF, 1);
+            paint_draw_line_ui(w, ix+3, iy+8, ix+10, iy+14, 0xFFFFFFFF, 1);
+            paint_draw_line_ui(w, ix+17, iy+8, ix+10, iy+14, 0xFFFFFFFF, 1);
         }
-    } else if (tool_id == SHAPE_OVAL) {
-        for (int dy = -5; dy <= 5; dy++) {
-           for (int dx = -6; dx <= 6; dx++) {
-              int d = dx*dx + dy*dy;
-              if (d >= 15 && d <= 23) winmgr_put_pixel(w, ix + 8 + dx, iy + 8 + dy, 0xFFFFFFFF);
-           }
-        }
-    } else if (tool_id == SHAPE_RECT) {
-        winmgr_draw_rect(w, ix+3, iy+4, 12, 8, 0xFFFFFFFF);
-        winmgr_draw_rect(w, ix+4, iy+5, 10, 6, 0xFFFFFFFF); // Bold border
-    } else if (tool_id == SHAPE_TRIANGLE) {
-        paint_draw_line_ui(w, ix+10, iy+2, ix+3, iy+14, 0xFFFFFFFF, 1);
-        paint_draw_line_ui(w, ix+10, iy+2, ix+17, iy+14, 0xFFFFFFFF, 1);
-        paint_draw_line_ui(w, ix+3, iy+14, ix+17, iy+14, 0xFFFFFFFF, 1);
-    } else if (tool_id == SHAPE_DIAMOND) {
-        paint_draw_line_ui(w, ix+10, iy+2, ix+3, iy+8, 0xFFFFFFFF, 1);
-        paint_draw_line_ui(w, ix+10, iy+2, ix+17, iy+8, 0xFFFFFFFF, 1);
-        paint_draw_line_ui(w, ix+3, iy+8, ix+10, iy+14, 0xFFFFFFFF, 1);
-        paint_draw_line_ui(w, ix+17, iy+8, ix+10, iy+14, 0xFFFFFFFF, 1);
     }
+    current_x += 100;
   }
 
   // Clear Button
-  winmgr_fill_rect(w, 230, 88, 50, 16, 0xFF252526);
-  winmgr_draw_rect(w, 230, 88, 50, 16, 0xFF111111);
-  winmgr_draw_text(w, 230 + 4, 88 + 4, "Clear", 0xFFFF6666);
-
-  winmgr_fill_rect(w, 290, 60, 1, 40, 0xFF444444); 
-
-  // Section 2: Size
-  winmgr_draw_text(w, 305, 108, "Size", theme->fg_secondary);
-  winmgr_fill_rect(w, 295, 73, 45, 20, theme->input_bg);
-  winmgr_draw_rect(w, 295, 73, 45, 20, theme->input_border);
-  int s = paint_state.brush_size;
-  winmgr_fill_rect(w, 317 - (s / 2), 83 - (s / 2), s, s, 0xFFFFFFFF);
-
-  winmgr_fill_rect(w, 355, 60, 1, 40, 0xFF444444); 
-
-  // Section 3: Color Palette
-  winmgr_draw_text(w, 465, 108, "Colors", 0xFFAAAAAA);
-  winmgr_fill_rect(w, 370, 68, 30, 30, paint_state.current_color);
-  winmgr_draw_rect(w, 370, 68, 30, 30, 0xFFFFFFFF); 
-
-  uint32_t colors[] = {
-      0xFF000000, 0xFF7F7F7F, 0xFF880015, 0xFFED1C24, 0xFFFF7F27, 0xFFFFF200, 0xFF22B14C, 0xFF00A2E8, 0xFF3F48CC, 0xFFA349A4,
-      0xFFFFFFFF, 0xFFC3C3C3, 0xFFB97A57, 0xFFFFAEC9, 0xFFFFC90E, 0xFFEFE4B0, 0xFFB5E61D, 0xFF99D9EA, 0xFF7092BE, 0xFFC8BFE7
-  };
-  
-  for (int i = 0; i < 20; i++) {
-     int row = i / 10;
-     int col = i % 10;
-     int cx = 415 + col * 20;
-     int cy = 68 + row * 20;
-     winmgr_fill_rect(w, cx, cy, 16, 16, colors[i]);
-     winmgr_draw_rect(w, cx, cy, 16, 16, 0xFF111111);
-     if (paint_state.current_color == colors[i]) {
-       winmgr_draw_rect(w, cx - 1, cy - 1, 18, 18, 0xFFFFFFFF);
-     }
+  if (current_x + 60 < w->width) {
+    winmgr_fill_rect(w, current_x, section_y + 24, 50, 16, 0xFF252526);
+    winmgr_draw_rect(w, current_x, section_y + 24, 50, 16, 0xFF111111);
+    winmgr_draw_text(w, current_x + 4, section_y + 24 + 4, "Clear", 0xFFFF6666);
+    current_x += 60;
   }
 
-  winmgr_fill_rect(w, 625, 60, 1, 40, 0xFF444444); // Divider
+  winmgr_fill_rect(w, current_x - 5, 62, 1, ribbon_h, 0xFF444444); 
+
+  // Section: Size
+  if (current_x + 60 < w->width) {
+    winmgr_draw_text(w, current_x + 10, section_y + 44, "Size", theme->fg_secondary);
+    winmgr_fill_rect(w, current_x, section_y + 11, 45, 20, theme->input_bg);
+    winmgr_draw_rect(w, current_x, section_y + 11, 45, 20, theme->input_border);
+    int s = paint_state.brush_size;
+    winmgr_fill_rect(w, current_x + 22 - (s / 2), section_y + 21 - (s / 2), s, s, 0xFFFFFFFF);
+    current_x += 60;
+  }
+
+  winmgr_fill_rect(w, current_x - 5, 62, 1, ribbon_h, 0xFF444444); 
+
+  // Section: Color Palette
+  if (current_x + 240 < w->width) {
+    winmgr_draw_text(w, current_x + 100, section_y + 44, "Colors", 0xFFAAAAAA);
+    winmgr_fill_rect(w, current_x, section_y + 6, 30, 30, paint_state.current_color);
+    winmgr_draw_rect(w, current_x, section_y + 6, 30, 30, 0xFFFFFFFF); 
+
+    uint32_t colors[] = {
+        0xFF000000, 0xFF7F7F7F, 0xFF880015, 0xFFED1C24, 0xFFFF7F27, 0xFFFFF200, 0xFF22B14C, 0xFF00A2E8, 0xFF3F48CC, 0xFFA349A4,
+        0xFFFFFFFF, 0xFFC3C3C3, 0xFFB97A57, 0xFFFFAEC9, 0xFFFFC90E, 0xFFEFE4B0, 0xFFB5E61D, 0xFF99D9EA, 0xFF7092BE, 0xFFC8BFE7
+    };
+    
+    for (int i = 0; i < 20; i++) {
+        int row = i / 10;
+        int col = i % 10;
+        int cx = current_x + 45 + col * 18;
+        int cy = section_y + 6 + row * 18;
+        winmgr_fill_rect(w, cx, cy, 14, 14, colors[i]);
+        winmgr_draw_rect(w, cx, cy, 14, 14, 0xFF111111);
+        if (paint_state.current_color == colors[i]) {
+            winmgr_draw_rect(w, cx - 1, cy - 1, 16, 16, 0xFFFFFFFF);
+        }
+    }
+    current_x += 240;
+  }
+
+  winmgr_fill_rect(w, current_x - 5, 62, 1, ribbon_h, 0xFF444444); // Divider
 
   // Save/Open Actions
-  winmgr_fill_rect(w, 635, 68, 35, 18, 0xFF18181A);
-  winmgr_draw_rect(w, 635, 68, 35, 18, 0xFF444444);
-  winmgr_draw_text(w, 638, 73, "Save", 0xFFFFFFFF);
+  if (current_x + 50 < w->width) {
+    winmgr_fill_rect(w, current_x, section_y + 6, 35, 18, 0xFF18181A);
+    winmgr_draw_rect(w, current_x, section_y + 6, 35, 18, 0xFF444444);
+    winmgr_draw_text(w, current_x + 3, section_y + 11, "Save", 0xFFFFFFFF);
 
-  winmgr_fill_rect(w, 635, 90, 35, 18, 0xFF18181A);
-  winmgr_draw_rect(w, 635, 90, 35, 18, 0xFF444444);
-  winmgr_draw_text(w, 638, 95, "Open", 0xFFFFFFFF);
+    winmgr_fill_rect(w, current_x, section_y + 28, 35, 18, 0xFF18181A);
+    winmgr_draw_rect(w, current_x, section_y + 28, 35, 18, 0xFF444444);
+    winmgr_draw_text(w, current_x + 3, section_y + 33, "Open", 0xFFFFFFFF);
+  }
+
+  // Update canvas offset based on ribbon height
+  canvas_offset_y = 62 + ribbon_h + 10;
 
   // Canvas Frame
-  winmgr_draw_rect(w, CANVAS_OFFSET_X - 1, CANVAS_OFFSET_Y - 1, paint_state.canvas_w + 2, paint_state.canvas_h + 2, 0xFF000000);
+  winmgr_draw_rect(w, CANVAS_OFFSET_X - 1, canvas_offset_y - 1, paint_state.canvas_w + 2, paint_state.canvas_h + 2, 0xFF000000);
 
   // Canvas Content
   for (int y = 0; y < paint_state.canvas_h; y++) {
     for (int x = 0; x < paint_state.canvas_w; x++) {
-      winmgr_put_pixel(w, CANVAS_OFFSET_X + x, CANVAS_OFFSET_Y + y, paint_state.pixels[y * paint_state.canvas_w + x]);
+      winmgr_put_pixel(w, CANVAS_OFFSET_X + x, canvas_offset_y + y, paint_state.pixels[y * paint_state.canvas_w + x]);
     }
   }
 
@@ -508,9 +532,9 @@ void paint_draw_ui() {
      int sz = paint_state.brush_size;
      
      if (paint_state.current_tool == SHAPE_LINE) {
-        paint_draw_line_ui(w, CANVAS_OFFSET_X + x0, CANVAS_OFFSET_Y + y0, CANVAS_OFFSET_X + x1, CANVAS_OFFSET_Y + y1, col, sz);
+        paint_draw_line_ui(w, CANVAS_OFFSET_X + x0, canvas_offset_y + y0, CANVAS_OFFSET_X + x1, canvas_offset_y + y1, col, sz);
      } else if (paint_state.current_tool == SHAPE_CURVE) {
-        paint_draw_line_ui(w, CANVAS_OFFSET_X + x0, CANVAS_OFFSET_Y + y0, CANVAS_OFFSET_X + x1, CANVAS_OFFSET_Y + y1, col, sz); // Simplistic preview for curve block
+        paint_draw_line_ui(w, CANVAS_OFFSET_X + x0, canvas_offset_y + y0, CANVAS_OFFSET_X + x1, canvas_offset_y + y1, col, sz); // Simplistic preview for curve block
      } else if (paint_state.current_tool == SHAPE_RECT || paint_state.current_tool == SHAPE_DIAMOND) {
         int left = (x0 < x1) ? x0 : x1;
         int top = (y0 < y1) ? y0 : y1;
@@ -518,16 +542,16 @@ void paint_draw_ui() {
         int bottom = (y1 > y0) ? y1 : y0;
         
         if (paint_state.current_tool == SHAPE_RECT) {
-            paint_draw_line_ui(w, CANVAS_OFFSET_X+left, CANVAS_OFFSET_Y+top, CANVAS_OFFSET_X+right, CANVAS_OFFSET_Y+top, col, sz);
-            paint_draw_line_ui(w, CANVAS_OFFSET_X+right, CANVAS_OFFSET_Y+top, CANVAS_OFFSET_X+right, CANVAS_OFFSET_Y+bottom, col, sz);
-            paint_draw_line_ui(w, CANVAS_OFFSET_X+right, CANVAS_OFFSET_Y+bottom, CANVAS_OFFSET_X+left, CANVAS_OFFSET_Y+bottom, col, sz);
-            paint_draw_line_ui(w, CANVAS_OFFSET_X+left, CANVAS_OFFSET_Y+bottom, CANVAS_OFFSET_X+left, CANVAS_OFFSET_Y+top, col, sz);
+            paint_draw_line_ui(w, CANVAS_OFFSET_X+left, canvas_offset_y+top, CANVAS_OFFSET_X+right, canvas_offset_y+top, col, sz);
+            paint_draw_line_ui(w, CANVAS_OFFSET_X+right, canvas_offset_y+top, CANVAS_OFFSET_X+right, canvas_offset_y+bottom, col, sz);
+            paint_draw_line_ui(w, CANVAS_OFFSET_X+right, canvas_offset_y+bottom, CANVAS_OFFSET_X+left, canvas_offset_y+bottom, col, sz);
+            paint_draw_line_ui(w, CANVAS_OFFSET_X+left, canvas_offset_y+bottom, CANVAS_OFFSET_X+left, canvas_offset_y+top, col, sz);
         } else {
             int cx = (left + right)/2, cy = (top + bottom)/2;
-            paint_draw_line_ui(w, CANVAS_OFFSET_X+cx, CANVAS_OFFSET_Y+top, CANVAS_OFFSET_X+right, CANVAS_OFFSET_Y+cy, col, sz);
-            paint_draw_line_ui(w, CANVAS_OFFSET_X+right, CANVAS_OFFSET_Y+cy, CANVAS_OFFSET_X+cx, CANVAS_OFFSET_Y+bottom, col, sz);
-            paint_draw_line_ui(w, CANVAS_OFFSET_X+cx, CANVAS_OFFSET_Y+bottom, CANVAS_OFFSET_X+left, CANVAS_OFFSET_Y+cy, col, sz);
-            paint_draw_line_ui(w, CANVAS_OFFSET_X+left, CANVAS_OFFSET_Y+cy, CANVAS_OFFSET_X+cx, CANVAS_OFFSET_Y+top, col, sz);
+            paint_draw_line_ui(w, CANVAS_OFFSET_X+cx, canvas_offset_y+top, CANVAS_OFFSET_X+right, canvas_offset_y+cy, col, sz);
+            paint_draw_line_ui(w, CANVAS_OFFSET_X+right, canvas_offset_y+cy, CANVAS_OFFSET_X+cx, canvas_offset_y+bottom, col, sz);
+            paint_draw_line_ui(w, CANVAS_OFFSET_X+cx, canvas_offset_y+bottom, CANVAS_OFFSET_X+left, canvas_offset_y+cy, col, sz);
+            paint_draw_line_ui(w, CANVAS_OFFSET_X+left, canvas_offset_y+cy, CANVAS_OFFSET_X+cx, canvas_offset_y+top, col, sz);
         }
      } else if (paint_state.current_tool == SHAPE_OVAL) {
         paint_draw_ellipse(x0, y0, x1, y1, col, sz, 1, w);
@@ -660,7 +684,7 @@ void paint_handle_mouse(window_t *w, int mx, int my, int buttons) {
 
   // 3. Canvas Interaction
   int cx = rel_x - CANVAS_OFFSET_X;
-  int cy = rel_y - CANVAS_OFFSET_Y;
+  int cy = rel_y - canvas_offset_y;
 
   if (cx >= 0 && cx < paint_state.canvas_w && cy >= 0 && cy < paint_state.canvas_h) {
     if (buttons & 1) {

@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 #include "taskmgr.h"
 #include "../kernel/smp.h"
 #include "../kernel/string.h"
@@ -8,29 +9,36 @@ static window_t *taskmgr_win = 0;
 static int tm_scroll_offset = 0;
 
 void taskmgr_draw(window_t *win) {
+  int fs = ui_get_font_scale();
   if (!win)
     return;
 
   const theme_t *theme = theme_get();
+  int header_h = fs + 14;
  
   // Background
   winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, theme->bg);
  
   // 1. TOP HEADER / TOOLBAR
-  winmgr_fill_rect(win, 0, 24, win->width, 30, theme->titlebar);
-  winmgr_fill_rect(win, 0, 53, win->width, 1, theme->border);
-  winmgr_draw_text(win, 10, 32, "PID", theme->fg_secondary);
-  winmgr_draw_text(win, 50, 32, "Process Name", theme->fg_secondary);
-  winmgr_draw_text(win, 200, 32, "Status", theme->fg_secondary);
+  winmgr_fill_rect(win, 0, 24, win->width, header_h, theme->titlebar);
+  winmgr_fill_rect(win, 0, 24 + header_h - 1, win->width, 1, theme->border);
+  winmgr_draw_text(win, 10, 24 + (header_h - fs) / 2, "PID", theme->fg_secondary);
+  winmgr_draw_text(win, 50, 24 + (header_h - fs) / 2, "Process Name", theme->fg_secondary);
+  winmgr_draw_text(win, win->width / 2 + 50, 24 + (header_h - fs) / 2, "Status", theme->fg_secondary);
 
   // 2. TASK LIST WITH ZEBRA STRIPING
-  int y = 54;
-  int row_h = 24;
+  int y = 24 + header_h;
+  int row_h = fs + 8;
   extern int window_count;
   extern window_t windows[];
 
   int list_idx = 0;
   int skipped = 0;
+  
+  // Stats footer height
+  int footer_h = fs * 2 + 15;
+  int footer_y = win->height - footer_h;
+
   for (int i = 0; i < window_count; i++) {
     if (windows[i].id == 0 || &windows[i] == win)
       continue;
@@ -47,33 +55,34 @@ void taskmgr_draw(window_t *win) {
 
     char pid_str[8];
     k_itoa(windows[i].id, pid_str);
-    winmgr_draw_text(win, 10, y + 6, pid_str, theme->fg);
+    winmgr_draw_text(win, 10, y + (row_h - fs) / 2, pid_str, theme->fg);
 
     char name[32];
     if (windows[i].title[0] == 0)
       strcpy(name, "System.bin");
     else
       strncpy(name, windows[i].title, 18);
-    winmgr_draw_text(win, 50, y + 6, name, theme->fg);
+    winmgr_draw_text(win, 50, y + (row_h - fs) / 2, name, theme->fg);
 
     const char *status = windows[i].is_minimized ? "Suspended" : "Running";
-    winmgr_draw_text(win, 200, y + 6, status,
+    winmgr_draw_text(win, win->width / 2 + 50, y + (row_h - fs) / 2, status,
                      windows[i].is_minimized ? theme->fg_secondary : 0xFF00AA00);
 
     // End Task Button (Subtle theme-aware button)
-    winmgr_fill_rect(win, win->width - 50, y + 2, 45, 20, theme->button);
-    winmgr_draw_rect(win, win->width - 50, y + 2, 45, 20, theme->border);
-    winmgr_draw_text(win, win->width - 42, y + 6, "End", theme->button_text);
+    int btn_w = 45;
+    int btn_h = row_h - 4;
+    winmgr_fill_rect(win, win->width - btn_w - 5, y + 2, btn_w, btn_h, theme->button);
+    winmgr_draw_rect(win, win->width - btn_w - 5, y + 2, btn_w, btn_h, theme->border);
+    winmgr_draw_text(win, win->width - btn_w + 3, y + (row_h - fs) / 2, "End", theme->button_text);
 
     y += row_h;
     list_idx++;
-    if (y > win->height - 60)
+    if (y > footer_y - row_h)
       break;
   }
 
   // 3. STATS FOOTER
-  int footer_y = win->height - 50;
-  winmgr_fill_rect(win, 0, footer_y, win->width, 50, theme->titlebar);
+  winmgr_fill_rect(win, 0, footer_y, win->width, footer_h, theme->titlebar);
   winmgr_fill_rect(win, 0, footer_y, win->width, 1, theme->border);
 
   extern uint32_t get_used_memory();
@@ -89,12 +98,13 @@ void taskmgr_draw(window_t *win) {
   k_itoa(pct, pct_str);
   strcat(mem_info, pct_str);
   strcat(mem_info, "% Used");
-  winmgr_draw_text(win, 10, footer_y + 10, mem_info, theme->fg);
+  winmgr_draw_text(win, 10, footer_y + 5, mem_info, theme->fg);
 
-  winmgr_draw_text(win, 10, footer_y + 25, "CPUs: 1 Active Core", theme->fg);
+  winmgr_draw_text(win, 10, footer_y + 5 + fs + 2, "CPUs: 1 Active Core", theme->fg);
 }
 
 void taskmgr_on_scroll(void *w, int direction) {
+  int fs = ui_get_font_scale();
   window_t *win = (window_t *)w;
   extern int window_count;
   extern window_t windows[];
@@ -158,6 +168,7 @@ static void taskmgr_on_close(void *w) {
 }
 
 void taskmgr_init() {
+  int fs = ui_get_font_scale();
   if (taskmgr_win && taskmgr_win->id != 0) {
     taskmgr_win->is_minimized = 0;
     extern void winmgr_bring_to_front(window_t * win);

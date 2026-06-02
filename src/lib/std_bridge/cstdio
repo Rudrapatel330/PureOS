@@ -1,0 +1,22 @@
+#ifndef STD_BRIDGE_CSTDIO_H
+#define STD_BRIDGE_CSTDIO_H
+
+#include <stdio.h>
+
+namespace std {
+    using ::FILE;
+    using ::fopen;
+    using ::fclose;
+    using ::fread;
+    using ::fwrite;
+    using ::fseek;
+    using ::ftell;
+    using ::printf;
+    using ::fprintf;
+    using ::sprintf;
+    using ::snprintf;
+    using ::vsnprintf;
+    using ::ferror;
+}
+
+#endif

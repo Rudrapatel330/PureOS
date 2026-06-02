@@ -2,34 +2,65 @@
 #include <stdint.h>
 
 // Anti-aliased font cache (grayscale alpha values)
+// Uses a 3x3 Gaussian-weighted kernel for smooth coverage calculation
+// Similar to macOS Core Text grayscale antialiasing approach
 static uint8_t font8x8_aa[256][10][10];
 static int font_aa_initialized = 0;
+
+// Approximate gamma-correct square root for better perceived brightness
+static uint8_t gamma_boost(int val) {
+    // Attempt to apply a ~1.3 gamma curve using integer math
+    // This preserves fringe detail while boosting contrast for readability
+    // Formula: out = 255 * (in/255)^(1/1.3) ≈ boosted mid-tones
+    if (val <= 0) return 0;
+    if (val >= 255) return 255;
+    // Use a lookup-free approximation: linear ramp with boosted midrange
+    // x^(1/1.3) ≈ x * (1 + 0.23*(1-x)) for x in [0,1]
+    int x = val;
+    int boosted = x + ((x * (255 - x) * 60) >> 16);
+    if (boosted > 255) boosted = 255;
+    return (uint8_t)boosted;
+}
 
 void font_init_aa() {
     if (font_aa_initialized) return;
     extern const uint8_t font8x8_basic[256][8];
     
+    // Gaussian-like 3x3 kernel weights (sum = 16 for easy shift)
+    // [1 2 1]
+    // [2 4 2]  (center=4, ortho=2, diag=1)
+    // [1 2 1]
+    
     for (int c = 0; c < 256; c++) {
         const uint8_t *glyph = font8x8_basic[c];
         for (int y = -1; y < 9; y++) {
             for (int x = -1; x < 9; x++) {
-                int total = 0;
-                // 3x3 Weighted Smoothing Kernel
+                int weighted_sum = 0;
+                
                 for (int ky = -1; ky <= 1; ky++) {
                     for (int kx = -1; kx <= 1; kx++) {
                         int sy = y + ky;
                         int sx = x + kx;
                         if (sy >= 0 && sy < 8 && sx >= 0 && sx < 8) {
                             if (glyph[sy] & (1 << (7 - sx))) {
-                                if (ky == 0 && kx == 0) total += 140; // Center weight
-                                else if (ky == 0 || kx == 0) total += 40; // Orthogonal
-                                else total += 20; // Diagonal
+                                if (ky == 0 && kx == 0)      weighted_sum += 4; // Center
+                                else if (ky == 0 || kx == 0) weighted_sum += 2; // Orthogonal
+                                else                         weighted_sum += 1; // Diagonal
                             }
                         }
                     }
                 }
-                if (total > 255) total = 255;
-                font8x8_aa[c][y + 1][x + 1] = (uint8_t)total;
+                
+                // Convert weighted sum (0..16) to alpha (0..255)
+                // 16 = fully covered center pixel surrounded by filled neighbors
+                int alpha = (weighted_sum * 255 + 8) / 16;
+                
+                // Apply gentle gamma boost for better perceived contrast
+                // This is how macOS makes text feel crisp without hard thresholding
+                alpha = gamma_boost(alpha);
+                
+                if (alpha > 255) alpha = 255;
+                font8x8_aa[c][y + 1][x + 1] = (uint8_t)alpha;
             }
         }
     }
@@ -40,6 +71,17 @@ uint8_t font_get_aa_pixel(unsigned char c, int x, int y) {
     if (!font_aa_initialized) font_init_aa();
     if (x < -1 || x > 8 || y < -1 || y > 8) return 0;
     return font8x8_aa[c][y + 1][x + 1];
+}
+
+extern const uint8_t font16x16_widths[256];
+
+int font_get_width_16(unsigned char c) {
+    return font16x16_widths[c];
+}
+
+uint8_t font_get_aa_pixel_16(unsigned char c, int x, int y) {
+    if (x < 0 || x > 15 || y < 0 || y > 15) return 0;
+    return font16x16_aa[c][y][x];
 }
 
 // Use full ASCII set and ensure alignment

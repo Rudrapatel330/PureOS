@@ -1,0 +1,12 @@
+#ifndef STD_BRIDGE_MAP_H
+#define STD_BRIDGE_MAP_H
+
+#include <EASTL/map.h>
+
+namespace std {
+    using eastl::map;
+    using eastl::pair;
+    using eastl::make_pair;
+}
+
+#endif

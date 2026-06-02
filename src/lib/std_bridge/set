@@ -1,0 +1,10 @@
+#ifndef STD_BRIDGE_SET_H
+#define STD_BRIDGE_SET_H
+
+#include <EASTL/set.h>
+
+namespace std {
+    using eastl::set;
+}
+
+#endif

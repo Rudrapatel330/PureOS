@@ -129,6 +129,29 @@ uint64_t isr_handler(registers_t *regs) {
     }
     print_serial("\n");
 
+    // Dump key registers for debugging
+    print_serial(" RDI: 0x");
+    k_itoa_hex(regs->rdi, n_str);
+    print_serial(n_str);
+    print_serial(" R8: 0x");
+    k_itoa_hex(regs->r8, n_str);
+    print_serial(n_str);
+    print_serial("\n");
+    print_serial(" RDX: 0x");
+    k_itoa_hex(regs->rdx, n_str);
+    print_serial(n_str);
+    print_serial(" RSI: 0x");
+    k_itoa_hex(regs->rsi, n_str);
+    print_serial(n_str);
+    print_serial("\n");
+    print_serial(" RCX: 0x");
+    k_itoa_hex(regs->rcx, n_str);
+    print_serial(n_str);
+    print_serial(" RAX: 0x");
+    k_itoa_hex(regs->rax, n_str);
+    print_serial(n_str);
+    print_serial("\n");
+
     if (regs->int_no == 14) {
       page_fault_handler(regs);
       return (uint64_t)regs;

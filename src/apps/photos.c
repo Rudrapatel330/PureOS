@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 #include "../fs/fs.h"
 #include "../kernel/heap.h"
 #include "../kernel/image.h"

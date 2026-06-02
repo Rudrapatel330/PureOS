@@ -2,6 +2,9 @@
 #include "../gui/startmenu.h"
 #include "../gui/taskbar.h"
 
+window_t *active_window = 0;
+extern int ui_dirty;
+
 #include "anim.h"
 #include "clipboard.h"
 #include "compositor.h"
@@ -1031,24 +1034,87 @@ void winmgr_draw_arc_solid(window_t *win, int cx, int cy, int radius,
   }
 }
 
-// Local helper for drawing char to surface
-static void draw_char_surface(window_t *win, int x, int y, char c,
-                              uint32_t color) {
+void winmgr_draw_char_scaled(window_t *win, int x, int y, char c, uint32_t color,
+                             int scale) {
   if (!win || !win->surface)
     return;
 
   extern uint8_t font_get_aa_pixel(unsigned char c, int x, int y);
+  extern uint8_t font_get_aa_pixel_16(unsigned char c, int x, int y);
   uint32_t c_rgb = color & 0x00FFFFFF;
 
-  for (int cy = -1; cy < 9; cy++) {
-    for (int cx = -1; cx < 9; cx++) {
-      uint8_t alpha = font_get_aa_pixel((unsigned char)c, cx, cy);
-      if (alpha > 0) {
-        winmgr_put_pixel_aa(win, x + cx, y + cy, c_rgb, alpha);
+  // For scales <= 9, bilinear interpolate from the 8x8 AA cache (10x10 grid)
+  // For scales >= 10, bilinear interpolate from the 16x16 pre-rendered font
+  if (scale >= 10) {
+    // Use 16x16 high-res font as source
+    int src_w = 16, src_h = 16;
+    for (int cy = 0; cy < scale; cy++) {
+      for (int cx = 0; cx < scale; cx++) {
+        // Map output [0..scale) -> source [0..16) in 8.8 fixed point
+        int src_x_fp = (cx * (src_w << 8)) / scale;
+        int src_y_fp = (cy * (src_h << 8)) / scale;
+
+        // Clamp
+        if (src_x_fp > ((src_w - 1) << 8)) src_x_fp = (src_w - 1) << 8;
+        if (src_y_fp > ((src_h - 1) << 8)) src_y_fp = (src_h - 1) << 8;
+
+        int sx = src_x_fp >> 8;
+        int sy = src_y_fp >> 8;
+        int fx = src_x_fp & 0xFF;
+        int fy = src_y_fp & 0xFF;
+
+        // Bilinear interpolation of 4 nearest 16x16 samples
+        uint8_t a00 = font_get_aa_pixel_16((unsigned char)c, sx,     sy);
+        uint8_t a10 = font_get_aa_pixel_16((unsigned char)c, sx + 1, sy);
+        uint8_t a01 = font_get_aa_pixel_16((unsigned char)c, sx,     sy + 1);
+        uint8_t a11 = font_get_aa_pixel_16((unsigned char)c, sx + 1, sy + 1);
+
+        int top    = a00 + ((a10 - a00) * fx >> 8);
+        int bottom = a01 + ((a11 - a01) * fx >> 8);
+        int alpha  = top  + ((bottom - top) * fy >> 8);
+
+        if (alpha <= 4) continue;
+        if (alpha > 255) alpha = 255;
+
+        winmgr_put_pixel_aa(win, x + cx, y + cy, c_rgb, (uint8_t)alpha);
+      }
+    }
+  } else {
+    // Use 8x8 AA cache (10x10 grid covering -1..8) for small scales
+    for (int cy = 0; cy < scale; cy++) {
+      for (int cx = 0; cx < scale; cx++) {
+        int src_x_fp = (cx * (10 << 8)) / scale - (1 << 8);
+        int src_y_fp = (cy * (10 << 8)) / scale - (1 << 8);
+
+        if (src_x_fp < -(1 << 8)) src_x_fp = -(1 << 8);
+        if (src_y_fp < -(1 << 8)) src_y_fp = -(1 << 8);
+        if (src_x_fp > (8 << 8)) src_x_fp = (8 << 8);
+        if (src_y_fp > (8 << 8)) src_y_fp = (8 << 8);
+
+        int sx = src_x_fp >> 8;
+        int sy = src_y_fp >> 8;
+        int fx = src_x_fp & 0xFF;
+        int fy = src_y_fp & 0xFF;
+
+        uint8_t a00 = font_get_aa_pixel((unsigned char)c, sx,     sy);
+        uint8_t a10 = font_get_aa_pixel((unsigned char)c, sx + 1, sy);
+        uint8_t a01 = font_get_aa_pixel((unsigned char)c, sx,     sy + 1);
+        uint8_t a11 = font_get_aa_pixel((unsigned char)c, sx + 1, sy + 1);
+
+        int top    = a00 + ((a10 - a00) * fx >> 8);
+        int bottom = a01 + ((a11 - a01) * fx >> 8);
+        int alpha  = top  + ((bottom - top) * fy >> 8);
+
+        if (alpha <= 4) continue;
+        if (alpha > 255) alpha = 255;
+
+        winmgr_put_pixel_aa(win, x + cx, y + cy, c_rgb, (uint8_t)alpha);
       }
     }
   }
 }
+
+
 
 // 16bpp Text Drawing - Render to Surface
 void winmgr_draw_text(window_t *win, int x, int y, const char *text,
@@ -1056,15 +1122,24 @@ void winmgr_draw_text(window_t *win, int x, int y, const char *text,
   if (!win || !text)
     return;
 
+  extern int ui_get_font_scale(void);
+  int scale = ui_get_font_scale();
+
   int start_x = x;
   int safety = 0;
+  extern int font_get_width_16(unsigned char c);
   while (*text && safety < 1024) {
-    draw_char_surface(win, x, y, *text++, color);
-    x += 8;
+    unsigned char c = *text++;
+    winmgr_draw_char_scaled(win, x, y, c, color, scale);
+    if (scale >= 10) {
+        x += (font_get_width_16(c) * scale) / 16;
+    } else {
+        x += scale;
+    }
     safety++;
   }
 
-  winmgr_invalidate_rect(win, start_x, y, (x - start_x), 8);
+  winmgr_invalidate_rect(win, start_x, y, (x - start_x), scale);
 }
 
 void winmgr_draw_button(window_t *win, int x, int y, int w, int h,
@@ -1082,6 +1157,12 @@ void winmgr_draw_button(window_t *win, int x, int y, int w, int h,
   int txt_x = x + (w - (len * 8)) / 2; // 8 pixels per char
   int txt_y = y + (h - 8) / 2;
   winmgr_draw_text(win, txt_x, txt_y, label, 0x0000); // Black
+}
+
+void winmgr_draw_circle_solid(window_t *win, int cx, int cy, int radius, uint32_t color) {
+  for (int i = 0; i < 4; i++) {
+    winmgr_draw_arc_solid(win, cx, cy, radius, i, color);
+  }
 }
 
 void winmgr_render_window(window_t *win) {
@@ -1141,7 +1222,6 @@ void winmgr_render_window(window_t *win) {
   // 1. Fill base frame and title bar area (Full width to fix misalignment)
   winmgr_fill_rect(win, 0, 0, win->width, win->height, theme->bg);
 
-  extern window_t *active_window;
   // Title bar colors (Forced Dark for Terminal)
   uint32_t title_col;
   if (win->app_type == 0) {
@@ -1182,39 +1262,35 @@ void winmgr_render_window(window_t *win) {
 
   win->blur_strength = 0; // Disable blur globally
 
-  // === Window Buttons (Shifted to avoid curve) ===
-  int btn_x = win->width - 30; // 30px from right for better spacing
-  int btn_y = 6;               // Centered in 32px title bar
-  int btn_sz = 20;
+  // === Window Buttons (macOS Traffic Light Style on Left) ===
+  int btn_y = 10; // Centered in 32px title bar
+  int btn_sz = 12;
+  int btn_spacing = 8;
+  int start_x = 12;
 
-  // Minimize button (yellow with border)
-  uint32_t min_col = (win->hover_btn == 1) ? 0xFFFFFF00 : 0xFFC0C000;
-  winmgr_draw_rect(win, btn_x - 52, btn_y, btn_sz, btn_sz, min_col);
-  winmgr_draw_rect(win, btn_x - 52, btn_y, btn_sz, 1, 0xFFFFFF80);
-  winmgr_draw_rect(win, btn_x - 52, btn_y, 1, btn_sz, 0xFFFFFF80);
-  winmgr_draw_rect(win, btn_x - 52, btn_y + btn_sz - 1, btn_sz, 1, 0xFF808000);
-  winmgr_draw_rect(win, btn_x - 52 + btn_sz - 1, btn_y, 1, btn_sz, 0xFF808000);
+  // Red (Close)
+  uint32_t close_col = (win->hover_btn == 3) ? 0xFFFF6666 : 0xFFFF5F57;
+  winmgr_draw_circle_solid(win, start_x + btn_sz/2, btn_y + btn_sz/2, btn_sz/2, close_col);
+  if (win->hover_btn == 3) {
+      // Subtle 'x' when hovered
+      winmgr_draw_text(win, start_x + 3, btn_y + 1, "x", 0x80000000);
+  }
 
-  // Maximize button (green with border)
-  uint32_t max_col = (win->hover_btn == 2) ? 0xFF00FFFF : 0xFF00FF00;
-  winmgr_draw_rect(win, btn_x - 26, btn_y, btn_sz, btn_sz, max_col);
-  winmgr_draw_rect(win, btn_x - 26, btn_y, btn_sz, 1, 0xFF80FF80);
-  winmgr_draw_rect(win, btn_x - 26, btn_y, 1, btn_sz, 0xFF80FF80);
-  winmgr_draw_rect(win, btn_x - 26, btn_y + btn_sz - 1, btn_sz, 1, 0xFF008000);
-  winmgr_draw_rect(win, btn_x - 26 + btn_sz - 1, btn_y, 1, btn_sz, 0xFF008000);
+  // Yellow (Minimize)
+  uint32_t min_col = (win->hover_btn == 1) ? 0xFFFFFF00 : 0xFFFEBC2E;
+  winmgr_draw_circle_solid(win, start_x + btn_sz + btn_spacing + btn_sz/2, btn_y + btn_sz/2, btn_sz/2, min_col);
+  if (win->hover_btn == 1) {
+      // Subtle '-' when hovered
+      winmgr_draw_text(win, start_x + btn_sz + btn_spacing + 3, btn_y + 1, "-", 0x80000000);
+  }
 
-  // Close button (red with border)
-  uint32_t close_col = (win->hover_btn == 3) ? 0xFFFF6666 : 0xFFFF0000;
-  winmgr_draw_rect(win, btn_x, btn_y, btn_sz, btn_sz, close_col);
-  winmgr_draw_rect(win, btn_x, btn_y, btn_sz, 1, 0xFFFF8080);      // Light top
-  winmgr_draw_rect(win, btn_x, btn_y, 1, btn_sz, 0xFFFF8080);      // Light left
-  winmgr_draw_rect(win, btn_x, btn_y + btn_sz - 1, btn_sz, 1, 0xFF800000);     // Dark bottom
-  winmgr_draw_rect(win, btn_x + btn_sz - 1, btn_y, 1, btn_sz, 0xFF800000); // Dark right
-
-  // Button labels
-  winmgr_draw_text(win, btn_x - 46, btn_y + 4, "_", 0xFFFFFFFF);
-  winmgr_draw_text(win, btn_x - 20, btn_y + 4, "#", 0xFFFFFFFF);
-  winmgr_draw_text(win, btn_x + 6, btn_y + 4, "x", 0xFFFFFFFF);
+  // Green (Maximize)
+  uint32_t max_col = (win->hover_btn == 2) ? 0xFF00FF00 : 0xFF28C840;
+  winmgr_draw_circle_solid(win, start_x + (btn_sz + btn_spacing)*2 + btn_sz/2, btn_y + btn_sz/2, btn_sz/2, max_col);
+  if (win->hover_btn == 2) {
+      // Subtle '+' when hovered
+      winmgr_draw_text(win, start_x + (btn_sz + btn_spacing)*2 + 3, btn_y + 1, "+", 0x80000000);
+  }
 
   // === Custom Draw ===
   if (win->draw) {
@@ -1260,10 +1336,15 @@ void winmgr_render_window(window_t *win) {
     }
   }
 
-  // === Title Text (with shadow) ===
-  winmgr_draw_text(win, 7, 9, win->title, 0x80101010); // Subtle dark shadow
+  // === Title Text (with shadow, centered) ===
+  int title_len = 0;
+  while(win->title[title_len]) title_len++;
+  int title_x = (win->width - (title_len * 10)) / 2;
+  if (title_x < 75) title_x = 75; // Don't overlap traffic lights
+
+  winmgr_draw_text(win, title_x + 1, 9, win->title, 0x80101010); // Subtle dark shadow
   uint32_t title_text_col = (win->app_type == 0) ? 0xFFFFFFFF : theme->titlebar_text;
-  winmgr_draw_text(win, 6, 8, win->title, title_text_col); // Theme or Fixed text color
+  winmgr_draw_text(win, title_x, 8, win->title, title_text_col); // Theme or Fixed text color
 
   // Text Buffer Draw
   if (win->text_buffer[0] != 0 || win->cursor_pos >= 0) {
@@ -1935,9 +2016,6 @@ void winmgr_render_text_all() {
   // No-op
 }
 
-window_t *active_window = 0;
-extern int ui_dirty;
-
 // Key/Mouse Handlers (Unchanged logic, just ensure 16bpp doesn't break logic)
 // Logic uses coordinates, untouched by bpp.
 void window_handle_key(int key, char c) {
@@ -2032,7 +2110,6 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
 
   if (hit) {
     // Focus (Only on Click)
-    extern window_t *active_window;
     if (buttons != 0 && active_window != win && !win->is_dragging) {
       active_window = win;
       winmgr_bring_to_front(win);
@@ -2046,37 +2123,43 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
     win->hover_btn = 0;
     if (my < win->y + 32) {
       int rx = mx - win->x;
-      int btn_x_close = win->width - 30;
-      if (rx >= btn_x_close && rx < btn_x_close + 20)
+      int btn_sz = 12;
+      int btn_spacing = 8;
+      int start_x = 12;
+
+      // Close (Red) - Leftmost
+      if (rx >= start_x && rx < start_x + btn_sz)
         win->hover_btn = 3;
-      else if (rx >= btn_x_close - 26 && rx < btn_x_close - 6)
-        win->hover_btn = 2;
-      else if (rx >= btn_x_close - 52 && rx < btn_x_close - 32)
+      // Minimize (Yellow) - Middle
+      else if (rx >= start_x + btn_sz + btn_spacing && rx < start_x + (btn_sz + btn_spacing) + btn_sz)
         win->hover_btn = 1;
+      // Maximize (Green) - Rightmost
+      else if (rx >= start_x + (btn_sz + btn_spacing)*2 && rx < start_x + (btn_sz + btn_spacing)*2 + btn_sz)
+        win->hover_btn = 2;
     }
     if (win->hover_btn != old_hover) {
-      win->needs_redraw = 1; // Direct render might be safer but let's try this
+      win->needs_redraw = 1; 
       ui_dirty = 1;
     }
-
-
 
     if (buttons & 1) {
       // 1. Check for Click on Min/Max/Close Buttons FIRST (Priority)
       if (!win->is_dragging && my < win->y + 32) {
         int rx = mx - win->x;
-        int btn_x_close = win->width - 30;
+        int btn_sz = 12;
+        int btn_spacing = 8;
+        int start_x = 12;
 
-        // Close
-        if (rx >= btn_x_close && rx < btn_x_close + 20) {
+        // Close (Red)
+        if (rx >= start_x && rx < start_x + btn_sz) {
           if (!(win->flags & WINDOW_FLAG_NO_CLOSE)) {
             winmgr_close_window(win);
             ui_dirty = 1;
           }
           return 1;
         }
-        // Maximize
-        else if (rx >= btn_x_close - 26 && rx < btn_x_close - 6) {
+        // Maximize (Green) - Rightmost
+        else if (rx >= start_x + (btn_sz + btn_spacing)*2 && rx < start_x + (btn_sz + btn_spacing)*2 + btn_sz) {
           compositor_invalidate_window(win); // Invalidate old
           if (!win->is_maximized) {
             win->saved_x = win->x;
@@ -2110,8 +2193,8 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
           ui_dirty = 1;
           return 1;
         }
-        // Minimize (Animated)
-        else if (rx >= btn_x_close - 36 && rx < btn_x_close - 22) {
+        // Minimize (Yellow) - Middle
+        else if (rx >= start_x + btn_sz + btn_spacing && rx < start_x + (btn_sz + btn_spacing) + btn_sz) {
           compositor_invalidate_window(win); // Invalidate current
 
           // Don't set is_minimized = 1 yet! Wait for anim.

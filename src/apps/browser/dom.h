@@ -21,6 +21,9 @@ typedef struct dom_attr {
   struct dom_attr *next;
 } dom_attr_t;
 
+// Forward declaration for JS event callbacks
+typedef struct js_event_callback js_event_callback_t;
+
 typedef struct dom_node {
   int type; // DOM_NODE_ELEMENT, etc.
 
@@ -40,7 +43,23 @@ typedef struct dom_node {
 
   // Computed Style (points to css_style_t)
   void *style;
+  // JS event listeners
+  js_event_callback_t *event_listeners;
 } dom_node_t;
+
+// JS event listener (linked list on DOM nodes)
+struct js_event_callback {
+  char type[24];                    // "click", "keydown", etc.
+  int callback_stash_idx;           // Duktape stash index for the JS function
+  struct js_event_callback *next;
+};
+
+// External resource tracking
+typedef struct dom_resource {
+  char url[512];
+  int type; // 0=CSS, 1=script, 2=image, 3=font
+  struct dom_resource *next;
+} dom_resource_t;
 
 // Core DOM functions
 dom_node_t *dom_create_element(const char *tag);
@@ -52,6 +71,11 @@ void dom_free_node(dom_node_t *node);
 
 // HTML Parsing
 dom_node_t *dom_parse_html(const char *html_str);
+
+// Resource management
+void dom_add_resource(dom_resource_t **list, const char *url, int type);
+void dom_free_resources(dom_resource_t *list);
+char *dom_resolve_url(const char *base_url, const char *relative_url, char *out, int out_max);
 
 // Debugging
 void dom_print_tree(dom_node_t *root, int depth);

@@ -221,7 +221,7 @@ static void taskbar_update_magnification(int mx, int my) {
 
   int effect_width = 150; // Pixels
   float max_scale = 1.6f;
-  int min_size = 48;
+  int min_size = 64;
 
   int total_base_w = g_taskbar.icon_count * min_size;
 
@@ -517,13 +517,13 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
       g_taskbar.icons[i].x_offset = 0.0f;
       if (!is_vertical) {
         g_taskbar.icons[i].x =
-            (old_icon_count > 0) ? g_taskbar.icons[old_icon_count - 1].x + 48.0f
+            (old_icon_count > 0) ? g_taskbar.icons[old_icon_count - 1].x + 64.0f
                                  : (screen_width / 2.0f);
         g_taskbar.icons[i].y = 0;
       } else {
         g_taskbar.icons[i].x = 0;
         g_taskbar.icons[i].y =
-            (old_icon_count > 0) ? g_taskbar.icons[old_icon_count - 1].y + 48.0f
+            (old_icon_count > 0) ? g_taskbar.icons[old_icon_count - 1].y + 64.0f
                                  : (screen_height / 2.0f);
       }
     }
@@ -546,16 +546,16 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
   // Calculate dock size
   float total_icon_w = 0.0f;
   for (int i = 0; i < g_taskbar.icon_count; i++)
-    total_icon_w += (48.0f * g_taskbar.icons[i].scale);
+    total_icon_w += (64.0f * g_taskbar.icons[i].scale);
 
   int dock_w, dock_h, dock_x, dock_y;
   if (!is_vertical) {
-    dock_h = 54;
+    dock_h = 74;
     dock_w = screen_width;
     dock_x = 0;
     dock_y = screen_height - dock_h;
   } else {
-    dock_w = 54;
+    dock_w = 74;
     dock_h = 66 + 55 + (int)total_icon_w;
     dock_y = (screen_height - dock_h) / 2;
     dock_x =
@@ -632,7 +632,7 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
 
   // 5. App Icons
   extern window_t *active_window;
-  extern void draw_icon(int x, int y, int type, uint32_t *target);
+  extern void draw_icon(int x, int y, int w, int h, int type, uint32_t *target);
 
   for (int i = 0; i < g_taskbar.icon_count; i++) {
     dock_icon_state_t *icon = &g_taskbar.icons[i];
@@ -640,33 +640,25 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
     int y = (int)icon->y;
 
     // Magnified size logic
-    int sq_size = (int)(42.0f * icon->scale);
+    int sq_size = (int)(56.0f * icon->scale);
     int sq_x, sq_y;
     if (!is_vertical) {
-      sq_x = x + (48 - sq_size) / 2;
+      sq_x = x + (64 - sq_size) / 2;
       sq_y = (int)(bd_y + (bd_h - sq_size) / 2.0f + icon->y_offset);
     } else {
       sq_x = (int)(bd_x + (bd_w - sq_size) / 2.0f + icon->x_offset);
-      sq_y = y + (48 - sq_size) / 2;
+      sq_y = y + (64 - sq_size) / 2;
     }
     extern os_config_t global_config;
 
-    int icon_radius = sq_size / 2;
-    // compositor_blur_rect(sq_x, sq_y, sq_size, sq_size, icon_radius); // Disabled for performance
-
-    uint32_t base_color = 0x60000000; // Fixed dark translucent icons for all themes
+    // Draw selection highlight if in edit mode
     if (g_taskbar.edit_mode) {
-      base_color = 0x80FFAA55; // Highlight while dragging
+      vga_draw_rect_blend_lfb_ex(sq_x, sq_y, sq_size, sq_size, 0x80FFAA55, 0, 0,
+                                 buffer, sq_size / 2);
     }
-    uint32_t bg_col =
-        vga_apply_color_filter(base_color, global_config.icon_filter,
-                               global_config.icon_bg_filter_intensity);
-    vga_draw_rect_blend_lfb_ex(sq_x, sq_y, sq_size, sq_size, bg_col, 0, 0,
-                               buffer, icon_radius);
 
-    // Draw app icon (centered in the white square)
-    draw_icon(sq_x + (sq_size - 40) / 2, sq_y + (sq_size - 40) / 2,
-              icon->app_id, buffer);
+    // Draw app icon natively scaled with bilinear filtering
+    draw_icon(sq_x, sq_y, sq_size, sq_size, icon->app_id, buffer);
 
     // Running indicator dot
     if (icon->is_running) {
@@ -740,13 +732,13 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
     for (int i = 0; i < g_taskbar.icon_count; i++) {
       if (!is_vertical) {
         int ix = g_taskbar.icons[i].x;
-        if (mx >= ix && mx < ix + 48) {
+        if (mx >= ix && mx < ix + 64) {
           hovered = i;
           break;
         }
       } else {
         int iy = g_taskbar.icons[i].y;
-        if (my >= iy && my < iy + 48) {
+        if (my >= iy && my < iy + 64) {
           hovered = i;
           break;
         }

@@ -23,10 +23,10 @@ typedef struct {
   int pinned[10];       // Array of APP_XXX IDs
   int taskbar_position; // 0 = Bottom, 1 = Left, 2 = Right
   int auto_hide_taskbar;
-<<<<<<< HEAD
-=======
   int show_sysmon_widget;
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
+  int font_size;  // 0 = Normal, 1 = Large, 2 = XL
+  int font_style; // 0 = Regular, 1 = Bold
+  int wallpaper_index; // 0=wall1, 1=wall2, 2=wall3, 3=wall4
 } os_config_t;
 
 extern os_config_t global_config;

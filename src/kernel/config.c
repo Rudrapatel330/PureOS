@@ -32,6 +32,9 @@ void config_init(void) {
   global_config.timezone_offset_m = 0; // Default to UTC
   global_config.taskbar_position = 0;  // 0 = bottom
   global_config.show_sysmon_widget = 1;
+  global_config.font_size = 0;         // 0 = Normal
+  global_config.font_style = 0;        // 0 = Regular
+  global_config.wallpaper_index = 3;   // Default to wall4.jpg
 }
 
 #include "../fs/fat.h"

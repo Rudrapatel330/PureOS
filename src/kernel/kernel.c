@@ -373,13 +373,14 @@ void desktop_task() {
   extern void compositor_render(void);
   extern void compositor_reset_history(void);
 
-  // Initialize compositor state and render once to clear any initial garbage
+  // Initialize lockscreen BEFORE the first render
+  print_serial("Initializing lockscreen...\n");
+  lockscreen_show();
+
+  // Initialize compositor state and render
   compositor_reset_history();
   compositor_render();
-
-  print_serial("Showing lockscreen...\n");
-  lockscreen_show();
-  print_serial("Lockscreen shown.\n");
+  print_serial("First frame rendered.\n");
 
   ui_dirty = 1;
 
@@ -620,6 +621,26 @@ void kernel_poll_events(void) {
 
 void kernel_poll_events_only(void) { desktop_process_messages(); }
 
+extern void (*__init_array_start[])(void);
+extern void (*__init_array_end[])(void);
+extern void (*__ctors_start[])(void);
+extern void (*__ctors_end[])(void);
+
+void call_cpp_constructors(void) {
+  print_serial("Calling C++ Global Constructors...\n");
+  for (void (**p)() = __init_array_start; p < __init_array_end; p++) {
+    if (*p) {
+      (*p)();
+    }
+  }
+  for (void (**p)() = __ctors_start; p < __ctors_end; p++) {
+    if (*p && *p != (void (*)())-1) {
+      (*p)();
+    }
+  }
+  print_serial("C++ Global Constructors initialized.\n");
+}
+
 void kernel_main(unsigned int magic, unsigned int addr) {
   (void)magic;
   (void)addr;
@@ -675,6 +696,9 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   // 2. Memory (Heap)
   heap_init();
   print_serial("HEAP OK\n");
+  
+  // 2.5 C++ Constructors (MUST be after Heap)
+  call_cpp_constructors();
 
   // 3. Full Hardware Init (Paging, ACPI, APIC, PIC, SMP)
   hal_init();
@@ -751,6 +775,13 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   compositor_init();
   print_serial("[INIT 9] GUI OK\n");
 
+  // Force lockscreen state active immediately to block desktop rendering while it loads
+  extern int lockscreen_active;
+  lockscreen_active = 1;
+
+  // Clear backbuffer once to ensure no garbage/desktop is shown initially
+  if (backbuffer) memset(backbuffer, 0, screen_width * screen_height * 4);
+
   extern void desktop_task();
   create_task(desktop_task, "desktop");
 
@@ -774,23 +805,43 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   }
 }
 
-// Implement specific 32bpp char drawing with FONT
+// Implement specific 32bpp char drawing with anti-aliased FONT
+// Uses grayscale AA cache with proper alpha blending for smooth text
 void draw_char_32bpp(int x, int y, char c, uint32_t color) {
-  const uint8_t *glyph = font8x8_basic[(unsigned char)c];
+  extern uint8_t font_get_aa_pixel(unsigned char c, int x, int y);
 
-  for (int cy = 0; cy < 8; cy++) {
-    uint8_t row = glyph[cy];
-    for (int cx = 0; cx < 8; cx++) {
-      if (row & (1 << (7 - cx))) {
-        int px = x + cx;
-        int py = y + cy;
-        if (px >= 0 && px < screen_width && py >= 0 && py < screen_height) {
-          backbuffer[py * screen_width + px] = color;
-        }
+  uint32_t s_r = (color >> 16) & 0xFF;
+  uint32_t s_g = (color >> 8) & 0xFF;
+  uint32_t s_b = color & 0xFF;
+
+  for (int cy = -1; cy < 9; cy++) {
+    for (int cx = -1; cx < 9; cx++) {
+      int px = x + cx;
+      int py = y + cy;
+      if (px < 0 || px >= screen_width || py < 0 || py >= screen_height)
+        continue;
+
+      uint8_t alpha = font_get_aa_pixel((unsigned char)c, cx, cy);
+      if (alpha <= 4) continue;
+
+      if (alpha >= 250) {
+        // Fully opaque — skip blending
+        backbuffer[py * screen_width + px] = 0xFF000000 | (s_r << 16) | (s_g << 8) | s_b;
+      } else {
+        // Alpha-blend with background
+        uint32_t dst = backbuffer[py * screen_width + px];
+        uint32_t d_r = (dst >> 16) & 0xFF;
+        uint32_t d_g = (dst >> 8) & 0xFF;
+        uint32_t d_b = dst & 0xFF;
+        uint32_t r = d_r + (((int)s_r - (int)d_r) * alpha >> 8);
+        uint32_t g = d_g + (((int)s_g - (int)d_g) * alpha >> 8);
+        uint32_t b = d_b + (((int)s_b - (int)d_b) * alpha >> 8);
+        backbuffer[py * screen_width + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
       }
     }
   }
 }
+
 
 void draw_text_32bpp(int x, int y, const char *text, uint32_t color) {
   while (*text) {

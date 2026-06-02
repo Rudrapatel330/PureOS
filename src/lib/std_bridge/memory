@@ -1,0 +1,18 @@
+#ifndef STD_BRIDGE_MEMORY_H
+#define STD_BRIDGE_MEMORY_H
+
+#include <cstddef>
+#include <EASTL/shared_ptr.h>
+#include <EASTL/unique_ptr.h>
+#include <EASTL/weak_ptr.h>
+
+namespace std {
+    using eastl::shared_ptr;
+    using eastl::unique_ptr;
+    using eastl::weak_ptr;
+    using eastl::make_shared;
+    using eastl::make_unique;
+    using eastl::enable_shared_from_this;
+}
+
+#endif

@@ -379,6 +379,77 @@ dom_node_t *dom_parse_html(const char *html) {
     return root;
 }
 
+void dom_add_resource(dom_resource_t **list, const char *url, int type) {
+  if (!list || !url) return;
+  dom_resource_t *res = (dom_resource_t *)kmalloc(sizeof(dom_resource_t));
+  if (!res) return;
+  memset(res, 0, sizeof(dom_resource_t));
+  strncpy(res->url, url, 511);
+  res->url[511] = 0;
+  res->type = type;
+  res->next = *list;
+  *list = res;
+}
+
+void dom_free_resources(dom_resource_t *list) {
+  while (list) {
+    dom_resource_t *next = list->next;
+    kfree(list);
+    list = next;
+  }
+}
+
+char *dom_resolve_url(const char *base_url, const char *relative_url, char *out, int out_max) {
+  if (!relative_url || !out || out_max < 1) return out;
+  out[0] = 0;
+
+  // Already absolute
+  if (strncmp(relative_url, "http://", 7) == 0 ||
+      strncmp(relative_url, "https://", 8) == 0 ||
+      strncmp(relative_url, "about:", 6) == 0) {
+    strncpy(out, relative_url, out_max - 1);
+    out[out_max - 1] = 0;
+    return out;
+  }
+
+  if (!base_url) return out;
+
+  // Absolute path (starts with /)
+  if (relative_url[0] == '/') {
+    const char *p = base_url;
+    if (strncmp(p, "https://", 8) == 0) { strncpy(out, p, 8); p += 8; }
+    else if (strncmp(p, "http://", 7) == 0) { strncpy(out, p, 7); p += 7; }
+    else return out;
+    int olen = strlen(out);
+    while (*p && *p != '/') {
+      if (olen < out_max - 1) { out[olen++] = *p++; }
+      else break;
+    }
+    out[olen] = 0;
+    strncat(out, relative_url, out_max - strlen(out) - 1);
+    return out;
+  }
+
+  // Relative path - strip to last /
+  strncpy(out, base_url, out_max - 1);
+  out[out_max - 1] = 0;
+  char *last_slash = strrchr(out, '/');
+  
+  char *proto_end = strstr(out, "://");
+  if (proto_end && last_slash <= proto_end + 2) {
+    last_slash = 0;
+  }
+
+  if (last_slash) {
+    last_slash[1] = 0;
+    strncat(out, relative_url, out_max - strlen(out) - 1);
+  } else {
+    strncat(out, "/", out_max - strlen(out) - 1);
+    strncat(out, relative_url, out_max - strlen(out) - 1);
+  }
+  return out;
+}
+
 void dom_print_tree(dom_node_t *root, int depth) {
   if (!root)
     return;

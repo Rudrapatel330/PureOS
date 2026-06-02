@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 #include <stdio.h>
 
 int main() {

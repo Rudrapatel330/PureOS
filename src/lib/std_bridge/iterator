@@ -1,0 +1,28 @@
+#ifndef STD_BRIDGE_ITERATOR_H
+#define STD_BRIDGE_ITERATOR_H
+
+#include <EASTL/iterator.h>
+
+namespace std {
+    using eastl::advance;
+    using eastl::next;
+    using eastl::prev;
+    using eastl::distance;
+    template<class Category, class T, class Distance = ptrdiff_t, class Pointer = T*, class Reference = T&>
+    struct iterator {
+        typedef T         value_type;
+        typedef Distance  difference_type;
+        typedef Pointer   pointer;
+        typedef Reference reference;
+        typedef Category  iterator_category;
+    };
+    
+    using eastl::forward_iterator_tag;
+    using eastl::bidirectional_iterator_tag;
+    using eastl::random_access_iterator_tag;
+    using eastl::input_iterator_tag;
+    using eastl::output_iterator_tag;
+    using eastl::back_inserter;
+}
+
+#endif

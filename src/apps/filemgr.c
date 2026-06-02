@@ -7,6 +7,12 @@
 #include "../kernel/heap.h"
 #include "../kernel/string.h"
 #include "../kernel/window.h"
+#include "../kernel/ui_layout.h"
+
+static int get_sidebar_width(void) {
+    int fs = ui_get_font_scale();
+    return ui_measure_text_width("External Drive", fs) + 60;
+}
 
 // ======================== STATE ========================
 
@@ -105,6 +111,7 @@ static void fm_navigate_to(const char *name) {
 // ======================== REFRESH ========================
 
 static void fm_refresh() {
+  int fs = ui_get_font_scale();
   file_count = 0;
   selected_index = -1;
   scroll_offset = 0;
@@ -128,7 +135,7 @@ static void fm_refresh() {
 // Draw a small 16x16 folder icon
 static void fm_draw_folder_icon(window_t *win, int x, int y) {
   // Folder tab
-  winmgr_fill_rect(win, x, y + 2, 8, 3, 0xFE00); // Orange tab
+  winmgr_fill_rect(win, x, y + 4, 8, 3, 0xFE00); // Orange tab
   // Folder body
   winmgr_fill_rect(win, x, y + 4, 16, 12, 0xFE60); // Yellow body
   // Shadow
@@ -156,77 +163,80 @@ static void fm_draw_file_icon(window_t *win, int x, int y) {
 
 // Draw C: drive icon (larger, 32x32-ish)
 static void fm_draw_drive_icon(window_t *win, int x, int y) {
+  int fs = ui_get_font_scale();
   // Drive body
-  winmgr_fill_rect(win, x, y + 4, 32, 24, 0xC618); // Gray body
+  winmgr_fill_rect(win, x, y + 4, 32, (fs + 8), 0xC618); // Gray body
   // 3D edges
   winmgr_fill_rect(win, x, y + 4, 32, 1, 0xDEFB);      // Top highlight
-  winmgr_fill_rect(win, x, y + 4, 1, 24, 0xDEFB);      // Left highlight
-  winmgr_fill_rect(win, x, y + 27, 32, 1, 0x4208);     // Bottom shadow
-  winmgr_fill_rect(win, x + 31, y + 4, 1, 24, 0x4208); // Right shadow
+  winmgr_fill_rect(win, x, y + 4, 1, (fs + 8), 0xDEFB);      // Left highlight
+  winmgr_fill_rect(win, x, y + 47, 32, 1, 0x4208);     // Bottom shadow
+  winmgr_fill_rect(win, x + 31, y + 4, 1, (fs + 8), 0x4208); // Right shadow
   // Light/activity indicator
-  winmgr_fill_rect(win, x + 3, y + 22, 4, 3, 0x07E0); // Green LED
+  winmgr_fill_rect(win, x + 3, y + 42, 4, 3, 0x07E0); // Green LED
   // Drive slot
-  winmgr_fill_rect(win, x + 4, y + 8, 24, 3, 0x8410); // Slot
-  winmgr_fill_rect(win, x + 4, y + 8, 24, 1, 0x4208); // Slot shadow
+  winmgr_fill_rect(win, x + 4, y + 8, (fs + 8), 3, 0x8410); // Slot
+  winmgr_fill_rect(win, x + 4, y + 8, (fs + 8), 1, 0x4208); // Slot shadow
 }
 
 static void fm_draw_toolbar(window_t *win) {
+  int fs = ui_get_font_scale();
   int bw = win->width;
 
   // Toolbar background (gradient)
-  for (int r = 0; r < 26; r++) {
+  for (int r = 0; r < 36; r++) {
     uint16_t c = 0xE71C - (r * 0x0020); // Subtle gradient
     if (c < 0xC618)
       c = 0xC618;
-    winmgr_fill_rect(win, 2, 24 + r, bw - 4, 1, c);
+    winmgr_fill_rect(win, 2, (fs + 8) + r, bw - 4, 1, c);
   }
   // Bottom border
-  winmgr_fill_rect(win, 2, 50, bw - 4, 1, 0x8410);
+  winmgr_fill_rect(win, 2, 60, bw - 4, 1, 0x8410);
 
   // Back button
   uint16_t back_col = (hover_btn_id == 1) ? 0xBDF7 : 0xDEFB;
-  winmgr_fill_rect(win, 6, 28, 50, 18, back_col);
-  winmgr_draw_rect(win, 6, 28, 50, 18, 0x8410);
-  winmgr_draw_text(win, 12, 32, "<Back", 0x0000);
+  winmgr_fill_rect(win, 6, 30, 50, (fs + 8), back_col);
+  winmgr_draw_rect(win, 6, 30, 50, 24, 0x8410);
+  winmgr_draw_text(win, 12, 30 + (24 - ui_get_font_scale()) / 2, "<Back", 0x0000);
 
   // Up button
   uint16_t up_col = (hover_btn_id == 2) ? 0xBDF7 : 0xDEFB;
-  winmgr_fill_rect(win, 60, 28, 32, 18, up_col);
-  winmgr_draw_rect(win, 60, 28, 32, 18, 0x8410);
-  winmgr_draw_text(win, 66, 32, "Up", 0x0000);
+  winmgr_fill_rect(win, 60, 30, 32, (fs + 8), up_col);
+  winmgr_draw_rect(win, 60, 30, 32, 24, 0x8410);
+  winmgr_draw_text(win, 66, 30 + (24 - ui_get_font_scale()) / 2, "Up", 0x0000);
 
   // New Folder button
   uint16_t nf_col = (hover_btn_id == 3) ? 0xBDF7 : 0xDEFB;
-  winmgr_fill_rect(win, 96, 28, 64, 18, nf_col);
-  winmgr_draw_rect(win, 96, 28, 64, 18, 0x8410);
-  winmgr_draw_text(win, 100, 32, "NewDir", 0x0000);
+  winmgr_fill_rect(win, 96, 30, 64, (fs + 8), nf_col);
+  winmgr_draw_rect(win, 96, 30, 64, 24, 0x8410);
+  winmgr_draw_text(win, 100, 30 + (24 - ui_get_font_scale()) / 2, "NewDir", 0x0000);
 
   // New File button
   uint16_t nfi_col = (hover_btn_id == 4) ? 0xBDF7 : 0xDEFB;
-  winmgr_fill_rect(win, 164, 28, 64, 18, nfi_col);
-  winmgr_draw_rect(win, 164, 28, 64, 18, 0x8410);
-  winmgr_draw_text(win, 168, 32, "NewFile", 0x0000);
+  winmgr_fill_rect(win, 164, 30, 64, (fs + 8), nfi_col);
+  winmgr_draw_rect(win, 164, 30, 64, 24, 0x8410);
+  winmgr_draw_text(win, 168, 30 + (24 - ui_get_font_scale()) / 2, "NewFile", 0x0000);
 
   // Delete button
   uint16_t del_col = (hover_btn_id == 5) ? 0xF800 : 0xDEFB;
-  winmgr_fill_rect(win, 232, 28, 50, 18, del_col);
-  winmgr_draw_rect(win, 232, 28, 50, 18, 0x8410);
-  winmgr_draw_text(win, 238, 32, "Del", (hover_btn_id == 5) ? 0xFFFF : 0x0000);
+  winmgr_fill_rect(win, 232, 30, 50, (fs + 8), del_col);
+  winmgr_draw_rect(win, 232, 30, 50, 24, 0x8410);
+  winmgr_draw_text(win, 238, 30 + (24 - ui_get_font_scale()) / 2, "Del", (hover_btn_id == 5) ? 0xFFFF : 0x0000);
 }
 
 static void fm_draw_address_bar(window_t *win) {
+  int fs = ui_get_font_scale();
   int bw = win->width;
 
   // Address bar background
-  winmgr_fill_rect(win, 2, 52, bw - 4, 20, 0xFFFF);
-  winmgr_draw_rect(win, 2, 52, bw - 4, 20, 0x8410);
+  winmgr_fill_rect(win, 2, 62, bw - 4, (fs + 8), 0xFFFF);
+  winmgr_draw_rect(win, 2, 62, bw - 4, 24, 0x8410);
 
   // Path label
-  winmgr_draw_text(win, 6, 56, "Addr:", 0x8410);
+  winmgr_draw_text(win, 6, 62 + (24 - ui_get_font_scale()) / 2, "Addr:", 0x8410);
 
   // Path text
   if (at_root) {
-    winmgr_draw_text(win, 50, 56, "My Computer", 0x0000);
+    winmgr_draw_text(win, 50, 62 + (24 - ui_get_font_scale()) / 2, "My Computer", 0x0000);
   } else {
     // Show C:\path format
     char display[FM_MAX_PATH + 3];
@@ -245,33 +255,35 @@ static void fm_draw_address_bar(window_t *win) {
       display[2] = '\\';
       display[3] = 0;
     }
-    winmgr_draw_text(win, 50, 56, display, 0x0000);
+    winmgr_draw_text(win, 50, 62 + (24 - ui_get_font_scale()) / 2, display, 0x0000);
   }
 }
 
 static void fm_draw_column_headers(window_t *win) {
+  int fs = ui_get_font_scale();
   int bw = win->width;
 
   // Header row
-  winmgr_fill_rect(win, 2, 74, bw - 4, 18, 0xDEFB);
-  winmgr_draw_rect(win, 2, 74, bw - 4, 18, 0x8410);
+  winmgr_fill_rect(win, 2, 88, bw - 4, (fs + 8), 0xDEFB);
+  winmgr_draw_rect(win, 2, 88, bw - 4, 24, 0x8410);
 
   // Column: Name
-  winmgr_draw_text(win, 30, 78, "Name", 0x0000);
+  winmgr_draw_text(win, 30, 88 + (24 - ui_get_font_scale()) / 2, "Name", 0x0000);
   // Separator
-  winmgr_fill_rect(win, bw - 104, 74, 1, 18, 0x8410);
+  winmgr_fill_rect(win, bw - 104, 88, 1, (fs + 8), 0x8410);
   // Column: Size
-  winmgr_draw_text(win, bw - 100, 78, "Size", 0x0000);
+  winmgr_draw_text(win, bw - 100, 88 + (24 - ui_get_font_scale()) / 2, "Size", 0x0000);
   // Separator
-  winmgr_fill_rect(win, bw - 52, 74, 1, 18, 0x8410);
+  winmgr_fill_rect(win, bw - 52, 88, 1, (fs + 8), 0x8410);
   // Column: Type
-  winmgr_draw_text(win, bw - 48, 78, "Type", 0x0000);
+  winmgr_draw_text(win, bw - 48, 88 + (24 - ui_get_font_scale()) / 2, "Type", 0x0000);
 }
 
 static void fm_draw_file_list(window_t *win) {
+  int fs = ui_get_font_scale();
   int bw = win->width;
-  int list_y = 93;
-  int row_h = 20;
+  int list_y = 114;
+  int row_h = 28;
   int max_visible = (win->height - list_y - 30) / row_h;
 
   // List area background
@@ -282,7 +294,7 @@ static void fm_draw_file_list(window_t *win) {
     winmgr_fill_rect(win, 20, list_y + 10, bw - 44, 40,
                      (selected_index == 0) ? 0x001F : 0xFFFF);
     fm_draw_drive_icon(win, 24, list_y + 14);
-    winmgr_draw_text(win, 62, list_y + 22, "Local Disk (C:)",
+    winmgr_draw_text(win, 62, list_y + 42, "Local Disk (C:)",
                      (selected_index == 0) ? 0xFFFF : 0x0000);
     winmgr_draw_text(win, 62, list_y + 34, "10 MB  FAT12",
                      (selected_index == 0) ? 0xBDF7 : 0x8410);
@@ -290,7 +302,7 @@ static void fm_draw_file_list(window_t *win) {
   }
 
   if (file_count == 0) {
-    winmgr_draw_text(win, 20, list_y + 20, "(Empty Folder)", 0x8410);
+    winmgr_draw_text(win, 20, list_y + 40, "(Empty Folder)", 0x8410);
     return;
   }
 
@@ -312,17 +324,17 @@ static void fm_draw_file_list(window_t *win) {
     if (file_list[i].is_dir) {
       if (strcmp(file_list[i].name, "..") == 0) {
         // Up arrow style for ..
-        winmgr_draw_text(win, 8, y + 2, "..", is_sel ? 0xFFFF : 0xFE00);
+        winmgr_draw_text(win, 8, y + (28 - ui_get_font_scale()) / 2, "..", is_sel ? 0xFFFF : 0xFE00);
       } else {
-        fm_draw_folder_icon(win, 6, y + 1);
+        fm_draw_folder_icon(win, 6, y + (28 - 16) / 2);
       }
     } else {
-      fm_draw_file_icon(win, 6, y + 1);
+      fm_draw_file_icon(win, 6, y + (28 - 16) / 2);
     }
 
     // Name
     uint16_t text_col = is_sel ? 0xFFFF : 0x0000;
-    winmgr_draw_text(win, 26, y + 4, file_list[i].name, text_col);
+    winmgr_draw_text(win, 26, y + (28 - ui_get_font_scale()) / 2, file_list[i].name, text_col);
 
     // Size (right-aligned area)
     if (!file_list[i].is_dir) {
@@ -341,24 +353,24 @@ static void fm_draw_file_list(window_t *win) {
         size_str[sl + 1] = 'B';
         size_str[sl + 2] = 0;
       }
-      winmgr_draw_text(win, bw - 100, y + 4, size_str,
+      winmgr_draw_text(win, bw - 100, y + (28 - ui_get_font_scale()) / 2, size_str,
                        is_sel ? 0xBDF7 : 0x8410);
     } else {
-      winmgr_draw_text(win, bw - 100, y + 4, "-", is_sel ? 0xBDF7 : 0x8410);
+      winmgr_draw_text(win, bw - 100, y + (28 - ui_get_font_scale()) / 2, "-", is_sel ? 0xBDF7 : 0x8410);
     }
 
     // Type
     const char *type = file_list[i].is_dir ? "Dir" : "File";
-    winmgr_draw_text(win, bw - 48, y + 4, type, is_sel ? 0xBDF7 : 0x8410);
+    winmgr_draw_text(win, bw - 48, y + (28 - ui_get_font_scale()) / 2, type, is_sel ? 0xBDF7 : 0x8410);
   }
 }
 
 static void fm_draw_status_bar(window_t *win) {
   int bw = win->width;
-  int by = win->height - 26;
+  int by = win->height - 30;
 
   // Status bar background (3D sunken look)
-  winmgr_fill_rect(win, 2, by, bw - 4, 22, 0xDEFB);
+  winmgr_fill_rect(win, 2, by, bw - 4, 28, 0xDEFB);
   winmgr_fill_rect(win, 2, by, bw - 4, 1, 0x8410);     // Top shadow
   winmgr_fill_rect(win, 2, by + 1, bw - 4, 1, 0xFFFF); // Inner highlight
 
@@ -372,7 +384,7 @@ static void fm_draw_status_bar(window_t *win) {
     strcpy(status, num);
     strcat(status, " items");
   }
-  winmgr_draw_text(win, 8, by + 6, status, 0x0000);
+  winmgr_draw_text(win, 8, by + (28 - ui_get_font_scale()) / 2, status, 0x0000);
 }
 
 static void fm_draw_input_dialog(window_t *win) {
@@ -393,11 +405,11 @@ static void fm_draw_input_dialog(window_t *win) {
   // Title
   const char *title =
       (ui_mode == FM_MODE_NEW_FOLDER) ? "New Folder" : "New File";
-  winmgr_fill_rect(win, dx + 2, dy + 2, 196, 16, 0x001F); // Blue title
+  winmgr_fill_rect(win, dx + 2, dy + 4, 196, 16, 0x001F); // Blue title
   winmgr_draw_text(win, dx + 6, dy + 5, title, 0xFFFF);
 
   // Label
-  winmgr_draw_text(win, dx + 10, dy + 24, "Name:", 0x0000);
+  winmgr_draw_text(win, dx + 10, dy + 44, "Name:", 0x0000);
 
   // Input field
   winmgr_fill_rect(win, dx + 10, dy + 38, 180, 16, 0xFFFF);
@@ -432,7 +444,7 @@ static void fm_draw_msg_dialog(window_t *win) {
   winmgr_fill_rect(win, dx + 1, dy + 1, 198, 1, 0xFFFF);
   winmgr_fill_rect(win, dx + 1, dy + 1, 1, 78, 0xFFFF);
 
-  winmgr_fill_rect(win, dx + 2, dy + 2, 196, 16, 0x001F);
+  winmgr_fill_rect(win, dx + 2, dy + 4, 196, 16, 0x001F);
   winmgr_draw_text(win, dx + 6, dy + 5, "Transfer Status", 0xFFFF);
 
   winmgr_draw_text(win, dx + 10, dy + 32, popup_msg, 0x0000);
@@ -448,9 +460,10 @@ static void fm_draw_msg_dialog(window_t *win) {
 void filemgr_draw(window_t *win) {
   if (!win)
     return;
+  int fs = ui_get_font_scale();
 
   // Background
-  winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, 0xFFFF);
+  winmgr_fill_rect(win, 2, (fs + 8), win->width - 4, win->height - 26, 0xFFFF);
 
   fm_draw_toolbar(win);
   fm_draw_address_bar(win);
@@ -743,6 +756,7 @@ void filemgr_on_key(window_t *win, int key, char c) {
 }
 
 void filemgr_on_mouse(window_t *win, int mx, int my, int buttons) {
+  int fs = ui_get_font_scale();
   // mx, my are already window-relative
   int rx = mx;
   int ry = my;
@@ -845,8 +859,8 @@ void filemgr_on_mouse(window_t *win, int mx, int my, int buttons) {
   }
 
   // File list clicks
-  int list_y = 93;
-  int row_h = 20;
+  int list_y = 114;
+  int row_h = 28;
 
   if (ry >= list_y && ry < win->height - 28) {
     int clicked_index = scroll_offset + (ry - list_y) / row_h;
@@ -885,9 +899,10 @@ void filemgr_on_mouse(window_t *win, int mx, int my, int buttons) {
 }
 
 static void filemgr_on_scroll(void *w, int direction) {
+  int fs = ui_get_font_scale();
   window_t *win = (window_t *)w;
-  int list_y = 93;
-  int row_h = 20;
+  int list_y = 114;
+  int row_h = 28;
   int max_visible = (win->height - list_y - 30) / row_h;
   int max_scroll = file_count > max_visible ? file_count - max_visible : 0;
 

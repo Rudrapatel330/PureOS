@@ -3,27 +3,42 @@
 #include "../kernel/string.h"
 #include "../kernel/theme.h"
 #include "../kernel/window.h"
+#include "../kernel/ui_layout.h"
+#include "../kernel/image.h"
+#include "../fs/fs.h"
 
 extern void compositor_invalidate_rect(int x, int y, int w, int h);
 extern int screen_width, screen_height;
 extern window_t windows[];
 extern int window_count;
 extern void desktop_invalidate(void);
-extern void *kmalloc(unsigned int size);
+#include <stddef.h>
+
+static int get_sidebar_width(void) {
+    int fs = ui_get_font_scale();
+    // Use a long tab name as a benchmark for sidebar width
+    return ui_measure_text_width("\xF0\x9F\x8E\xA8 Personalization", fs) + 60;
+}
+static int get_cx(void) {
+    return get_sidebar_width() + 30;
+}
+extern void *kmalloc(size_t size);
 extern void kfree(void *ptr);
 extern void print_serial(const char *s);
 extern void k_itoa(int n, char *s);
 
-#define SW 150
-#define CX (SW + 15)
-#define PA 0
-#define PB 1
+
+
+#define PB 0
+#define PWALL 1
 #define PT 2
 #define PC 3
 #define PD 4
-#define PE 5
-#define PW 6
+#define PW 5
+#define PF 6
 #define NP 7
+#define PA 98
+#define PE 99
 
 // Colors
 #define C0 0xFF202020
@@ -34,6 +49,26 @@ extern void k_itoa(int n, char *s);
 #define CD 0xFF666666
 #define CA 0xFF0078D4
 #define CS 0xFF3D3D3D
+
+#define DRAW_HOVER(win, s, rx, ry, rw, rh, bg_col, hov_col) \
+  do { \
+    if ((s)->mx >= (rx) && (s)->mx < (rx) + (rw) && (s)->my >= (ry) && (s)->my < (ry) + (rh)) \
+      winmgr_fill_rect((win), (rx), (ry), (rw), (rh), (hov_col)); \
+    else \
+      winmgr_fill_rect((win), (rx), (ry), (rw), (rh), (bg_col)); \
+  } while(0)
+
+#define DRAW_ROUNDED_CARD(win, s, rx, ry, rw, rh, bg_col, hov_col, border_col) \
+  do { \
+    uint32_t fill_col = ((s)->mx >= (rx) && (s)->mx < (rx) + (rw) && (s)->my >= (ry) && (s)->my < (ry) + (rh)) ? (hov_col) : (bg_col); \
+    winmgr_draw_rounded_rect_ex((win), (rx), (ry), (rw), (rh), fill_col, 1, (border_col), 8); \
+  } while(0)
+
+#define DRAW_ROUNDED_HOVER(win, s, rx, ry, rw, rh, bg_col, hov_col, radius) \
+  do { \
+    uint32_t fill_col = ((s)->mx >= (rx) && (s)->mx < (rx) + (rw) && (s)->my >= (ry) && (s)->my < (ry) + (rh)) ? (hov_col) : (bg_col); \
+    winmgr_draw_rounded_rect_ex((win), (rx), (ry), (rw), (rh), fill_col, 0, 0, (radius)); \
+  } while(0)
 
 typedef struct {
   int page, hover;
@@ -46,167 +81,188 @@ typedef struct {
   int scroll_y, tz;
   int mx, my;
   int auto_hide_taskbar;
-<<<<<<< HEAD
-  int sel_res; // Selected resolution index
-=======
   int show_sysmon;
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
+  int sel_res;
+  int font_size, font_style;
+  int picker_open;
+  int dropdown_open; // 0 = none, 1 = Color Mode, 2 = Icon Filter
 } sstate_t;
 
-static void card(window_t *w, int x, int y, int cw, int h) {
-  winmgr_fill_rect(w, x, y, cw, h, C1);
-  winmgr_draw_rect(w, x, y, cw, h, CS);
+static uint32_t *wp_thumbs[4] = {0};
+#define TH_W 480
+#define TH_H 300
+
+static void load_wp_thumbs(int incremental) {
+  int fs = ui_get_font_scale();
+  static int loading = 0;
+  if (loading) return;
+  loading = 1;
+
+  fs_mkdir("/THUMBS");
+
+  for (int i = 0; i < 4; i++) {
+    if (wp_thumbs[i]) continue;
+
+    char cache_path[32];
+    char idx[4];
+    k_itoa(i + 1, idx);
+    
+    // 1. TRY PRE-GENERATED THUMB (from build script, in root)
+    strcpy(cache_path, "/W");
+    strcat(cache_path, idx);
+    strcat(cache_path, "THUMB.RAW");
+
+    file_entry_t *cf = fs_find(cache_path);
+    if (!cf) {
+        // 2. TRY SYSTEM CACHE (in /THUMBS/)
+        strcpy(cache_path, "/THUMBS/WALL");
+        strcat(cache_path, idx);
+        strcat(cache_path, ".RAW");
+        cf = fs_find(cache_path);
+    }
+
+    if (cf && cf->size == TH_W * TH_H * 4) {
+      uint32_t *cached = (uint32_t *)kmalloc(TH_W * TH_H * 4);
+      if (cached) {
+        if (fs_read(cache_path, (uint8_t *)cached) > 0) {
+          wp_thumbs[i] = cached;
+          print_serial("SETTINGS: Instant Load from CACHE: ");
+          print_serial(cache_path);
+          print_serial("\n");
+          if (incremental) { loading = 0; return; }
+          continue;
+        }
+        kfree(cached);
+      }
+    }
+
+    // Cache miss... (unchanged)
+    char path[32];
+    strcpy(path, "/WALL");
+    strcat(path, idx);
+    strcat(path, ".JPG");
+
+    file_entry_t *f = fs_find(path);
+    if (!f) {
+      strcpy(path, "/wall");
+      strcat(path, idx);
+      strcat(path, ".jpg");
+      f = fs_find(path);
+    }
+    
+    if (f) {
+      uint8_t *raw = (uint8_t *)kmalloc(f->size + 16);
+      if (raw) {
+        int rs = fs_read(path, raw);
+        if (rs > 0) {
+          int iw, ih, in;
+          unsigned char *pixels = stbi_load_from_memory(raw, rs, &iw, &ih, &in, 4);
+          if (pixels) {
+            uint32_t *cached = (uint32_t *)kmalloc(TH_W * TH_H * 4);
+            if (cached) {
+              uint32_t *p32 = (uint32_t *)pixels;
+              for (int py = 0; py < TH_H; py++) {
+                for (int px = 0; px < TH_W; px++) {
+                  int gx = (px * iw << 8) / TH_W;
+                  int gy = (py * ih << 8) / TH_H;
+                  int sx = gx >> 8;
+                  int sy = gy >> 8;
+                  int fx = gx & 0xFF;
+                  int fy = gy & 0xFF;
+                  if (sx >= iw - 1) sx = iw - 2;
+                  if (sy >= ih - 1) sy = ih - 2;
+                  uint32_t c00 = p32[sy * iw + sx];
+                  uint32_t c10 = p32[sy * iw + sx + 1];
+                  uint32_t c01 = p32[(sy + 1) * iw + sx];
+                  uint32_t c11 = p32[(sy + 1) * iw + sx + 1];
+                  int w00 = (256 - fx) * (256 - fy), w10 = fx * (256 - fy), w01 = (256 - fx) * fy, w11 = fx * fy;
+                  uint8_t r = ((c00 & 0xFF) * w00 + (c10 & 0xFF) * w10 + (c01 & 0xFF) * w01 + (c11 & 0xFF) * w11) >> 16;
+                  uint8_t g = (((c00 >> 8) & 0xFF) * w00 + ((c10 >> 8) & 0xFF) * w10 + ((c01 >> 8) & 0xFF) * w01 + ((c11 >> 8) & 0xFF) * w11) >> 16;
+                  uint8_t b = (((c00 >> 16) & 0xFF) * w00 + ((c10 >> 16) & 0xFF) * w10 + ((c01 >> 16) & 0xFF) * w01 + ((c11 >> 16) & 0xFF) * w11) >> 16;
+                  uint8_t a = (((c00 >> 24) & 0xFF) * w00 + ((c10 >> 24) & 0xFF) * w10 + ((c01 >> 24) & 0xFF) * w01 + ((c11 >> 24) & 0xFF) * w11) >> 16;
+                  cached[py * TH_W + px] = (a << 24) | (r << 16) | (g << 8) | b;
+                }
+              }
+              wp_thumbs[i] = cached;
+              fs_write(cache_path, (uint8_t *)cached, TH_W * TH_H * 4);
+            }
+            stbi_image_free(pixels);
+          }
+        }
+        kfree(raw);
+      }
+    }
+    if (incremental) { loading = 0; return; }
+  }
+  loading = 0;
 }
 
-static void draw_sb(window_t *w, sstate_t *s) {
-  static const char *lb[] = {"Home", "Personal", "Accounts", "System", "About"};
-  winmgr_fill_rect(w, 0, 0, SW, w->height, C1);
-  winmgr_fill_rect(w, SW - 1, 0, 1, w->height, CS);
-  // Profile
-  winmgr_fill_rect(w, 15, 12, 28, 28, CA);
-  winmgr_draw_text(w, 22, 18, "R", CW);
-  winmgr_draw_text(w, 48, 15, "Rudra", CW);
-  winmgr_draw_text(w, 48, 28, "local", CD);
-  winmgr_fill_rect(w, 10, 48, SW - 20, 1, CS);
-  for (int i = 0; i < NP; i++) {
-    int y = 56 + i * 28;
-    if (s->page == i) {
-      winmgr_fill_rect(w, 4, y, SW - 8, 26, 0xFF555555); // Solid gray selection
-      winmgr_fill_rect(w, 2, y + 6, 3, 14, CA);
-    } else if (s->hover == i)
-      winmgr_fill_rect(w, 4, y, SW - 8, 26, 0xFF353535); // Opaque blended hover
-    winmgr_draw_text(w, 16, y + 7, lb[i], s->page == i ? CW : CG);
+static void draw_thumb_scaled(window_t *win, int x, int y, int w, int h, int index, int blur) {
+  if (index < 0 || index >= 4 || !wp_thumbs[index]) {
+    winmgr_fill_rect(win, x, y, w, h, 0xFF111111);
+    return;
+  }
+  uint32_t *data = wp_thumbs[index];
+  uint32_t *target = win->surface;
+
+  // Bilinear interpolation for drawing thumbnails smoothly
+  for (int py = 0; py < h; py++) {
+    int dy = y + py;
+    if (dy < 32 || dy >= win->height) continue;
+    int gy = (py * TH_H << 8) / h;
+    int sy = gy >> 8;
+    int fy = gy & 0xFF;
+
+    for (int px = 0; px < w; px++) {
+      int dx = x + px;
+      if (dx < 0 || dx >= win->width) continue;
+      int gx = (px * TH_W << 8) / w;
+      int sx = gx >> 8;
+      int fx = gx & 0xFF;
+
+      if (sx >= TH_W - 1) sx = TH_W - 2;
+      if (sy >= TH_H - 1) sy = TH_H - 2;
+
+      uint32_t c00 = data[sy * TH_W + sx];
+      uint32_t c10 = data[sy * TH_W + sx + 1];
+      uint32_t c01 = data[(sy + 1) * TH_W + sx];
+      uint32_t c11 = data[(sy + 1) * TH_W + sx + 1];
+
+      int w00 = (256 - fx) * (256 - fy);
+      int w10 = fx * (256 - fy);
+      int w01 = (256 - fx) * fy;
+      int w11 = fx * fy;
+
+      uint32_t r = (((c00 >> 16) & 0xFF) * w00 + ((c10 >> 16) & 0xFF) * w10 + ((c01 >> 16) & 0xFF) * w01 + ((c11 >> 16) & 0xFF) * w11) >> 16;
+      uint32_t g = (((c00 >> 8) & 0xFF) * w00 + ((c10 >> 8) & 0xFF) * w10 + ((c01 >> 8) & 0xFF) * w01 + ((c11 >> 8) & 0xFF) * w11) >> 16;
+      uint32_t b = ((c00 & 0xFF) * w00 + (c10 & 0xFF) * w10 + (c01 & 0xFF) * w01 + (c11 & 0xFF) * w11) >> 16;
+
+      uint32_t p = 0xFF000000 | (r << 16) | (g << 8) | b;
+      if (blur) {
+        p = (0xFF000000) | ((r / 2) << 16) | ((g / 2) << 8) | (b / 2);
+      }
+      target[dy * win->width + dx] = p;
+    }
   }
 }
 
-static void pg_home(window_t *w, sstate_t *s) {
-  int cw = w->width - SW - 30;
-  (void)s;
-  winmgr_draw_text(w, CX, 10, "Home", CW);
-  // Hero
-  card(w, CX, 32, cw, 55);
-  winmgr_fill_rect(w, CX + 12, 40, 28, 20, CA);
-  winmgr_draw_text(w, CX + 50, 38, "PURE-OS-PC", CW);
-  winmgr_draw_text(w, CX + 50, 52, "PureOS v2.0", CG);
-  // Cards
-  int cy = 100;
-  card(w, CX, cy, cw, 42);
-  winmgr_fill_rect(w, CX + 10, cy + 8, 24, 24, CA);
-  winmgr_draw_text(w, CX + 42, cy + 8, "Personalization", CW);
-  winmgr_draw_text(w, CX + 42, cy + 22, "Wallpaper, themes", CG);
-  winmgr_draw_text(w, CX + cw - 18, cy + 14, ">", CD);
-  cy += 50;
-  card(w, CX, cy, cw, 42);
-  winmgr_fill_rect(w, CX + 10, cy + 8, 24, 24, 0xFF00AA44);
-  winmgr_draw_text(w, CX + 42, cy + 8, "System", CW);
-  winmgr_draw_text(w, CX + 42, cy + 22, "Display, sound", CG);
-  winmgr_draw_text(w, CX + cw - 18, cy + 14, ">", CD);
-  cy += 50;
-  card(w, CX, cy, cw, 42);
-  winmgr_fill_rect(w, CX + 10, cy + 8, 24, 24, 0xFFCC6600);
-  winmgr_draw_text(w, CX + 42, cy + 8, "Accounts", CW);
-  winmgr_draw_text(w, CX + 42, cy + 22, "Password, user", CG);
-  winmgr_draw_text(w, CX + cw - 18, cy + 14, ">", CD);
+
+extern void winmgr_draw_char_scaled(window_t *win, int x, int y, char c, uint32_t color, int scale);
+
+static void draw_text_spaced(window_t *win, int x, int y, const char *text, uint32_t color, int scale, int spacing) {
+    if (!win || !text) return;
+    int cur_x = x;
+    while (*text) {
+        winmgr_draw_char_scaled(win, cur_x, y, *text, color, scale);
+        extern int font_get_width_16(unsigned char c);
+        if (scale >= 10) cur_x += (font_get_width_16(*text) * scale) / 16 + (spacing > 1 ? 1 : spacing);
+        else cur_x += scale + (spacing > 1 ? 1 : spacing);
+        text++;
+    }
 }
 
-static void pg_pers(window_t *w, sstate_t *s) {
-  int cw = w->width - SW - 30;
-  winmgr_draw_text(w, CX, 10, "Personalization", CW);
-  // Wallpaper
-  card(w, CX, 35, cw, 90);
-  winmgr_draw_text(w, CX + 10, 42, "Background", CW);
-  int tx = CX + 10, ty = 62, tw = 65, th = 40;
-  for (int i = 0; i < 3; i++) {
-    uint32_t bg[] = {0xFF445566, 0xFF1A1A2E, 0xFFCCDDEE};
-    const char *nm[] = {"Image", "Dark", "Light"};
-    uint32_t br = (s->wp == i) ? CA : CS;
-    winmgr_fill_rect(w, tx, ty, tw, th, bg[i]);
-    winmgr_draw_rect(w, tx - 1, ty - 1, tw + 2, th + 2, br);
-    if (s->wp == i)
-      winmgr_draw_rect(w, tx - 2, ty - 2, tw + 4, th + 4, br);
-    winmgr_draw_text(w, tx + 12, ty + 14, nm[i], i == 2 ? 0xFF222222 : CW);
-    tx += tw + 12;
-  }
-  // Theme
-  card(w, CX, 140, cw, 65);
-  winmgr_draw_text(w, CX + 10, 148, "Color mode", CW);
-  int py = 170, pw = 85;
-  winmgr_fill_rect(w, CX + 10, py, pw, 22, s->th == 0 ? CA : C2);
-  winmgr_draw_text(w, CX + 28, py + 5, "Dark", CW);
-  winmgr_fill_rect(w, CX + 10 + pw + 8, py, pw, 22, s->th == 1 ? CA : C2);
-  winmgr_draw_text(w, CX + 10 + pw + 22, py + 5, "Light", CW);
-  // Apply
-  winmgr_fill_rect(w, CX, 220, 90, 26, CA);
-  winmgr_draw_text(w, CX + 22, 226, "Apply", CW);
-}
-
-static void pg_acct(window_t *w, sstate_t *s) {
-  int cw = w->width - SW - 30;
-  winmgr_draw_text(w, CX, 10, "Accounts", CW);
-  card(w, CX, 35, cw, 50);
-  winmgr_fill_rect(w, CX + 10, 42, 32, 32, CA);
-  winmgr_draw_text(w, CX + 20, 52, "R", CW);
-  winmgr_draw_text(w, CX + 50, 42, "Rudra Patel", CW);
-  winmgr_draw_text(w, CX + 50, 58, "Administrator", CG);
-  // Password
-  card(w, CX, 100, cw, 95);
-  winmgr_draw_text(w, CX + 10, 108, "Lock Password", CW);
-  int fx = CX + 10, fy = 130, fw = cw - 20;
-  winmgr_fill_rect(w, fx, fy, fw, 22, 0xFF1A1A1A);
-  winmgr_draw_rect(w, fx, fy, fw, 22, 0xFF555555);
-  winmgr_fill_rect(w, fx, fy + 20, fw, 2, CA);
-  winmgr_draw_text(w, fx + 4, fy + 5, s->pw, CW);
-  winmgr_fill_rect(w, fx + 4 + s->pwc * 8, fy + 3, 1, 16, CW);
-  winmgr_fill_rect(w, fx, 165, 100, 22, CA);
-  winmgr_draw_text(w, fx + 14, 169, "Save", CW);
-}
-
-static void pg_sys(window_t *w) {
-  int cw = w->width - SW - 30;
-  winmgr_draw_text(w, CX, 10, "System", CW);
-  card(w, CX, 35, cw, 50);
-  winmgr_draw_text(w, CX + 10, 42, "Display", CW);
-  winmgr_draw_text(w, CX + 10, 58, "1024x768 32bpp BGA", CG);
-  card(w, CX, 95, cw, 42);
-  winmgr_draw_text(w, CX + 10, 102, "Sound", CW);
-  winmgr_draw_text(w, CX + 10, 118, "ES1370 AudioPCI", CG);
-  card(w, CX, 147, cw, 42);
-  winmgr_draw_text(w, CX + 10, 154, "Storage", CW);
-  winmgr_draw_text(w, CX + 10, 170, "ATA Primary Master", CG);
-}
-
-static void pg_abt(window_t *w) {
-  int cw = w->width - SW - 30;
-  winmgr_draw_text(w, CX, 10, "About", CW);
-  card(w, CX, 35, cw, 130);
-  winmgr_fill_rect(w, CX + 10, 42, 44, 44, CA);
-  winmgr_draw_text(w, CX + 16, 56, "Pure", CW);
-  winmgr_draw_text(w, CX + 62, 44, "PureOS v2.0", CW);
-  winmgr_draw_text(w, CX + 62, 60, "64-bit OS", CG);
-  winmgr_fill_rect(w, CX + 10, 94, cw - 20, 1, CS);
-  winmgr_draw_text(w, CX + 10, 104, "CPU: x86-64", CG);
-  winmgr_draw_text(w, CX + 10, 120, "RAM: ~16 MB", CG);
-  winmgr_draw_text(w, CX + 10, 136, "Arch: 64-bit", CG);
-}
-
-#define DRAW_HOVER(win, s, rx, ry, rw, rh, bg_col, hov_col) \
-  do { \
-    if ((s)->mx >= (rx) && (s)->mx < (rx) + (rw) && (s)->my >= (ry) && (s)->my < (ry) + (rh)) \
-      winmgr_fill_rect((win), (rx), (ry), (rw), (rh), (hov_col)); \
-    else \
-      winmgr_fill_rect((win), (rx), (ry), (rw), (rh), (bg_col)); \
-  } while(0)
-
-<<<<<<< HEAD
-=======
-#define DRAW_ROUNDED_CARD(win, s, rx, ry, rw, rh, bg_col, hov_col, border_col) \
-  do { \
-    uint32_t fill_col = ((s)->mx >= (rx) && (s)->mx < (rx) + (rw) && (s)->my >= (ry) && (s)->my < (ry) + (rh)) ? (hov_col) : (bg_col); \
-    winmgr_draw_rounded_rect_ex((win), (rx), (ry), (rw), (rh), fill_col, 1, (border_col), 8); \
-  } while(0)
-
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
 static void settings_draw(void *w) {
+  int fs = ui_get_font_scale();
   window_t *win = (window_t *)w;
   sstate_t *s = (sstate_t *)win->user_data;
 
@@ -216,25 +272,26 @@ static void settings_draw(void *w) {
   winmgr_fill_rect(win, 0, 32, win->width, win->height - 32, theme->bg);
 
   // 1. SLEEK SIDEBAR (Premium Dark)
-  winmgr_fill_rect(win, 0, 32, SW, win->height - 32, 0xFF051020);
-  winmgr_fill_rect(win, SW - 1, 32, 1, win->height - 32, 0xFF1A1A2E);
+  winmgr_fill_rect(win, 0, 32, get_sidebar_width(), win->height - 32, 0xFF141414);
+  winmgr_fill_rect(win, get_sidebar_width() - 1, 32, 1, win->height - 32, 0xFF222222);
 
-  const char *tabs[] = {"Home", "Personal", "Taskbar", "Account",
-                        "System", "About", "Widgets"};
+  const char *tabs[] = {"\xF0\x9F\x8E\xA8 Personalization", "\xF0\x9F\x96\xBC Wallpaper", 
+                        "\xF0\x9F\x93\x8C Taskbar", "\xF0\x9F\x91\xA4 Account", 
+                        "\xF0\x9F\x92\xBB System", "\xF0\x9F\xA7\xA9 Widgets", 
+                        "\xF0\x9F\x94\xA4 Fonts & Style"};
   for (int i = 0; i < NP; i++) {
-    int ty = 32 + i * 50;
+    int item_h = fs + 24; int ty = 45 + i * ((fs + 24) + 10);
     if (s->page == i) {
-      winmgr_fill_rect(win, 0, ty, SW - 1, 50, theme->accent);
+      winmgr_draw_rounded_rect_ex(win, 15, ty, get_sidebar_width() - 30, (fs + 24), 0xFF3B82F6, 0, 0, 8);
+      winmgr_draw_text(win, 30, ty + ((fs + 24) - fs) / 2, tabs[i], 0xFFFFFFFF);
+    } else {
+      winmgr_draw_text(win, 30, ty + ((fs + 24) - fs) / 2, tabs[i], 0xFF999999);
     }
-    // Border between items
-    winmgr_fill_rect(win, 0, ty + 49, SW - 1, 1, 0xFF1A1A2E);
-    
-    winmgr_draw_text(win, 20, ty + 18, tabs[i], 0xFFFFFFFF);
   }
 
   // 2. CONTENT AREA (CARDS)
-  int cx = CX;
-  int cy = 40 - s->scroll_y; // Apply scroll offset
+  int cx = get_cx();
+  int cy = 50 - s->scroll_y; // Apply scroll offset
   int card_w = win->width - cx - 20;
 
   if (s->page == PA) { // Home
@@ -242,391 +299,361 @@ static void settings_draw(void *w) {
     cy += 30;
 
     // Aesthetic Settings Card
-<<<<<<< HEAD
-    DRAW_HOVER(win, s, cx, cy, card_w, 45, theme->input_bg, 0xFF353545);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
-=======
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 45, theme->input_bg, 0xFF353545, theme->border);
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
-    winmgr_draw_text(win, cx + 15, cy + 15, "System Appearance", theme->fg);
-    winmgr_draw_text(win, cx + card_w - 60, cy + 15, "Light >", theme->accent);
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 2 + 10), theme->input_bg, 0xFF353545, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + (fs * 0.5), "System Appearance", theme->fg);
+    winmgr_draw_text(win, cx + card_w - 60, cy + (fs * 0.5), "Light >", theme->accent);
 
     cy += 60;
-<<<<<<< HEAD
-    DRAW_HOVER(win, s, cx, cy, card_w, 45, theme->input_bg, 0xFF353545);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
-=======
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 45, theme->input_bg, 0xFF353545, theme->border);
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
-    winmgr_draw_text(win, cx + 15, cy + 15, "Wallpapers", theme->fg);
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 2 + 10), theme->input_bg, 0xFF353545, theme->border);
+    winmgr_draw_text(win, cx + 15, cy + (fs * 0.5), "Wallpapers", theme->fg);
+  } else if (s->page == PWALL) { // Wallpaper
+    draw_text_spaced(win, cx, cy, "Wallpaper", 0xFFFFFFFF, 32, 4);
+    cy += 80;
+
+    int wp_card_h = 320;
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, wp_card_h, 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    draw_text_spaced(win, cx + 20, cy + 20, "Choose a background", 0xFFFFFFFF, 18, 1);
+    
+    int thumb_w = (card_w - 60) / 2;
+    int thumb_h = 90;
+    int tw_x = cx + 20;
+    int tw_y = cy + 60;
+    
+    load_wp_thumbs(1); // Background load
+    
+    for(int i=0; i<4; i++) {
+       int tx = tw_x + (i % 2) * (thumb_w + 20);
+       int ty = tw_y + (i / 2) * (thumb_h + 20);
+       
+       if (s->wp == i) {
+           winmgr_draw_rounded_rect_ex(win, tx - 4, ty - 4, thumb_w + 8, thumb_h + 8, 0xFF3B82F6, 0, 0, 10);
+       }
+       
+       if (!wp_thumbs[i]) {
+           winmgr_fill_rect(win, tx, ty, thumb_w, thumb_h, 0xFF222222);
+           draw_text_spaced(win, tx + thumb_w/2 - 30, ty + thumb_h/2 - 8, "Loading", 0xFFFFFFFF, 8, 1);
+       } else {
+           draw_thumb_scaled(win, tx, ty, thumb_w, thumb_h, i, 0);
+       }
+    }
+
   } else if (s->page == PT) { // Taskbar
-    winmgr_draw_text(win, cx, cy, "Taskbar Behavior", theme->fg);
-    cy += 30;
+    draw_text_spaced(win, cx, cy, "Taskbar Behavior", 0xFFFFFFFF, 32, 4);
+    cy += 80;
 
-    // Auto-hide toggle
-<<<<<<< HEAD
-    DRAW_HOVER(win, s, cx, cy, card_w, 45, theme->input_bg, 0xFF353545);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
-=======
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 45, theme->input_bg, 0xFF353545, theme->border);
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
-    winmgr_draw_text(win, cx + 15, cy + 15, "Auto-hide Taskbar", theme->fg);
-    winmgr_fill_rect(win, cx + card_w - 50, cy + 12, 40, 20,
-                     s->auto_hide_taskbar ? CA : 0xFFCCCCCC);
-    winmgr_fill_rect(win, cx + card_w - 50 + (s->auto_hide_taskbar ? 22 : 2), cy + 14, 16, 16,
-                     0xFFFFFFFF);
+    // First Card: Auto-hide
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 6 + 40), 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    draw_text_spaced(win, cx + 20, cy + 20, "Auto-hide Taskbar", 0xFFFFFFFF, 18, 1);
+    draw_text_spaced(win, cx + 20, cy + 20 + fs + 20, "Automatically hide the taskbar when not in use", 0xFF888888, 14, 1);
+    
+    uint32_t tah_bg = s->auto_hide_taskbar ? 0xFF3B82F6 : 0xFF333333;
+    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 25, 55, 30, tah_bg, 0, 0, 15);
+    int ah_knob_x = s->auto_hide_taskbar ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
+    winmgr_draw_rounded_rect_ex(win, ah_knob_x, cy + 29, 22, 22, 0xFFFFFFFF, 0, 0, 11);
 
-    cy += 60;
-    winmgr_draw_text(win, cx, cy, "Taskbar Apps", theme->fg);
-    cy += 30;
-
-    // List of apps to pin
+    cy += (fs * 6 + 40) + 40;
+    
+    // Second Card: Pinned Apps
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 6 + 40) + 10 * 60, 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    draw_text_spaced(win, cx + 20, cy + 20, "Pinned Apps", 0xFFFFFFFF, 18, 1);
+    draw_text_spaced(win, cx + 20, cy + 20 + fs + 20, "Select which apps appear on the dock", 0xFF888888, 14, 1);
+    
+    int list_y = cy + 80;
     const char *app_names[] = {"Terminal", "Calculator", "Editor",   "Computer",
                                "Paint",    "Files",      "Task Mgr", "Browser",
                                "Video",    "Settings"};
     for (int i = 0; i < 10; i++) {
-      DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 30, theme->input_bg, theme->input_bg, theme->border);
-      winmgr_draw_text(win, cx + 15, cy + 8, app_names[i], theme->fg);
+      draw_text_spaced(win, cx + 20, list_y + 10, app_names[i], 0xFFFFFFFF, 16, 1);
 
-      // Is pinned?
       int is_pinned = 0;
       for (int j = 0; j < s->num_pinned; j++) {
-        if (s->pinned[j] == i)
-          is_pinned = 1;
+        if (s->pinned[j] == i) is_pinned = 1;
       }
 
-      // Draw toggle
-      winmgr_fill_rect(win, cx + card_w - 50, cy + 5, 40, 20,
-                       is_pinned ? CA : 0xFFCCCCCC);
-      winmgr_fill_rect(win, cx + card_w - 50 + (is_pinned ? 22 : 2), cy + 7, 16,
-                       16, 0xFFFFFFFF);
-      cy += 35;
+      uint32_t tp_bg = is_pinned ? 0xFF3B82F6 : 0xFF333333;
+      winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, list_y + 5, 55, 30, tp_bg, 0, 0, 15);
+      int p_knob_x = is_pinned ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
+      winmgr_draw_rounded_rect_ex(win, p_knob_x, list_y + 9, 22, 22, 0xFFFFFFFF, 0, 0, 11);
+      
+      list_y += 50;
     }
 
-    // Apply button
-    DRAW_HOVER(win, s, cx, cy + 10, 100, 30, CA, 0xFF353545);
-    winmgr_draw_text(win, cx + 30, cy + 18, "Apply", 0xFFFFFFFF);
-
   } else if (s->page == PC) { // Accounts
-    winmgr_draw_text(win, cx, cy, "Accounts", theme->fg);
-    cy += 30;
-
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 60, theme->input_bg, theme->input_bg, theme->border);
-    winmgr_fill_rect(win, cx + 15, cy + 15, 30, 30, CA);
-    winmgr_draw_text(win, cx + 24, cy + 22, "R", 0xFFFFFFFF);
-    winmgr_draw_text(win, cx + 55, cy + 15, "Rudra Patel", theme->fg);
-    winmgr_draw_text(win, cx + 55, cy + 30, "Administrator", theme->fg_secondary);
-
+    draw_text_spaced(win, cx, cy, "Account Settings", 0xFFFFFFFF, 32, 4);
     cy += 80;
 
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 110, theme->input_bg, theme->input_bg, theme->border);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Lock Password", theme->fg);
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 4 + 30), 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    // Large circle with R
+    winmgr_draw_rounded_rect_ex(win, cx + 20, cy + 10, 60, 60, 0xFF3B82F6, 0, 0, 30);
+    draw_text_spaced(win, cx + 43, cy + 40, "R", 0xFFFFFFFF, 24, 2);
+    
+    draw_text_spaced(win, cx + 100, cy + 30, "Rudra Patel", 0xFFFFFFFF, 18, 1);
+    draw_text_spaced(win, cx + 100, cy + 65, "Administrator", 0xFF888888, 14, 1);
+
+    cy += 200;
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 10 + 60), 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    draw_text_spaced(win, cx + 20, cy + 20, "Lock Password", 0xFFFFFFFF, 18, 1);
 
     // Password textbox
-    winmgr_fill_rect(win, cx + 15, cy + 40, card_w - 30, 25, 0xFFFFFFFF);
-    winmgr_draw_rect(win, cx + 15, cy + 40, card_w - 30, 25, theme->border);
-
-    // Draw masked dots for safety instead of cleartext
+    winmgr_draw_rounded_rect_ex(win, cx + 20, cy + 60, card_w - 120, (fs + 24), 0xFF121212, 1, 0xFF333333, 8);
+    // Draw masked dots for safety
     char disp[32];
-    for (int i = 0; i < s->pwc; i++)
-      disp[i] = '*';
+    for (int i = 0; i < s->pwc; i++) disp[i] = '*';
     disp[s->pwc] = 0;
-    winmgr_draw_text(win, cx + 22, cy + 48, disp, 0xFF000000);
+    draw_text_spaced(win, cx + 30, cy + 74, disp, 0xFFFFFFFF, 8, 1);
 
     // Blinking cursor
     extern uint32_t get_timer_ticks(void);
     if ((get_timer_ticks() / 20) % 2 == 0) {
-      winmgr_fill_rect(win, cx + 22 + s->pwc * 8, cy + 45, 2, 16, 0xFF000000);
+      winmgr_fill_rect(win, cx + 30 + s->pwc * 9, cy + 70, 2, 20, 0xFFFFFFFF);
     }
 
     // Save button
-    DRAW_HOVER(win, s, cx + 15, cy + 75, 80, 25, CA, 0xFF353545);
-    winmgr_draw_text(win, cx + 38, cy + 82, "Save", 0xFFFFFFFF);
+    DRAW_ROUNDED_HOVER(win, s, cx + card_w - 85, cy + 60, 65, (fs + 24), 0xFF3B82F6, 0xFF5B9BF5, 8);
+    draw_text_spaced(win, cx + card_w - 70, cy + 74, "Save", 0xFFFFFFFF, 8, 1);
 
   } else if (s->page == PE) { // About
-    winmgr_draw_text(win, cx + (card_w - 48) / 2, cy + 10, "PureOS",
-                     theme->fg);
-    winmgr_draw_text(win, cx + (card_w - 80) / 2, cy + 30, "Version 2.0",
-                     theme->fg_secondary);
+    draw_text_spaced(win, cx + (card_w - 100) / 2, cy + 10, "PureOS", 0xFFFFFFFF, 32, 4);
+    draw_text_spaced(win, cx + (card_w - 120) / 2, cy + 60, "Version 2.0", 0xFF888888, 14, 1);
 
-    cy += 70;
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 80, theme->input_bg, theme->input_bg, theme->border);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Processor: x86 CPU @ 2.4GHz",
-                     theme->fg);
-    winmgr_draw_text(win, cx + 15, cy + 35, "Memory: 512 MB DDR3", theme->fg);
-    winmgr_draw_text(win, cx + 15, cy + 55, "Graphics: VBE Adapter",
-                     theme->fg);
+    cy += 100;
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 6 + 40), theme->input_bg, theme->input_bg, theme->border);
+    draw_text_spaced(win, cx + 15, cy + 15, "Processor: x86 CPU @ 2.4GHz", 0xFFFFFFFF, 12, 1);
+    draw_text_spaced(win, cx + 15, cy + 15 + fs + 12, "Memory: 512 MB DDR3", 0xFFFFFFFF, 12, 1);
+    draw_text_spaced(win, cx + 15, cy + 15 + (fs + 12)*2, "Graphics: VBE Adapter", 0xFFFFFFFF, 12, 1);
   } else if (s->page == PB) { // Personalization
-    winmgr_draw_text(win, cx, cy, "Personalization", theme->fg);
-    cy += 40;
+    draw_text_spaced(win, cx, cy, "Personalization", 0xFFFFFFFF, 32, 4);
+    cy += 80;
 
-    // Background Card
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 60, 0xFF0A1828, 0xFF0A1828, 0xFF1A2A3A);
-    winmgr_draw_text(win, cx + 15, cy + 22, "Background", 0xFFFFFFFF);
-    // Button pill
-    winmgr_draw_rounded_rect_ex(win, cx + card_w - 110, cy + 16, 95, 28, 0xFF051020, 1, 0xFFFFFFFF, 14);
-    winmgr_draw_text(win, cx + card_w - 95, cy + 22, "Image", 0xFFFFFFFF);
-    cy += 75;
-
-<<<<<<< HEAD
-    int tx = cx + 15, ty = cy + 40, tw = 65, th = 40;
-    for (int i = 0; i < 3; i++) {
-      uint32_t bg[] = {0xFF445566, 0xFF1A1A2E, 0xFFCCDDEE};
-      const char *nm[] = {"Image", "Dark", "Light"};
-      uint32_t br = (s->wp == i) ? CA : 0xFFCCCCCC;
-      DRAW_HOVER(win, s, tx, ty, tw, th, bg[i], 0xFF353545);
-      winmgr_draw_rect(win, tx - 1, ty - 1, tw + 2, th + 2, br);
-      if (s->wp == i)
-        winmgr_draw_rect(win, tx - 2, ty - 2, tw + 4, th + 4, br);
-      winmgr_draw_text(win, tx + 12, ty + 14, nm[i],
-                       i == 2 ? 0xFF222222 : 0xFFFFFFFF);
-      tx += tw + 12;
-    }
-=======
-    // Color Mode Card
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 60, 0xFF0A1828, 0xFF0A1828, 0xFF1A2A3A);
-    winmgr_draw_text(win, cx + 15, cy + 22, "Color Mode", 0xFFFFFFFF);
-    // Pill selection
-    winmgr_draw_rounded_rect_ex(win, cx + card_w - 110, cy + 16, 95, 28, 0xFF051020, 1, 0xFFFFFFFF, 14);
-    winmgr_draw_text(win, cx + card_w - 95, cy + 22, s->th == 0 ? "Dark" : "Light", 0xFFFFFFFF);
-    winmgr_draw_text(win, cx + card_w - 30, cy + 22, "v", 0xFFFFFFFF);
-    cy += 75;
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
-
-    // Desktop Icons Card
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 60, 0xFF0A1828, 0xFF0A1828, 0xFF1A2A3A);
-    winmgr_draw_text(win, cx + 15, cy + 22, "Dsktop Icons", 0xFFFFFFFF);
-    // Toggle switch (pill)
-    uint32_t t_bg = s->di ? 0xFF5B7FFF : 0xFF313244;
-    winmgr_draw_rounded_rect_ex(win, cx + card_w - 65, cy + 18, 50, 24, t_bg, 0, 0, 12);
-    int knob_x = s->di ? (cx + card_w - 65) + 28 : (cx + card_w - 65) + 4;
-    winmgr_draw_rounded_rect_ex(win, knob_x, cy + 22, 18, 16, 0xFFFFFFFF, 0, 0, 8);
-    cy += 75;
-
-    // Icon Filter Card
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 60, 0xFF0A1828, 0xFF0A1828, 0xFF1A2A3A);
-    winmgr_draw_text(win, cx + 15, cy + 22, "Icon Filter", 0xFFFFFFFF);
-    // Pill selection
-    const char *fn[] = {"None", "Red", "Green", "Yellow"};
-    winmgr_draw_rounded_rect_ex(win, cx + card_w - 110, cy + 16, 95, 28, 0xFF051020, 1, 0xFFFFFFFF, 14);
-    winmgr_draw_text(win, cx + card_w - 95, cy + 22, fn[s->filter], 0xFFFFFFFF);
-    winmgr_draw_text(win, cx + card_w - 30, cy + 22, "v", 0xFFFFFFFF);
-    cy += 75;
-
-<<<<<<< HEAD
-    int py = cy + 38, pw = 85;
-    DRAW_HOVER(win, s, cx + 15, py, pw, 22, s->th == 0 ? CA : theme->button, 0xFF353545);
-    winmgr_draw_text(win, cx + 33, py + 5, "Dark",
-                     s->th == 0 ? 0xFFFFFFFF : theme->fg);
-    DRAW_HOVER(win, s, cx + 15 + pw + 8, py, pw, 22, s->th == 1 ? CA : theme->button, 0xFF353545);
-    winmgr_draw_text(win, cx + 15 + pw + 30, py + 5, "Light",
-                     s->th == 1 ? 0xFFFFFFFF : theme->fg);
-
-    cy += 85;
-
-    // Desktop Icons Toggle
-    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Desktop Icons", theme->fg);
-    // Toggle switch
-    winmgr_fill_rect(win, cx + card_w - 50, cy + 12, 40, 20,
-                     s->di ? CA : 0xFFCCCCCC);
-    winmgr_fill_rect(win, cx + card_w - 50 + (s->di ? 22 : 2), cy + 14, 16, 16,
-                     0xFFFFFFFF);
-
-    cy += 60;
-    winmgr_fill_rect(win, cx, cy, card_w, 45, theme->input_bg);
-    winmgr_draw_rect(win, cx, cy, card_w, 45, theme->border);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Icon Filter", theme->fg);
-
-    int fx = cx + card_w - 180;
-    const char *fn[] = {"None", "Red", "Grn", "Yel"};
-    for (int i = 0; i < 4; i++) {
-      uint32_t bg = (s->filter == i) ? CA : theme->button;
-      DRAW_HOVER(win, s, fx + i * 42, cy + 12, 38, 22, bg, 0xFF353545);
-      winmgr_draw_text(win, fx + i * 42 + 4, cy + 17, fn[i],
-                       (s->filter == i) ? 0xFFFFFFFF : theme->fg);
-    }
-
-    cy += 60;
-
-    // Intensity Controls
-    winmgr_draw_text(win, cx + 15, cy, "Icon Intensity", theme->fg);
-    char i_per[8];
-    k_itoa((s->icon_int * 100) / 255, i_per);
-    strcat(i_per, "%");
-    winmgr_draw_text(win, cx + 185, cy + 15, i_per, theme->fg_secondary);
-
-    winmgr_fill_rect(win, cx + 15, cy + 15, 120, 20, theme->button);
-    winmgr_fill_rect(win, cx + 15, cy + 15, (s->icon_int * 120) / 255, 20, CA);
-    winmgr_draw_text(win, cx + 145, cy + 15, "-", theme->fg);
-    winmgr_draw_text(win, cx + 165, cy + 15, "+", theme->fg);
-=======
-    // Intensity Sliders
-    winmgr_draw_text(win, cx, cy, "Icon Intensity", theme->fg);
-    cy += 25;
-    winmgr_fill_rect(win, cx, cy, card_w, 6, 0xFF313244);
-    winmgr_fill_rect(win, cx, cy, (s->icon_int * card_w) / 255, 6, theme->accent);
-    winmgr_draw_rounded_rect_ex(win, cx + (s->icon_int * card_w) / 255 - 8, cy - 5, 16, 16, 0xFFFFFFFF, 0, 0, 8);
-    cy += 35;
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
-
-    winmgr_draw_text(win, cx, cy, "BG Intensity", theme->fg);
-    cy += 25;
-    winmgr_fill_rect(win, cx, cy, card_w, 6, 0xFF313244);
-    winmgr_fill_rect(win, cx, cy, (s->bg_int * card_w) / 255, 6, theme->accent);
-    winmgr_draw_rounded_rect_ex(win, cx + (s->bg_int * card_w) / 255 - 8, cy - 5, 16, 16, 0xFFFFFFFF, 0, 0, 8);
+    // First Card: Color Mode
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 6 + 40), 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    draw_text_spaced(win, cx + 20, cy + 20, "Color Mode", 0xFFFFFFFF, 18, 1);
+    draw_text_spaced(win, cx + 20, cy + 20 + fs + 20, "Choose your default system theme", 0xFF888888, 14, 1);
     
-    cy += 50;
-<<<<<<< HEAD
-    winmgr_draw_text(win, cx + 15, cy, "BG Intensity", theme->fg);
-    char b_per[8];
-    k_itoa((s->bg_int * 100) / 255, b_per);
-    strcat(b_per, "%");
-    winmgr_draw_text(win, cx + 185, cy + 15, b_per, theme->fg_secondary);
+    // Dropdown button (Color Mode)
+    int drp_y = cy + 20;
+    int drp_h = 35;
+    winmgr_draw_rounded_rect_ex(win, cx + card_w - 180, drp_y, 160, drp_h, 0xFF121212, 1, 0xFF333333, 8);
+    draw_text_spaced(win, cx + card_w - 170, drp_y + (drp_h - 14)/2 + 2, s->th == 0 ? "Dark Mode" : "Light Mode", 0xFFFFFFFF, 14, 1);
+    draw_text_spaced(win, cx + card_w - 40, drp_y + (drp_h - 14)/2 + 2, "v", 0xFFFFFFFF, 14, 1);
+    
+    cy += (fs * 6 + 40) + 40; // Next card
 
-    winmgr_fill_rect(win, cx + 15, cy + 15, 120, 20, theme->button);
-    winmgr_fill_rect(win, cx + 15, cy + 15, (s->bg_int * 120) / 255, 20, CA);
-    winmgr_draw_text(win, cx + 145, cy + 15, "-", theme->fg);
-    winmgr_draw_text(win, cx + 165, cy + 15, "+", theme->fg);
-
-    cy += 60;
-
-    // Apply button (maps exactly to mx >= CX && mx <= CX + 90 && my >= 220 &&
-    // my <= 246)
-    DRAW_HOVER(win, s, cx, cy + 5, 90, 26, CA, 0xFF353545);
-    winmgr_draw_text(win, cx + 22, cy + 11, "Apply", 0xFFFFFFFF);
-=======
-    DRAW_HOVER(win, s, cx, cy, 100, 32, CA, 0xFF353545);
-    winmgr_draw_text(win, cx + 25, cy + 10, "Apply", 0xFFFFFFFF);
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
+    // Second Card: Desktop Icons & Icon Filter
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 14 + 100), 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    
+    // Row 1: Desktop Icons
+    draw_text_spaced(win, cx + 20, cy + 20, "Desktop Icons", 0xFFFFFFFF, 18, 1);
+    draw_text_spaced(win, cx + 20, cy + 20 + fs + 20, "Show or hide icons on the desktop", 0xFF888888, 14, 1);
+    
+    // Toggle Switch
+    uint32_t t_bg = s->di ? 0xFF3B82F6 : 0xFF333333;
+    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 32, 55, 30, t_bg, 0, 0, 15);
+    int knob_x = s->di ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
+    winmgr_draw_rounded_rect_ex(win, knob_x, cy + 36, 22, 22, 0xFFFFFFFF, 0, 0, 11);
+    
+    // Row 2: Icon Filter
+    draw_text_spaced(win, cx + 20, cy + 120, "Icon Filter", 0xFFFFFFFF, 18, 1);
+    draw_text_spaced(win, cx + 20, cy + 160, "Apply a color tint to desktop icons", 0xFF888888, 14, 1);
+    
+    // Dropdown button (Icon Filter)
+    const char *fn[] = {"None", "Red", "Green", "Yellow"};
+    int if_y = cy + 105;
+    int if_h = 35;
+    winmgr_draw_rounded_rect_ex(win, cx + card_w - 180, if_y, 160, if_h, 0xFF121212, 1, 0xFF333333, 8);
+    draw_text_spaced(win, cx + card_w - 170, if_y + (if_h - 14)/2 + 2, fn[s->filter], 0xFFFFFFFF, 14, 1);
+    draw_text_spaced(win, cx + card_w - 40, if_y + (if_h - 14)/2 + 2, "v", 0xFFFFFFFF, 14, 1);
 
   } else if (s->page == PD) { // System
-    winmgr_draw_text(win, cx, cy, "System", theme->fg);
-    cy += 30;
+    draw_text_spaced(win, cx, cy, "System", 0xFFFFFFFF, 32, 4);
+    cy += 80;
 
-<<<<<<< HEAD
-=======
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 50, theme->input_bg, theme->input_bg, theme->border);
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
-    winmgr_draw_text(win, cx + 15, cy + 12, "Display", theme->fg);
-    winmgr_draw_text(win, cx + 15, cy + 28, "Active Resolution", theme->fg_secondary);
+    // Card 1: Display Resolution
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 100, 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    draw_text_spaced(win, cx + 25, cy + 25, "Display Resolution", 0xFFFFFFFF, 20, 1);
+    char cur_res[32];
+    k_itoa(screen_width, cur_res);
+    strcat(cur_res, "x");
+    char hs[8];
+    k_itoa(screen_height, hs);
+    strcat(cur_res, hs);
+    char res_info[64] = "Current: ";
+    strcat(res_info, cur_res);
+    draw_text_spaced(win, cx + 25, cy + 60, res_info, 0xFF888888, 14, 1);
 
-    cy += 60;
-    // Resolution List
-    winmgr_draw_text(win, cx, cy, "Screen Resolution", theme->fg);
-    cy += 30;
+    // Dropdown button (Resolution)
+    const char *res_names[] = {"800x600", "1024x768", "1280x720", "1280x800", "1440x900", "1600x900", "1920x1080"};
+    int dr_y = cy + 32;
+    int dr_h = 35;
+    winmgr_draw_rounded_rect_ex(win, cx + card_w - 200, dr_y, 180, dr_h, 0xFF121212, 1, 0xFF333333, 8);
+    draw_text_spaced(win, cx + card_w - 190, dr_y + (dr_h - 14)/2 + 2, res_names[s->sel_res], 0xFFFFFFFF, 14, 1);
+    draw_text_spaced(win, cx + card_w - 40, dr_y + (dr_h - 14)/2 + 2, "v", 0xFFFFFFFF, 14, 1);
 
-    const char *res_names[] = {"800x600", "1024x768", "1280x720", "1280x800",
-                               "1440x900", "1600x900", "1920x1080"};
-    int res_w[] = {800, 1024, 1280, 1280, 1440, 1600, 1920};
-    int res_h[] = {600, 768, 720, 800, 900, 900, 1080};
+    cy += 140;
 
-    for (int i = 0; i < 7; i++) {
-      int item_y = cy + i * 35;
-      if (item_y + 30 > win->height + s->scroll_y) break;
+    // Card 2: About PureOS
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 150, 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    draw_text_spaced(win, cx + 25, cy + 25, "About PureOS", 0xFFFFFFFF, 20, 1);
+    draw_text_spaced(win, cx + 25, cy + 60, "Version 2.0 Web Replica", 0xFF888888, 14, 1);
+    draw_text_spaced(win, cx + 25, cy + 85, "Processor: x86 CPU @ 2.4GHz", 0xFF888888, 14, 1);
+    draw_text_spaced(win, cx + 25, cy + 110, "Memory: 512 MB DDR3", 0xFF888888, 14, 1);
 
-      uint32_t bg = (s->sel_res == i) ? theme->accent : theme->input_bg;
-      DRAW_HOVER(win, s, cx, item_y, card_w, 30, bg, 0xFF353545);
-      winmgr_draw_rect(win, cx, item_y, card_w, 30, theme->border);
-      winmgr_draw_text(win, cx + 15, item_y + 8, res_names[i], 
-                       (s->sel_res == i) ? 0xFFFFFFFF : theme->fg);
-      
-      // Mark current resolution
-      if (screen_width == res_w[i] && screen_height == res_h[i]) {
-        winmgr_draw_text(win, cx + card_w - 80, item_y + 8, "(Current)", theme->fg_secondary);
-      }
-    }
-
-    cy += 7 * 35 + 10;
-    // Apply Resolution Button
-    DRAW_HOVER(win, s, cx, cy, 140, 30, theme->accent, 0xFF353545);
-    winmgr_draw_text(win, cx + 25, cy + 8, "Apply Resolution", 0xFFFFFFFF);
-
-    cy += 60;
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 50, 0xFFFAFAFA, 0xFFFAFAFA, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 12, "Sound", 0xFF000000);
-    winmgr_draw_text(win, cx + 15, cy + 28, "ES1370 AudioPCI", 0xFF666666);
-
-    cy += 60;
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 50, 0xFFFAFAFA, 0xFFFAFAFA, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 12, "Storage", 0xFF000000);
-    winmgr_draw_text(win, cx + 15, cy + 28, "ATA Primary Master", 0xFF666666);
   } else if (s->page == PW) { // Widgets
-    winmgr_draw_text(win, cx, cy, "Desktop Widgets", theme->fg);
-    cy += 30;
+    draw_text_spaced(win, cx, cy, "Desktop Widgets", 0xFFFFFFFF, 32, 4);
+    cy += 80;
 
-    // Clock Widget
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 45, theme->input_bg, theme->input_bg, theme->border);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Digital Clock", theme->fg);
-    winmgr_fill_rect(win, cx + card_w - 50, cy + 12, 40, 20,
-                     s->show_clock ? CA : 0xFFCCCCCC);
-    winmgr_fill_rect(win, cx + card_w - 50 + (s->show_clock ? 22 : 2), cy + 14,
-                     16, 16, 0xFFFFFFFF);
-
-    cy += 60;
-    // Calendar Widget
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 45, theme->input_bg, theme->input_bg, theme->border);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Month Calendar", theme->fg);
-    winmgr_fill_rect(win, cx + card_w - 50, cy + 12, 40, 20,
-                     s->show_calendar ? CA : 0xFFCCCCCC);
-    winmgr_fill_rect(win, cx + card_w - 50 + (s->show_calendar ? 22 : 2),
-                     cy + 14, 16, 16, 0xFFFFFFFF);
+    // Single large card for all widgets
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 180, 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
     
-    cy += 60;
-    // SysMon Widget
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 45, theme->input_bg, theme->input_bg, theme->border);
-    winmgr_draw_text(win, cx + 15, cy + 15, "System Monitor", theme->fg);
-    winmgr_fill_rect(win, cx + card_w - 50, cy + 12, 40, 20,
-                     s->show_sysmon ? CA : 0xFFCCCCCC);
-    winmgr_fill_rect(win, cx + card_w - 50 + (s->show_sysmon ? 22 : 2),
-                     cy + 14, 16, 16, 0xFFFFFFFF);
+    // Digital Clock row
+    draw_text_spaced(win, cx + 25, cy + 30, "Digital Clock", 0xFFFFFFFF, 18, 1);
+    uint32_t t1_bg = s->show_clock ? 0xFF3B82F6 : 0xFF333333;
+    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 25, 55, 30, t1_bg, 0, 0, 15);
+    int k1_x = s->show_clock ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
+    winmgr_draw_rounded_rect_ex(win, k1_x, cy + 29, 22, 22, 0xFFFFFFFF, 0, 0, 11);
 
-    cy += 50;
-    // Timezone Offset
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 45, 0xFFFAFAFA, 0xFFFAFAFA, 0xFFE0E0E0);
-    winmgr_draw_text(win, cx + 15, cy + 15, "Timezone Offset", 0xFF333333);
+    // Month Calendar row
+    draw_text_spaced(win, cx + 25, cy + 80, "Month Calendar", 0xFFFFFFFF, 18, 1);
+    uint32_t t2_bg = s->show_calendar ? 0xFF3B82F6 : 0xFF333333;
+    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 75, 55, 30, t2_bg, 0, 0, 15);
+    int k2_x = s->show_calendar ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
+    winmgr_draw_rounded_rect_ex(win, k2_x, cy + 79, 22, 22, 0xFFFFFFFF, 0, 0, 11);
 
-    char tz_str[16];
-    int h = s->tz / 60;
-    int m = (s->tz >= 0 ? s->tz : -s->tz) % 60;
-    strcpy(tz_str, "UTC");
-    if (s->tz >= 0)
-      strcat(tz_str, "+");
-    else
-      strcat(tz_str, "-");
-    char hs[4];
-    k_itoa(h >= 0 ? h : -h, hs);
-    strcat(tz_str, hs);
-    strcat(tz_str, ":");
-    if (m < 10)
-      strcat(tz_str, "0");
-    char ms[4];
-    k_itoa(m, ms);
-    strcat(tz_str, ms);
+    // System Monitor row
+    draw_text_spaced(win, cx + 25, cy + 130, "System Monitor", 0xFFFFFFFF, 18, 1);
+    uint32_t t3_bg = s->show_sysmon ? 0xFF3B82F6 : 0xFF333333;
+    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 125, 55, 30, t3_bg, 0, 0, 15);
+    int k3_x = s->show_sysmon ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
+    winmgr_draw_rounded_rect_ex(win, k3_x, cy + 129, 22, 22, 0xFFFFFFFF, 0, 0, 11);
 
-    winmgr_draw_text(win, cx + card_w - 140, cy + 15, tz_str, 0xFF666666);
-    DRAW_HOVER(win, s, cx + card_w - 50, cy + 10, 20, 25, 0xFFE0E0E0, 0xFF353545);
-    winmgr_draw_text(win, cx + card_w - 44, cy + 16, "-", 0xFF333333);
-    DRAW_HOVER(win, s, cx + card_w - 25, cy + 10, 20, 25, 0xFFE0E0E0, 0xFF353545);
-    winmgr_draw_text(win, cx + card_w - 18, cy + 16, "+", 0xFF333333);
+    // Legacy widgets code removed for clean UI
+  } else if (s->page == PF) { // Fonts & Style
+    draw_text_spaced(win, cx, cy, "Fonts & Style", 0xFFFFFFFF, 32, 4);
+    cy += 80;
 
-    cy += 60;
-    // Reset Positions Button
-    DRAW_HOVER(win, s, cx, cy, 140, 26, 0xFFE0E0E0, 0xFF353545);
-    winmgr_draw_rect(win, cx, cy, 140, 26, 0xFFCCCCCC);
-    winmgr_draw_text(win, cx + 15, cy + 6, "Reset Positions", 0xFF333333);
+    // Single card for font size
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, 160, 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    draw_text_spaced(win, cx + 25, cy + 25, "Font Size", 0xFFFFFFFF, 20, 1);
+    draw_text_spaced(win, cx + 25, cy + 60, "Adjust the system-wide text size", 0xFF888888, 14, 1);
 
-    cy += 50;
-    // Apply button
-    DRAW_HOVER(win, s, cx, cy + 5, 90, 26, CA, 0xFF353545);
-    winmgr_draw_text(win, cx + 22, cy + 11, "Apply", 0xFFFFFFFF);
+    // Large Dropdown for font size
+    const char *sz_names[] = {"Normal (8px)", "Large (10px)", "Extra Large (12px)"};
+    int fdr_y = cy + 95;
+    int fdr_h = 45;
+    winmgr_draw_rounded_rect_ex(win, cx + 25, fdr_y, card_w - 50, fdr_h, 0xFF121212, 1, 0xFF333333, 8);
+    draw_text_spaced(win, cx + 40, fdr_y + (fdr_h - 14)/2 + 2, sz_names[s->font_size], 0xFFFFFFFF, 14, 1);
+    draw_text_spaced(win, cx + card_w - 60, fdr_y + (fdr_h - 14)/2 + 2, "v", 0xFFFFFFFF, 14, 1);
+  }
+
+  // --- PICKER OVERLAY (Full Window Carousel) ---
+  if (s->picker_open) {
+    load_wp_thumbs(1); // Background load one
+    // Fill whole app window
+    winmgr_fill_rect(win, 0, 32, win->width, win->height - 32, 0xFF050A15); 
+    
+    int cx = win->width / 2;
+    int cy = 32 + (win->height - 32) / 2 - 20;
+    
+    // Full width carousel
+    int main_w = 340, main_h = 200;
+    int side_w = 260, side_h = 160;
+    
+    // 1. Draw Side Images (at the edges of the window)
+    int prev = (s->wp + 3) % 4;
+    int next = (s->wp + 1) % 4;
+    
+    // Left preview (peek from edge)
+    draw_thumb_scaled(win, -60, cy - side_h / 2, side_w, side_h, prev, 1);
+    // Right preview (peek from edge)
+    draw_thumb_scaled(win, win->width - side_w + 60, cy - side_h / 2, side_w, side_h, next, 1);
+    
+    // 2. Draw Main Image (Center)
+    winmgr_draw_rect(win, cx - main_w / 2 - 2, cy - main_h / 2 - 2, main_w + 4, main_h + 4, theme->accent);
+    if (!wp_thumbs[s->wp]) {
+       winmgr_draw_text(win, cx - 40, cy - 8, "Loading...", 0xFFFFFFFF);
+    } else {
+       draw_thumb_scaled(win, cx - main_w / 2, cy - main_h / 2, main_w, main_h, s->wp, 0);
+    }
+    
+    // 3. Arrow Navigation (At the very edges of the app window)
+    // Left Arrow
+    int lax = 45, lay = cy;
+    DRAW_ROUNDED_HOVER(win, s, lax - 25, lay - 25, 50, 50, 0xAA222222, 0xDD444444, 25);
+    winmgr_draw_rounded_rect_ex(win, lax - 25, lay - 25, 50, 50, 0x00000000, 2, 0xFFFFFFFF, 25);
+    winmgr_draw_text(win, lax - 6, lay - 8, "<", 0xFFFFFFFF);
+    
+    // Right Arrow
+    int rax = win->width - 45, ray = cy;
+    DRAW_ROUNDED_HOVER(win, s, rax - 25, ray - 25, 50, 50, 0xAA222222, 0xDD444444, 25);
+    winmgr_draw_rounded_rect_ex(win, rax - 25, ray - 25, 50, 50, 0x00000000, 2, 0xFFFFFFFF, 25);
+    winmgr_draw_text(win, rax - 6, lay - 8, ">", 0xFFFFFFFF);
+    
+    // 4. "Apply" Button
+    int bx = cx - 90, by = win->height - 100;
+    DRAW_ROUNDED_HOVER(win, s, bx, by, 180, 50, 0xFF5B8BF5, 0xFF7B9BF5, 25);
+    winmgr_draw_text(win, bx + 58, by + 16, "Apply", 0xFFFFFFFF);
+    
+    // 5. Close Button
+    DRAW_HOVER(win, s, win->width - 45, 45, 30, 30, 0x00000000, 0xFFFF0000);
+    winmgr_draw_text(win, win->width - 35, 53, "X", 0xFFFFFFFF);
+  }
+
+  // --- DROPDOWN OVERLAYS ---
+  if (s->dropdown_open) {
+    int cx = get_cx();
+    int cy = 50 - s->scroll_y + 80; // Content start
+    int card_w = win->width - cx - 20;
+
+    if (s->dropdown_open == 1) { // Color Mode
+        int d_x = cx + card_w - 180;
+        int d_y = cy + 20 + 35 + 2; 
+        int item_h = 45;
+        winmgr_draw_rounded_rect_ex(win, d_x, d_y, 160, item_h * 2 + 4, 0xFF1C1C1C, 1, 0xFF444444, 8);
+        
+        DRAW_HOVER(win, s, d_x + 2, d_y + 2, 156, item_h, 0xFF1C1C1C, 0xFF3B82F6);
+        draw_text_spaced(win, d_x + 10, d_y + 2 + (item_h - 14)/2 + 2, "Dark Mode", 0xFFFFFFFF, 14, 1);
+        DRAW_HOVER(win, s, d_x + 2, d_y + 2 + item_h, 156, item_h, 0xFF1C1C1C, 0xFF3B82F6);
+        draw_text_spaced(win, d_x + 10, d_y + 2 + item_h + (item_h - 14)/2 + 2, "Light Mode", 0xFFFFFFFF, 14, 1);
+        
+    } else if (s->dropdown_open == 2) { // Icon Filter
+        int d_x = cx + card_w - 180;
+        int d_y = cy + (fs * 6 + 40) + 40 + 105 + 35 + 2; 
+        int item_h = 45;
+        winmgr_draw_rounded_rect_ex(win, d_x, d_y, 160, item_h * 4 + 4, 0xFF1C1C1C, 1, 0xFF444444, 8);
+        const char *fn[] = {"None", "Red", "Green", "Yellow"};
+        for (int i=0; i<4; i++) {
+            DRAW_HOVER(win, s, d_x + 2, d_y + 2 + i * item_h, 156, item_h, 0xFF1C1C1C, 0xFF3B82F6);
+            draw_text_spaced(win, d_x + 10, d_y + 2 + i * item_h + (item_h - 14)/2 + 2, fn[i], 0xFFFFFFFF, 14, 1);
+        }
+    } else if (s->dropdown_open == 3) { // System Resolution
+        int d_x = cx + card_w - 200;
+        int d_y = cy + 32 + 35 + 2; 
+        int item_h = 45;
+        winmgr_draw_rounded_rect_ex(win, d_x, d_y, 180, item_h * 7 + 4, 0xFF1C1C1C, 1, 0xFF444444, 8);
+        const char *res_names[] = {"800x600", "1024x768", "1280x720", "1280x800", "1440x900", "1600x900", "1920x1080"};
+        for (int i=0; i<7; i++) {
+            DRAW_HOVER(win, s, d_x + 2, d_y + 2 + i * item_h, 176, item_h, 0xFF1C1C1C, 0xFF3B82F6);
+            draw_text_spaced(win, d_x + 10, d_y + 2 + i * item_h + (item_h - 14)/2 + 2, res_names[i], 0xFFFFFFFF, 14, 1);
+        }
+    } else if (s->dropdown_open == 4) { // Font Size
+        int d_x = cx + 25;
+        int d_y = cy + 95 + 45 + 2; 
+        int item_h = 45;
+        winmgr_draw_rounded_rect_ex(win, d_x, d_y, card_w - 50, item_h * 3 + 4, 0xFF1C1C1C, 1, 0xFF444444, 8);
+        const char *sz_names[] = {"Normal (8px)", "Large (10px)", "Extra Large (12px)"};
+        for (int i=0; i<3; i++) {
+            DRAW_HOVER(win, s, d_x + 2, d_y + 2 + i * item_h, card_w - 54, item_h, 0xFF1C1C1C, 0xFF3B82F6);
+            draw_text_spaced(win, d_x + 10, d_y + 2 + i * item_h + (item_h - 14)/2 + 2, sz_names[i], 0xFFFFFFFF, 14, 1);
+        }
+    }
   }
 }
 
 static void apply_config(sstate_t *s) {
+  int fs = ui_get_font_scale();
   strcpy(global_config.lock_password, s->pw);
-  global_config.wallpaper_type = s->wp;
+  global_config.wallpaper_index = s->wp; // Save index
+  global_config.wallpaper_type = 3;      // Force JPG/PNG
   global_config.theme_mode = s->th;
   global_config.show_desktop_icons = s->di;
   global_config.icon_filter = s->filter;
@@ -637,12 +664,11 @@ static void apply_config(sstate_t *s) {
   global_config.show_sysmon_widget = s->show_sysmon;
   global_config.timezone_offset_m = s->tz;
   global_config.auto_hide_taskbar = s->auto_hide_taskbar;
-<<<<<<< HEAD
-=======
+  global_config.font_size = s->font_size;
+  global_config.font_style = s->font_style;
 
   extern void winmgr_toggle_sysmon(int);
   winmgr_toggle_sysmon(s->show_sysmon);
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
  
   theme_set_mode(s->th);
 
@@ -657,12 +683,14 @@ static void apply_config(sstate_t *s) {
       windows[i].needs_redraw = 1;
     }
   }
+  print_serial("SETTINGS: Calling desktop_invalidate...\n");
   desktop_invalidate();
   compositor_invalidate_rect(0, 0, screen_width, screen_height);
   print_serial("SETTINGS: Configuration applied (theme updated).\n");
 }
 
 static void settings_on_mouse(void *w, int mx, int my, int buttons) {
+  int fs = ui_get_font_scale();
   window_t *win = (window_t *)w;
   sstate_t *s = (sstate_t *)win->user_data;
   if (!s) return;
@@ -676,38 +704,21 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
   if (s->mx != rx || s->my != ry) {
     s->mx = rx;
     s->my = ry;
-<<<<<<< HEAD
-    win->needs_redraw = 1;
-  }
 
-  if (click) {
-    print_serial("SETTINGS: Click at ");
-    char b[12];
-    k_itoa(mx, b);
-    print_serial(b);
-    print_serial(",");
-    k_itoa(my, b);
-    print_serial(b);
-    print_serial("\n");
-  }
-
-  // 1. Sidebar handling (BEFORE scroll compensation)
-  int nh = (rx < SW && ry >= 40) ? (ry - 40) / 36 : -1;
-  if (nh >= NP)
-    nh = -1;
-  if (nh != s->hover) {
-    s->hover = nh;
-=======
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
     win->needs_redraw = 1;
   }
 
   // 1. Sidebar handling (Premium Dark Sidebar)
-  if (click && rx < SW && ry >= 32) {
-    int nh = (ry - 32) / 50;
+  if (click && rx < get_sidebar_width() && ry >= 32) {
+    int item_h = fs + 24;
+    int spacing = 10;
+    int nh = (ry - 45) / (item_h + spacing);
+    if (ry < 45) nh = 0;
     if (nh >= 0 && nh < NP) {
       s->page = nh;
       s->scroll_y = 0;
+      s->picker_open = 0; // Close picker when switching pages
+      s->dropdown_open = 0;
       win->needs_redraw = 1;
       return;
     }
@@ -719,19 +730,114 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
     s->dragging_bg = 0;
   }
 
-  int cw = win->width - CX - 20;
+  // DROPDOWN LOGIC (High priority overlay after picker)
+  if (s->dropdown_open) {
+      if (click) {
+          int cw = win->width - get_cx() - 20;
+          int cy = 50 + 80; // Content start
+          int ry_scroll = ry + s->scroll_y;
+          if (s->dropdown_open == 1) { // Color Mode
+              int d_x = get_cx() + cw - 180;
+              int d_y = cy + 20 + 35 + 2;
+              int item_h = 45;
+              if (rx >= d_x && rx <= d_x + 160 && ry_scroll >= d_y && ry_scroll <= d_y + item_h * 2 + 4) {
+                  int opt = (ry_scroll - d_y - 2) / item_h;
+                  if (opt >= 0 && opt < 2) s->th = (opt == 0 ? 0 : 1);
+                  apply_config(s);
+              }
+              s->dropdown_open = 0;
+              win->needs_redraw = 1;
+              return;
+          } else if (s->dropdown_open == 2) { // Icon Filter
+              int d_x = get_cx() + cw - 180;
+              int d_y = cy + (fs * 6 + 40) + 40 + 105 + 35 + 2; 
+              int item_h = 45;
+              if (rx >= d_x && rx <= d_x + 160 && ry_scroll >= d_y && ry_scroll <= d_y + item_h * 4 + 4) {
+                  int opt = (ry_scroll - d_y - 2) / item_h;
+                  if (opt >= 0 && opt < 4) s->filter = opt;
+                  apply_config(s);
+              }
+              s->dropdown_open = 0;
+              win->needs_redraw = 1;
+              return;
+          } else if (s->dropdown_open == 3) { // System Resolution
+              int d_x = get_cx() + cw - 200;
+              int d_y = cy + 32 + 35 + 2;
+              int item_h = 45;
+              if (rx >= d_x && rx <= d_x + 180 && ry_scroll >= d_y && ry_scroll <= d_y + item_h * 7 + 4) {
+                  int opt = (ry_scroll - d_y - 2) / item_h;
+                  if (opt >= 0 && opt < 7) {
+                      s->sel_res = opt;
+                      apply_config(s);
+                  }
+              }
+              s->dropdown_open = 0;
+              win->needs_redraw = 1;
+              return;
+          } else if (s->dropdown_open == 4) { // Font Size
+              int d_x = get_cx() + 25;
+              int d_y = cy + 95 + 45 + 2;
+              int item_h = 45;
+              if (rx >= d_x && rx <= d_x + cw - 50 && ry_scroll >= d_y && ry_scroll <= d_y + item_h * 3 + 4) {
+                  int opt = (ry_scroll - d_y - 2) / item_h;
+                  if (opt >= 0 && opt < 3) {
+                      s->font_size = opt;
+                      global_config.font_size = opt;
+                      apply_config(s);
+                  }
+              }
+              s->dropdown_open = 0;
+              win->needs_redraw = 1;
+              return;
+          }
+      }
+      if (!click) return;
+  }
+
+  // PICKER LOGIC (Highest priority overlay)
+  if (s->picker_open) {
+    int cx = win->width / 2;
+    int cy = 32 + (win->height - 32) / 2 - 20;
+
+    if (click) {
+      // Left Arrow (lax = 45, lay = cy)
+      if (rx >= 45 - 25 && rx <= 45 + 25 && ry >= cy - 25 && ry <= cy + 25) {
+        s->wp = (s->wp + 3) % 4;
+        win->needs_redraw = 1;
+      }
+      // Right Arrow (rax = win->width - 45, ray = cy)
+      if (rx >= win->width - 45 - 25 && rx <= win->width - 45 + 25 && ry >= cy - 25 && ry <= cy + 25) {
+        s->wp = (s->wp + 1) % 4;
+        win->needs_redraw = 1;
+      }
+      // Apply Button (bx = cx - 90, by = win->height - 100, 180x50)
+      if (rx >= cx - 90 && rx <= cx + 90 && ry >= win->height - 100 && ry <= win->height - 50) {
+        apply_config(s);
+        s->picker_open = 0;
+        win->needs_redraw = 1;
+      }
+      // Close Button (win->width - 45, 45, 30x30)
+      if (rx >= win->width - 45 && rx <= win->width - 15 && ry >= 45 && ry <= 75) {
+        s->picker_open = 0;
+        win->needs_redraw = 1;
+      }
+    }
+    return; // Don't let clicks fall through
+  }
+
+  int cw = win->width - get_cx() - 20;
 
   // Personalization Sliders (Needs rx/ry before scroll compensation)
   if (s->page == PB) {
-    int cy_base = 40;
-    int slider_y = cy_base + 40 + 75*4 - s->scroll_y;
     if (s->dragging_icon) {
-      int val = (rx - CX) * 255 / cw;
-      if (val < 0) val = 0; if (val > 255) val = 255;
+      int val = (rx - get_cx()) * 255 / cw;
+      if (val < 0) val = 0;
+      if (val > 255) val = 255;
       s->icon_int = val; win->needs_redraw = 1;
     } else if (s->dragging_bg) {
-      int val = (rx - CX) * 255 / cw;
-      if (val < 0) val = 0; if (val > 255) val = 255;
+      int val = (rx - get_cx()) * 255 / cw;
+      if (val < 0) val = 0;
+      if (val > 255) val = 255;
       s->bg_int = val; win->needs_redraw = 1;
     }
   }
@@ -739,222 +845,131 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
   if (!click && !s->dragging_icon && !s->dragging_bg) return;
 
   // 2. Content area compensation (Scroll)
-  ry += s->scroll_y;
+  int content_cx = get_cx();
+  int ry_scroll = ry + s->scroll_y;
+
+  // Home Page (PA)
+  if (s->page == PA) {
+    int cy = 50 + 30; // Card 1 offset
+    if (click && rx >= content_cx && rx <= content_cx + cw && ry_scroll >= cy && ry_scroll <= cy + (fs * 2 + 10)) {
+      s->th = !s->th; apply_config(s); win->needs_redraw = 1;
+    }
+    cy += 60; // Card 2 offset
+    if (click && rx >= content_cx && rx <= content_cx + cw && ry_scroll >= cy && ry_scroll <= cy + (fs * 2 + 10)) {
+      s->page = PWALL; s->scroll_y = 0; win->needs_redraw = 1;
+    }
+  }
+
+  // Wallpaper Page (PWALL)
+  if (s->page == PWALL) {
+    int cy = 50 + 80;
+    int thumb_w = (cw - 60) / 2;
+    int thumb_h = 90;
+    int tw_x = content_cx + 20;
+    int tw_y = cy + 60;
+    for (int i = 0; i < 4; i++) {
+      int tx = tw_x + (i % 2) * (thumb_w + 20);
+      int ty = tw_y + (i / 2) * (thumb_h + 20);
+      if (click && rx >= tx && rx <= tx + thumb_w && ry_scroll >= ty && ry_scroll <= ty + thumb_h) {
+        s->wp = i;
+        s->picker_open = 1;
+        win->needs_redraw = 1;
+      }
+    }
+  }
 
   // Personalization Page (PB)
   if (s->page == PB) {
-    int cy = 40 + 40; // Header + Header offset
-    
-    // Background button pill
-    if (click && rx >= CX + cw - 110 && rx <= CX + cw - 15 && ry >= cy + 16 && ry <= cy + 44) {
-      s->wp = (s->wp + 1) % 3; win->needs_redraw = 1;
+    int cy = 50 + 80;
+    // First Card: Color Mode
+    if (click && rx >= content_cx + cw - 180 && rx <= content_cx + cw - 20 && ry_scroll >= cy + 20 && ry_scroll <= cy + 55) {
+      s->dropdown_open = 1; win->needs_redraw = 1;
     }
-    cy += 75;
-
-    // Color Mode button pill
-    if (click && rx >= CX + cw - 110 && rx <= CX + cw - 15 && ry >= cy + 16 && ry <= cy + 44) {
-      s->th = !s->th; win->needs_redraw = 1;
+    cy += (fs * 6 + 40) + 40;
+    // Second Card: Desktop Icons
+    if (click && rx >= content_cx + cw - 75 && rx <= content_cx + cw - 20 && ry_scroll >= cy + 32 && ry_scroll <= cy + 62) {
+      s->di = !s->di; apply_config(s); win->needs_redraw = 1;
     }
-    cy += 75;
-
-    // Desktop Icons Toggle pill
-    if (click && rx >= CX + cw - 65 && rx <= CX + cw - 15 && ry >= cy + 18 && ry <= cy + 42) {
-      s->di = !s->di; win->needs_redraw = 1;
+    // Second Card: Icon Filter
+    if (click && rx >= content_cx + cw - 180 && rx <= content_cx + cw - 20 && ry_scroll >= cy + 105 && ry_scroll <= cy + 140) {
+      s->dropdown_open = 2; win->needs_redraw = 1;
     }
-    cy += 75;
+  }
 
-    // Icon Filter button pill
-    if (click && rx >= CX + cw - 110 && rx <= CX + cw - 15 && ry >= cy + 16 && ry <= cy + 44) {
-      s->filter = (s->filter + 1) % 4; win->needs_redraw = 1;
+  // System settings (PD)
+  if (s->page == PD) {
+    int cy = 50 + 80;
+    if (click && rx >= content_cx + cw - 200 && rx <= content_cx + cw - 20 && ry_scroll >= cy + 32 && ry_scroll <= cy + 67) {
+      s->dropdown_open = 3; win->needs_redraw = 1;
     }
-    cy += 75;
+  }
 
-    // Intensity Sliders
-    // Icon Intensity
-    if (click && rx >= CX && rx <= CX + cw && ry >= cy + 25 && ry <= cy + 31) {
-      s->dragging_icon = 1;
+  // Widgets settings (PW)
+  if (s->page == PW) {
+    int cy = 50 + 80;
+    if (click && rx >= content_cx + cw - 75 && rx <= content_cx + cw - 20) {
+       if (ry_scroll >= cy + 25 && ry_scroll <= cy + 55) { s->show_clock = !s->show_clock; apply_config(s); win->needs_redraw = 1; }
+       if (ry_scroll >= cy + 75 && ry_scroll <= cy + 105) { s->show_calendar = !s->show_calendar; apply_config(s); win->needs_redraw = 1; }
+       if (ry_scroll >= cy + 125 && ry_scroll <= cy + 155) { s->show_sysmon = !s->show_sysmon; apply_config(s); win->needs_redraw = 1; }
     }
-    cy += 25 + 35; // Slider 1 height + spacing
+  }
 
-    // BG Intensity
-    if (click && rx >= CX && rx <= CX + cw && ry >= cy + 25 && ry <= cy + 31) {
-      s->dragging_bg = 1;
-    }
-    cy += 25 + 50; // Slider 2 height + spacing
-
-    // Apply button
-    if (click && rx >= CX && rx <= CX + 100 && ry >= cy && ry <= cy + 32) {
-      apply_config(s); win->needs_redraw = 1;
+  // Fonts & Style settings (PF)
+  if (s->page == PF) {
+    int cy = 50 + 80;
+    if (click && rx >= content_cx + 25 && rx <= content_cx + cw - 25 && ry_scroll >= cy + 95 && ry_scroll <= cy + 140) {
+      s->dropdown_open = 4; win->needs_redraw = 1;
     }
   }
 
   // Taskbar settings (PT)
   if (s->page == PT) {
-<<<<<<< HEAD
-    int cy = 70;
-    int card_w = win->width - CX - 20;
-
-    // Auto-hide
-    if (click && mx >= CX + card_w - 50 && mx <= CX + card_w - 10 &&
-        ry >= cy + 12 && ry <= cy + 32) {
-      s->auto_hide_taskbar = !s->auto_hide_taskbar;
-      win->needs_redraw = 1;
+    int cy = 50 + 80;
+    if (click && rx >= content_cx + cw - 75 && rx <= content_cx + cw - 20 && ry_scroll >= cy + 25 && ry_scroll <= cy + 55) {
+      s->auto_hide_taskbar = !s->auto_hide_taskbar; apply_config(s); win->needs_redraw = 1;
     }
-    cy += 60;
-    cy += 30; // "Taskbar Apps" header
-=======
-    int cy = 40 + 30; // Header + Offset
-    // Auto-hide
-    if (click && rx >= CX + cw - 50 && rx <= CX + cw - 10 && ry >= cy + 12 && ry <= cy + 32) {
-      s->auto_hide_taskbar = !s->auto_hide_taskbar;
-      win->needs_redraw = 1;
-    }
-    cy += 60 + 30; // "Taskbar Apps" header offset
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
-
+    cy += (fs * 6 + 40) + 40;
+    int list_y = cy + 80;
     for (int i = 0; i < 10; i++) {
-      if (click && rx >= CX + cw - 50 && rx <= CX + cw - 10 && ry >= cy + 5 && ry <= cy + 25) {
-        // Toggle pin state
-        int is_pinned = 0;
-        int pin_idx = -1;
+      if (click && rx >= content_cx + cw - 75 && rx <= content_cx + cw - 20 && ry_scroll >= list_y + 5 && ry_scroll <= list_y + 35) {
+        int is_pinned = 0, pin_idx = -1;
         for (int j = 0; j < s->num_pinned; j++) {
-          if (s->pinned[j] == i) {
-            is_pinned = 1;
-            pin_idx = j;
-            break;
-          }
+          if (s->pinned[j] == i) { is_pinned = 1; pin_idx = j; break; }
         }
         if (is_pinned) {
-          // Remove
-          for (int j = pin_idx; j < s->num_pinned - 1; j++) {
-            s->pinned[j] = s->pinned[j + 1];
-          }
+          for (int j = pin_idx; j < s->num_pinned - 1; j++) s->pinned[j] = s->pinned[j + 1];
           s->num_pinned--;
-        } else {
-          if (s->num_pinned < 10) {
-            s->pinned[s->num_pinned++] = i;
-          }
+        } else if (s->num_pinned < 10) {
+          s->pinned[s->num_pinned++] = i;
         }
-        win->needs_redraw = 1;
-<<<<<<< HEAD
-      } // Removed break, because doing an action shouldn't skip further tests without 'return'
-=======
+        apply_config(s); win->needs_redraw = 1;
       }
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
-      cy += 35;
-    }
-    
-    // Apply button
-    if (click && rx >= CX && rx <= CX + 100 && ry >= cy + 10 && ry <= cy + 40) {
-      apply_config(s);
-      win->needs_redraw = 1;
+      list_y += 50;
     }
   }
 
   // Account settings (PC)
   if (s->page == PC) {
-    int cy = 40 + 30 + 80; // Past header and profile card
-    // Save button
-    if (click && rx >= CX + 15 && rx <= CX + 95 && ry >= cy + 75 && ry <= cy + 100) {
-      strcpy(global_config.lock_password, s->pw);
-      config_save();
-      win->needs_redraw = 1;
+    int cy = 50 + 80;
+    cy += 200; // Match settings_draw's jump to password card
+    if (click && rx >= content_cx + cw - 85 && rx <= content_cx + cw - 20 && ry_scroll >= cy + 60 && ry_scroll <= cy + 100) {
+      apply_config(s); win->needs_redraw = 1;
     }
   }
 
-<<<<<<< HEAD
-  // System settings (Resolution)
-  if (s->page == PD) {
-    int res_cy = 40 + 30 + 60 + 30; // Matches settings_draw for PD
-    int card_w = win->width - CX - 20;
-
-    for (int i = 0; i < 7; i++) {
-        int item_y = res_cy + i * 35;
-        if (click && rx >= CX && rx <= CX + card_w && ry >= item_y && ry <= item_y + 30) {
-            s->sel_res = i;
-            win->needs_redraw = 1;
-        }
-    }
-
-    int apply_res_y = res_cy + 7 * 35 + 10;
-    if (click && rx >= CX && rx <= CX + 140 && ry >= apply_res_y && ry <= apply_res_y + 30) {
-        int res_w[] = {800, 1024, 1280, 1280, 1440, 1600, 1920};
-        int res_h[] = {600, 768, 720, 800, 900, 900, 1080};
-        extern void screen_set_resolution(int, int);
-        screen_set_resolution(res_w[s->sel_res], res_h[s->sel_res]);
-        win->needs_redraw = 1;
-=======
-  // Widget settings (PW)
-  if (s->page == PW) {
-    int cy = 40 + 30;
-    // Clock Toggle
-    if (click && rx >= CX + cw - 50 && rx <= CX + cw - 10 && ry >= cy + 12 && ry <= cy + 32) {
-      s->show_clock = !s->show_clock;
-      win->needs_redraw = 1;
-    }
-    cy += 60;
-    // Calendar Toggle
-    if (click && rx >= CX + cw - 50 && rx <= CX + cw - 10 && ry >= cy + 12 && ry <= cy + 32) {
-      s->show_calendar = !s->show_calendar;
-      win->needs_redraw = 1;
-    }
-    cy += 60;
-    // SysMon Toggle
-    if (click && rx >= CX + cw - 50 && rx <= CX + cw - 10 && ry >= cy + 12 && ry <= cy + 32) {
-      s->show_sysmon = !s->show_sysmon;
-      win->needs_redraw = 1;
-    }
-    cy += 50;
-    // Timezone Offset Buttons
-    if (click && ry >= cy + 10 && ry <= cy + 35) {
-      if (rx >= CX + cw - 50 && rx <= CX + cw - 30) {
-        s->tz -= 30;
-        win->needs_redraw = 1;
-      }
-      if (rx >= CX + cw - 25 && rx <= CX + cw - 5) {
-        s->tz += 30;
-        win->needs_redraw = 1;
-      }
-    }
-    cy += 60;
-    // Reset Positions
-    if (click && rx >= CX && rx <= CX + 140 && ry >= cy && ry <= cy + 26) {
-      global_config.clock_x = 744;
-      global_config.clock_y = 60;
-      global_config.clock_w = 200;
-      global_config.clock_h = 200;
-      global_config.calendar_x = 734;
-      global_config.calendar_y = 280;
-      global_config.calendar_w = 220;
-      global_config.calendar_h = 240;
-      apply_config(s);
-      win->needs_redraw = 1;
-    }
-    cy += 50;
-    // Apply button
-    if (click && rx >= CX && rx <= CX + 100 && ry >= cy + 5 && ry <= cy + 31) {
-      apply_config(s);
-      win->needs_redraw = 1;
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
-    }
-  }
+  // Logic for PD, PW, PF is now handled in the modern sections above
 }
 
 static void settings_on_scroll(void *w, int direction) {
   window_t *win = (window_t *)w;
   sstate_t *s = (sstate_t *)win->user_data;
-  if (!s)
-    return;
+  if (!s) return;
 
   // Wheel UP (direction > 0) -> scroll viewport UP -> decrease scroll_y
   s->scroll_y -= direction * 20;
 
-  if (s->scroll_y < 0)
-    s->scroll_y = 0;
-
-  // Add a reasonable bound
-  if (s->scroll_y > 800)
-    s->scroll_y = 800;
+  if (s->scroll_y < 0) s->scroll_y = 0;
+  if (s->scroll_y > 800) s->scroll_y = 800;
 
   win->needs_redraw = 1;
   extern int ui_dirty;
@@ -988,33 +1003,33 @@ static void settings_on_close(void *w) {
 }
 
 void settings_init() {
+  int fs = ui_get_font_scale();
   window_t *win = winmgr_create_window(-1, -1, 800, 600, "Settings");
   if (!win)
     return;
+  
+  // No longer blocking load here. It happens in settings_draw incrementally.
+
   sstate_t *st = (sstate_t *)kmalloc(sizeof(sstate_t));
   st->page = PA;
   st->hover = -1;
   st->scroll_y = 0;
   strcpy(st->pw, global_config.lock_password);
   st->pwc = strlen(st->pw);
-  st->wp = global_config.wallpaper_type;
+  st->wp = global_config.wallpaper_index;
   st->th = global_config.theme_mode;
   st->di = global_config.show_desktop_icons;
   st->filter = global_config.icon_filter;
   st->icon_int = global_config.icon_filter_intensity;
-  st->di = global_config.show_desktop_icons;
   st->show_clock = global_config.show_clock_widget;
   st->show_calendar = global_config.show_calendar_widget;
   st->tz = global_config.timezone_offset_m;
-  st->filter = global_config.icon_filter;
   st->bg_int = global_config.icon_bg_filter_intensity;
   st->auto_hide_taskbar = global_config.auto_hide_taskbar;
-<<<<<<< HEAD
-=======
   st->show_sysmon = global_config.show_sysmon_widget;
->>>>>>> a9f8805 (Integrate TinyExpr math engine, Duktape JS engine, and UI modernizations)
   st->dragging_icon = 0;
   st->dragging_bg = 0;
+  st->picker_open = 0;
   st->num_pinned = global_config.num_pinned;
   for (int i = 0; i < global_config.num_pinned; i++) {
     st->pinned[i] = global_config.pinned[i];
@@ -1030,6 +1045,9 @@ void settings_init() {
       break;
     }
   }
+
+  st->font_size = global_config.font_size;
+  st->font_style = global_config.font_style;
 
   win->user_data = st;
 

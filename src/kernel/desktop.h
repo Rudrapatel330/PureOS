@@ -41,6 +41,7 @@ void desktop_draw_overlay();
 
 // Exposed buffer for Compositor
 extern uint32_t *desktop_buffer;
+void draw_icon(int x, int y, int w, int h, int type, uint32_t *target);
 
 // Global Search Bar
 extern int search_active;

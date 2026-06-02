@@ -1,0 +1,6 @@
+#ifndef STD_BRIDGE_CERRNO_H
+#define STD_BRIDGE_CERRNO_H
+
+#include <errno.h>
+
+#endif

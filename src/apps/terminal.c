@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 #include "terminal.h"
 #include "../fs/fs.h"
 #include "../kernel/clipboard.h"
@@ -142,6 +143,7 @@ void terminal_handle_key_win(window_t *win, char c) {
 }
 
 void terminal_on_key(void *win, int key, char c) {
+  int fs = ui_get_font_scale();
   term_app_t *t = get_term(win);
   if (!t)
     return;
@@ -208,8 +210,9 @@ void terminal_on_key(void *win, int key, char c) {
   // Page Up = Scroll up
   if (key == 0x49) {
     t->scroll_offset += 5;
-    int visible_lines = ((window_t *)win)->height > 38
-                            ? (((window_t *)win)->height - 38) / 10
+    int line_h = fs + 2;
+    int visible_lines = ((window_t *)win)->height > (fs + 22)
+                            ? (((window_t *)win)->height - (fs + 22)) / line_h
                             : 16;
     int max_scroll = t->count > visible_lines ? t->count - visible_lines : 0;
     if (t->scroll_offset > max_scroll)
@@ -254,14 +257,16 @@ void terminal_on_paste(window_t *win, const char *text) {
 }
 
 void terminal_on_scroll(void *win, int direction) {
+  int fs = ui_get_font_scale();
   term_app_t *t = get_term(win);
   if (!t)
     return;
 
   if (direction > 0) {
     t->scroll_offset += 1;
-    int visible_lines = ((window_t *)win)->height > 38
-                            ? (((window_t *)win)->height - 38) / 10
+    int line_h = fs + 2;
+    int visible_lines = ((window_t *)win)->height > (fs + 22)
+                            ? (((window_t *)win)->height - (fs + 22)) / line_h
                             : 16;
     int max_scroll = t->count > visible_lines ? t->count - visible_lines : 0;
     if (t->scroll_offset > max_scroll)
@@ -275,12 +280,14 @@ void terminal_on_scroll(void *win, int direction) {
 }
 
 void terminal_draw(window_t *win) {
+  int fs = ui_get_font_scale();
   term_app_t *t = get_term(win);
   if (!t)
     return;
 
-  int content_h = win->height - 38;
-  int visible_lines = content_h / 10;
+  int line_h = fs + 2;
+  int content_h = win->height - (fs + 22);
+  int visible_lines = content_h / line_h;
 
   int max_scroll = t->count > visible_lines ? t->count - visible_lines : 0;
   if (t->scroll_offset > max_scroll)
@@ -298,7 +305,7 @@ void terminal_draw(window_t *win) {
   int cy = 36;
   for (int i = start; i < end && i < MAX_LINES; i++) {
     winmgr_draw_text(win, 6, cy, t->lines[i], 0xFFFFFFFF); // Fixed white text
-    cy += 10;
+    cy += line_h;
   }
 
   char prompt[256] = "> ";
@@ -309,7 +316,7 @@ void terminal_draw(window_t *win) {
   winmgr_draw_text(win, 6, cy, prompt, 0xFFFFFFFF); // Fixed white prompt
 
   if (t->scroll_offset > 0) {
-    winmgr_draw_text(win, win->width - 30, 36, "^^^", 0xFF89B4FA); // Fixed blue accent
+    winmgr_draw_text(win, win->width - 30, 36, "^^", 0xFF89B4FA); // Fixed blue accent
   }
 }
 
@@ -325,6 +332,7 @@ static void terminal_on_close(void *w) {
 }
 
 void terminal_init() {
+  int fs = ui_get_font_scale();
   window_t *win = winmgr_create_window(-1, -1, 640, 440, "Terminal");
   if (!win) {
     print_serial("TERMINAL: Failed to create window (OOM)\n");
@@ -363,6 +371,7 @@ void terminal_init() {
 }
 
 void terminal_clear() {
+  int fs = ui_get_font_scale();
   // This needs to know which terminal - use last_active_term
   if (last_active_term && last_active_term->user_data) {
     term_app_t *t = (term_app_t *)last_active_term->user_data;

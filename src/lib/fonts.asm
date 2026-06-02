@@ -70,6 +70,16 @@ _binary_DroidSansFallback_ttf_start:
 _binary_DroidSansFallback_ttf_end:
 _binary_DroidSansFallback_ttf_size: dq 0
 
+global _binary_browser_font_otf
+global _binary_browser_font_otf_start
+global _binary_browser_font_otf_end
+global _binary_browser_font_otf_size
+_binary_browser_font_otf:
+_binary_browser_font_otf_start:
+    incbin "mupdf/resources/fonts/noto/NotoSans-Regular.otf"
+_binary_browser_font_otf_end:
+_binary_browser_font_otf_size: dq _binary_browser_font_otf_end - _binary_browser_font_otf_start
+
 global _binary_NimbusMonoPS_BoldItalic_cff
 global _binary_NimbusMonoPS_BoldItalic_cff_start
 global _binary_NimbusMonoPS_BoldItalic_cff_end

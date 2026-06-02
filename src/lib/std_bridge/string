@@ -1,0 +1,15 @@
+#ifndef STD_BRIDGE_STRING_H
+#define STD_BRIDGE_STRING_H
+
+#include <EASTL/string.h>
+
+namespace std {
+    using eastl::string;
+    using eastl::basic_string;
+    using eastl::to_string;
+    using eastl::wstring;
+    using eastl::u16string;
+    using eastl::u32string;
+}
+
+#endif

@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 /**
  * PureOS PDF Reader - MuPDF-based PDF renderer
  *

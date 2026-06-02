@@ -21,25 +21,43 @@ static uint16_t rgb_to_16(uint32_t rgb) {
 }
 
 void text_draw_char(int x, int y, char c, uint32_t color) {
-  if (x < 0 || x + CHAR_WIDTH > screen_width || y < 0 ||
-      y + CHAR_HEIGHT > screen_height) {
+  if (x < -1 || x + 9 > screen_width || y < -1 ||
+      y + 9 > screen_height) {
     return;
   }
 
-  const uint8_t *glyph = font8x8_basic[(unsigned char)c];
+  extern uint8_t font_get_aa_pixel(unsigned char c, int x, int y);
 
-  for (int cy = 0; cy < CHAR_HEIGHT; cy++) {
-    uint8_t row = glyph[cy];
-    int py = y + cy;
+  uint32_t s_r = (color >> 16) & 0xFF;
+  uint32_t s_g = (color >> 8) & 0xFF;
+  uint32_t s_b = color & 0xFF;
 
-    for (int cx = 0; cx < CHAR_WIDTH; cx++) {
-      if (row & (1 << (7 - cx))) {
-        int px = x + cx;
-        backbuffer[py * screen_width + px] = color;
+  for (int cy = -1; cy < 9; cy++) {
+    for (int cx = -1; cx < 9; cx++) {
+      int px = x + cx;
+      int py = y + cy;
+      if (px < 0 || px >= screen_width || py < 0 || py >= screen_height)
+        continue;
+
+      uint8_t alpha = font_get_aa_pixel((unsigned char)c, cx, cy);
+      if (alpha <= 4) continue;
+
+      if (alpha >= 250) {
+        backbuffer[py * screen_width + px] = 0xFF000000 | (s_r << 16) | (s_g << 8) | s_b;
+      } else {
+        uint32_t dst = backbuffer[py * screen_width + px];
+        uint32_t d_r = (dst >> 16) & 0xFF;
+        uint32_t d_g = (dst >> 8) & 0xFF;
+        uint32_t d_b = dst & 0xFF;
+        uint32_t r = d_r + (((int)s_r - (int)d_r) * alpha >> 8);
+        uint32_t g = d_g + (((int)s_g - (int)d_g) * alpha >> 8);
+        uint32_t b = d_b + (((int)s_b - (int)d_b) * alpha >> 8);
+        backbuffer[py * screen_width + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
       }
     }
   }
 }
+
 
 void text_draw_char_with_bg(int x, int y, char c, uint32_t fg, uint32_t bg) {
   if (x < 0 || x + CHAR_WIDTH > screen_width || y < 0 ||
@@ -47,22 +65,32 @@ void text_draw_char_with_bg(int x, int y, char c, uint32_t fg, uint32_t bg) {
     return;
   }
 
-  const uint8_t *glyph = font8x8_basic[(unsigned char)c];
+  extern uint8_t font_get_aa_pixel(unsigned char c, int x, int y);
+
+  uint32_t fg_r = (fg >> 16) & 0xFF, fg_g = (fg >> 8) & 0xFF, fg_b = fg & 0xFF;
+  uint32_t bg_r = (bg >> 16) & 0xFF, bg_g = (bg >> 8) & 0xFF, bg_b = bg & 0xFF;
 
   for (int cy = 0; cy < CHAR_HEIGHT; cy++) {
-    uint8_t row = glyph[cy];
     int py = y + cy;
-
     for (int cx = 0; cx < CHAR_WIDTH; cx++) {
       int px = x + cx;
-      if (row & (1 << (7 - cx))) {
+      uint8_t alpha = font_get_aa_pixel((unsigned char)c, cx, cy);
+
+      if (alpha >= 250) {
         backbuffer[py * screen_width + px] = fg;
-      } else {
+      } else if (alpha <= 4) {
         backbuffer[py * screen_width + px] = bg;
+      } else {
+        // Blend between fg and bg based on coverage
+        uint32_t r = bg_r + (((int)fg_r - (int)bg_r) * alpha >> 8);
+        uint32_t g = bg_g + (((int)fg_g - (int)bg_g) * alpha >> 8);
+        uint32_t b = bg_b + (((int)fg_b - (int)bg_b) * alpha >> 8);
+        backbuffer[py * screen_width + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
       }
     }
   }
 }
+
 
 void text_draw_string(int x, int y, const char *str, uint32_t color) {
   int start_x = x;

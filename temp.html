@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pure OS - 64-bit Graphical Operating System</title>
+
+    <!-- SEO Meta Tags -->
+    <meta name="description" content="Pure OS is a custom-built 64-bit graphical operating system featuring a virtual file system, developer console, microsecond boot, real-time themes, and a responsive window manager.">
+    <meta name="application-name" content="Pure OS">
+    <meta name="author" content="Pure OS Project">
+    <link rel="canonical" href="https://pureos330.vercel.app/">
+
+    <!-- Open Graph / Social Meta Tags -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Pure OS">
+    <meta property="og:title" content="Pure OS - 64-bit Graphical Operating System">
+    <meta property="og:description" content="A custom-built 64-bit graphical operating system with a virtual file system, developer console, microsecond boot, and responsive window manager.">
+    <meta property="og:url" content="https://pureos330.vercel.app/">
+
+    <!-- Twitter Card Meta Tags -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Pure OS - 64-bit Graphical Operating System">
+    <meta name="twitter:description" content="A custom-built 64-bit graphical operating system with a virtual file system, developer console, microsecond boot, and responsive window manager.">
+
+    <!-- JSON-LD Structured Data for Google Site Name -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Pure OS",
+      "alternateName": ["PureOS", "PureOS330", "Pure OS 330"],
+      "url": "https://pureos330.vercel.app/"
+    }
+    </script>
+
+    <!-- Premium Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Syne:wght@700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- CSS Stylesheet -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="theme-lilac accent-lime">
+    <!-- Scroll Progress Bar -->
+    <div class="scroll-progress-track">
+        <div class="scroll-progress-fill" id="scrollProgressFill"></div>
+    </div>
+
+    <!-- Custom Interactive Cursor -->
+    <div class="custom-cursor"></div>
+    <div class="custom-cursor-glow"></div>
+    <!-- Cursor Particle Trail Canvas -->
+    <canvas id="cursorTrailCanvas"></canvas>
+
+    <!-- Navigation Header -->
+    <header class="navbar">
+        <div class="logo">
+            <span class="logo-text">Pure<span>OS</span></span>
+        </div>
+        <nav class="nav-container">
+            <a href="#home" class="nav-link active">Home</a>
+            <a href="#features" class="nav-link">Features</a>
+            <a href="#live-os" class="nav-link">Live OS</a>
+            <a href="#kernel" class="nav-link">Kernel</a>
+            <a href="#gallery" class="nav-link">Gallery</a>
+            <a href="#about" class="nav-link">About Us</a>
+        </nav>
+        <div class="nav-actions">
+            <div class="theme-select-container">
+                <button class="theme-select-trigger" id="themeSelectTrigger" aria-label="Select Theme Color Combination">
+                    <i class="fa-solid fa-palette"></i>
+                </button>
+                <div class="theme-select-dropdown" id="themeSelectDropdown">
+                    <button class="theme-option active" data-theme="obsidian" title="Obsidian Gold (Warm luxury dark)">
+                        <span class="color-preview" style="background: linear-gradient(135deg, #0e0c08 50%, #d4a843 50%);"></span>
+                        <span class="theme-name">Obsidian Gold</span>
+                    </button>
+                    <button class="theme-option" data-theme="ocean" title="Ocean Abyss (Deep navy & teal)">
+                        <span class="color-preview" style="background: linear-gradient(135deg, #06131e 50%, #2dd4bf 50%);"></span>
+                        <span class="theme-name">Ocean Abyss</span>
+                    </button>
+                    <button class="theme-option" data-theme="earth" title="Burnt Earth (Terracotta & sand)">
+                        <span class="color-preview" style="background: linear-gradient(135deg, #110d0a 50%, #c2703e 50%);"></span>
+                        <span class="theme-name">Burnt Earth</span>
+                    </button>
+                    <button class="theme-option" data-theme="lilac" title="Frosted Lilac (Soft lavender light)">
+                        <span class="color-preview" style="background: linear-gradient(135deg, #ede8f5 50%, #6c5c96 50%);"></span>
+                        <span class="theme-name">Frosted Lilac</span>
+                    </button>
+                    <button class="theme-option" data-theme="carbon" title="Carbon Steel (Cool graphite & teal)">
+                        <span class="color-preview" style="background: linear-gradient(135deg, #101114 50%, #14b8a6 50%);"></span>
+                        <span class="theme-name">Carbon Steel</span>
+                    </button>
+                </div>
+            </div>
+            <a href="#live-os" class="btn-cta">Try Live OS</a>
+        </div>
+        <!-- Mobile Menu Toggle -->
+        <button class="mobile-menu-toggle" id="mobileMenuBtn" aria-label="Toggle Mobile Menu">
+            <i class="fa-solid fa-bars"></i>
+        </button>
+    </header>
+
+    <!-- Mobile Navigation Drawer -->
+    <div class="mobile-nav" id="mobileNav">
+        <a href="#home" class="mobile-nav-link">Home</a>
+        <a href="#features" class="mobile-nav-link">Features</a>
+        <a href="#live-os" class="mobile-nav-link">Live OS</a>
+        <a href="#kernel" class="mobile-nav-link">Kernel</a>
+        <a href="#gallery" class="mobile-nav-link">Gallery</a>
+        <a href="#about" class="mobile-nav-link">About Us</a>
+        <div class="mobile-nav-actions">
+            <div style="font-size: 11px; font-weight: bold; color: var(--color-secondary-text); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">Color Palette:</div>
+            <div class="mobile-theme-tray" style="display: flex; gap: 8px; margin-bottom: 20px;">
+                <button class="mobile-theme-option active" data-theme="obsidian" style="width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #0e0c08 50%, #d4a843 50%); border: 2px solid var(--color-surface-border);" title="Obsidian Gold"></button>
+                <button class="mobile-theme-option" data-theme="ocean" style="width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #06131e 50%, #2dd4bf 50%); border: 2px solid var(--color-surface-border);" title="Ocean Abyss"></button>
+                <button class="mobile-theme-option" data-theme="earth" style="width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #110d0a 50%, #c2703e 50%); border: 2px solid var(--color-surface-border);" title="Burnt Earth"></button>
+                <button class="mobile-theme-option" data-theme="lilac" style="width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #ede8f5 50%, #6c5c96 50%); border: 2px solid var(--color-surface-border);" title="Frosted Lilac"></button>
+                <button class="mobile-theme-option" data-theme="carbon" style="width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #101114 50%, #14b8a6 50%); border: 2px solid var(--color-surface-border);" title="Carbon Steel"></button>
+            </div>
+            <a href="#live-os" class="btn-cta">Try Live OS</a>
+        </div>
+    </div>
+
+    <!-- Main Content Container -->
+    <main>
+        
+        <!-- SECTION 1: HERO SECTION -->
+        <section id="home" class="hero-section">
+            <div class="hero-bg-grid"></div>
+            <div class="hero-glow-orb orb-1"></div>
+            <div class="hero-glow-orb orb-2"></div>
+            
+            <div class="hero-content">
+                <!-- Main Header Title with letter-level interactives -->
+                <div class="hero-title-container">
+                    <h1 class="hero-title" id="heroTitle">
+                        <span class="letter-interactive" id="letter-p">P</span><span class="letter-interactive">U</span><span class="letter-interactive">R</span><span class="letter-interactive">E</span>
+                        <span class="letter-space"> </span>
+                        <span class="letter-interactive">O</span><span class="letter-interactive" id="letter-s">S</span><span class="cursor-blink">_</span>
+                    </h1>
+                </div>
+
+                <!-- Technical Subtitle -->
+                <p class="hero-subtitle">64-bit graphical Operating System</p>
+
+                <!-- Action Button -->
+                <div class="hero-btns">
+                    <a href="#live-os" class="btn-primary">Boot Simulator <i class="fa-solid fa-power-off"></i></a>
+                    <a href="#features" class="btn-secondary">Explore Features <i class="fa-solid fa-arrow-down"></i></a>
+                </div>
+            </div>
+
+            <!-- Dynamic SVG Pointer Lines (will draw via JS connecting boxes to letters) -->
+            <svg class="pointer-lines-svg" id="pointerLinesSvg">
+                <defs>
+                    <linearGradient id="lineGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="var(--color-accent)" />
+                        <stop offset="100%" stop-color="var(--color-primary-text)" />
+                    </linearGradient>
+                    <linearGradient id="lineGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="var(--color-highlight)" />
+                        <stop offset="100%" stop-color="var(--color-primary-text)" />
+                    </linearGradient>
+                    <filter id="glow-filter" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                </defs>
+                <path id="line-64bit" class="pointer-line" d="M 0 0 Q 0 0 0 0" filter="url(#glow-filter)" />
+                <path id="line-animations" class="pointer-line" d="M 0 0 Q 0 0 0 0" filter="url(#glow-filter)" />
+            </svg>
+
+            <!-- Callout Card: 64Bit (Top Left area) -->
+            <div class="callout-card" id="callout-64bit">
+                <div class="card-inner">
+                    <div class="card-tag">Hardware</div>
+                    <h3>64Bit Architecture</h3>
+                    <p>Fully optimized for modern x86_64 architectures with direct hardware access.</p>
+                </div>
+            </div>
+
+            <!-- Callout Card: Beautiful Animations (Bottom Right area) -->
+            <div class="callout-card" id="callout-animations">
+                <div class="card-inner">
+                    <div class="card-tag">UI Engine</div>
+                    <h3>Beautiful Animations</h3>
+                    <p>Fluid, physics-based desktop environment rendering at a smooth 60fps.</p>
+                </div>
+            </div>
+
+            <!-- Floating Binary Path (Bottom Left) -->
+            <div class="binary-stream-container">
+                <svg width="400" height="200" viewBox="0 0 400 200" fill="none" class="binary-svg">
+                    <path id="binaryPath" d="M10 180 C 120 180, 200 80, 390 20" />
+                    <text class="binary-text">
+                        <textPath href="#binaryPath" startOffset="0%" id="binaryTextPath">
+                            010101010101010101010101010101010101010101010101
+                        </textPath>
+                    </text>
+                </svg>
+            </div>
+
+            <!-- Bottom Right Tag -->
+            <div class="bottom-right-tag">
+                <span class="tag-title">CUSTOM OS</span>
+            </div>
+            
+            <!-- Scroll Down Indicator -->
+            <div class="scroll-indicator">
+                <div class="mouse">
+                    <div class="wheel"></div>
+                </div>
+                <span>Scroll to boot</span>
+            </div>
+        </section>
+
+        <!-- SECTION 2: BENTO FEATURES GRID -->
+        <section id="features" class="features-section">
+            <div class="container">
+                <!-- Header with Starburst Badge (Image 2 style upgrade) -->
+                <div class="section-header">
+                    <div class="badge-wrapper">
+                        <svg class="starburst-badge" viewBox="0 0 100 100">
+                            <polygon points="50,0 60,35 95,20 70,50 95,80 60,65 50,100 40,65 5,80 30,50 5,20 40,35" />
+                        </svg>
+                        <span class="badge-text">NEW</span>
+                    </div>
+                    <h2 class="section-title">FEATURES</h2>
+                    <p class="section-subtitle">Discover the cutting-edge capabilities that make Pure OS stand out.</p>
+                </div>
+
+                <!-- Bento Grid Layout -->
+                <div class="bento-grid">
+                    <!-- Bento Box 1: File Manager Mock -->
+                    <div class="bento-card card-large card-file-manager">
+                        <div class="bento-header">
+                            <i class="fa-regular fa-folder-open card-icon"></i>
+                            <h3>Virtual File System (VFS)</h3>
+                        </div>
+                        <p class="bento-desc">An advanced path-based virtual system linking files, directories, and raw hardware resources seamlessly.</p>
+                        <!-- VFS Interactive Visualizer -->
+                        <div class="vfs-visualizer">
+                            <div class="vfs-sidebar">
+                                <div class="sidebar-item active"><i class="fa-solid fa-hard-drive"></i> root/</div>
+                                <div class="sidebar-item"><i class="fa-solid fa-folder"></i> system</div>
+                                <div class="sidebar-item"><i class="fa-solid fa-folder"></i> apps</div>
+                                <div class="sidebar-item"><i class="fa-solid fa-folder"></i> user</div>
+                            </div>
+                            <div class="vfs-contents">
+                                <div class="vfs-item" data-type="dir"><i class="fa-solid fa-folder text-accent"></i> <span>system</span></div>
+                                <div class="vfs-item" data-type="dir"><i class="fa-solid fa-folder text-accent"></i> <span>apps</span></div>
+                                <div class="vfs-item" data-type="dir"><i class="fa-solid fa-folder text-accent"></i> <span>user</span></div>
+                                <div class="vfs-item" data-type="file"><i class="fa-regular fa-file-lines text-highlight"></i> <span>boot.log</span></div>
+                                <div class="vfs-item" data-type="file"><i class="fa-regular fa-file-code text-lime"></i> <span>kernel.bin</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bento Box 2: Terminal Commands Preview -->
+                    <div class="bento-card card-medium card-terminal">
+                        <div class="bento-header">
+                            <i class="fa-solid fa-terminal card-icon"></i>
+                            <h3>Developer Console</h3>
+                        </div>
+                        <p class="bento-desc">Powerful command terminal executing system operations and utility apps in real-time.</p>
+                        <!-- Terminal Interface -->
+                        <div class="mini-terminal">
+                            <div class="terminal-header">
+                                <span class="dot red"></span>
+                                <span class="dot yellow"></span>
+                                <span class="dot green"></span>
+                                <span class="terminal-title">pureos_terminal.sh</span>
+                            </div>
+                            <div class="terminal-body">
+                                <div class="terminal-line"><span class="prompt">pureos@system:~$</span> neofetch</div>
+                                <div class="terminal-neofetch">
+                                    <div class="logo-ascii">
+                                        ██████  ██    ██ 
+                                        ██   ██ ██    ██ 
+                                        ██████  ██    ██ 
+                                        ██      ██    ██ 
+                                        ██       ██████  
+                                    </div>
+                                    <div class="sys-info">
+                                        <span class="info-label">OS:</span> Pure OS 64bit<br>
+                                        <span class="info-label">Kernel:</span> PureKern v1.0.4<br>
+                                        <span class="info-label">Shell:</span> PureSH v2.1<br>
+                                        <span class="info-label">Uptime:</span> 12 mins
+                                    </div>
+                                </div>
+                                <div class="terminal-line"><span class="prompt">pureos@system:~$</span> <span class="typing-text">_</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bento Box 3: Performance & Scale Visualizer -->
+                    <div class="bento-card card-small card-perf">
+                        <div class="bento-header">
+                            <i class="fa-solid fa-gauge-high card-icon"></i>
+                            <h3>Microsecond Boot</h3>
+                        </div>
+                        <div class="perf-gauge">
+                            <svg class="gauge-svg" viewBox="0 0 100 100">
+                                <circle cx="50" cy="50" r="40" class="gauge-bg" />
+                                <circle cx="50" cy="50" r="40" class="gauge-value" />
+                            </svg>
+                            <div class="gauge-text">
+                                <span class="gauge-num">0.86s</span>
+                                <span class="gauge-lbl">Boot Time</span>
+                            </div>
+                        </div>
+                        <p class="bento-desc">Ultra-low kernel footprint allows booting to full GUI in less than a second.</p>
+                    </div>
+
+                    <!-- Bento Box 4: Interactive Theme Switcher Bento -->
+                    <div class="bento-card card-small card-customizer">
+                        <div class="bento-header">
+                            <i class="fa-solid fa-palette card-icon"></i>
+                            <h3>Real-time Themes</h3>
+                        </div>
+                        <p class="bento-desc">Instantly customize system-wide layouts, font sizes, and accent colors.</p>
+                        <!-- Theme Controls -->
+                        <div class="theme-picker-bento">
+                            <button class="color-dot active" data-color="blue" style="background-color: #3b82f6;"></button>
+                            <button class="color-dot" data-color="pink" style="background-color: #ec4899;"></button>
+                            <button class="color-dot" data-color="lime" style="background-color: #10b981;"></button>
+                            <button class="color-dot" data-color="purple" style="background-color: #8b5cf6;"></button>
+                        </div>
+                        <div class="scale-slider-bento">
+                            <span>UI Scale:</span>
+                            <div class="scale-buttons">
+                                <button class="scale-btn" data-scale="0.8">S</button>
+                                <button class="scale-btn active" data-scale="1.0">M</button>
+                                <button class="scale-btn" data-scale="1.2">L</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bento Box 5: Custom GUI Engine -->
+                    <div class="bento-card card-medium card-gui">
+                        <div class="bento-header">
+                            <i class="fa-solid fa-window-restore card-icon"></i>
+                            <h3>Responsive Window Manager</h3>
+                        </div>
+                        <p class="bento-desc">Physics-based composite window manager. Drag, scale, stack, and cascade windows with buttery smooth transitions.</p>
+                        <div class="gui-mockup-wrapper">
+                            <div class="mini-window window-1">
+                                <div class="win-header"><span class="dot"></span><span>Settings</span></div>
+                                <div class="win-body">
+                                    <div class="mock-line" style="width: 80%;"></div>
+                                    <div class="mock-line" style="width: 50%;"></div>
+                                </div>
+                            </div>
+                            <div class="mini-window window-2">
+                                <div class="win-header"><span class="dot"></span><span>Graphics</span></div>
+                                <div class="win-body">
+                                    <div class="mock-bar-chart">
+                                        <div class="mock-bar" style="height: 40%;"></div>
+                                        <div class="mock-bar" style="height: 75%;"></div>
+                                        <div class="mock-bar" style="height: 50%;"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bento Box 6: Starburst Callout (Interactive badge box) -->
+                    <div class="bento-card card-medium card-starburst">
+                        <div class="starburst-container">
+                            <svg class="starburst-rotate" viewBox="0 0 100 100">
+                                <polygon points="50,0 58,15 75,5 72,25 90,20 80,38 98,48 83,58 92,76 75,72 76,90 60,82 54,98 45,83 34,92 32,74 15,77 22,60 5,55 18,44 10,26 27,28 26,10 40,18" />
+                            </svg>
+                            <div class="starburst-overlay-text">60 FPS</div>
+                        </div>
+                        <h3>Ultra-Fluid Render</h3>
+                        <p class="bento-desc">Custom optimized graphics library drawing vectors, fonts, and controls directly to frame buffers with double-buffering support.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 3: LIVE OS SIMULATOR -->
+        <section id="live-os" class="simulator-section">
+            <div class="container-fluid">
+                <div class="section-header">
+                    <h2 class="section-title">EXPERIENCE PURE OS</h2>
+                    <p class="section-subtitle text-center">Interact with a live sandbox environment of Pure OS directly in your browser. Double-click desktop icons to begin.</p>
+                </div>
+
+                <!-- OS Desktop Container -->
+                <div class="desktop-container" id="osDesktop">
+                    <!-- Grid of Desktop Icons -->
+                    <div class="desktop-icons">
+                        <div class="desktop-icon" id="icon-file-explorer" data-app="file-explorer">
+                            <div class="icon-wrapper">
+                                <i class="fa-solid fa-folder-closed"></i>
+                            </div>
+                            <span class="icon-label">File Explorer</span>
+                        </div>
+                        <div class="desktop-icon" id="icon-terminal" data-app="terminal">
+                            <div class="icon-wrapper">
+                                <i class="fa-solid fa-terminal"></i>
+                            </div>
+                            <span class="icon-label">Terminal</span>
+                        </div>
+                        <div class="desktop-icon" id="icon-settings" data-app="settings">
+                            <div class="icon-wrapper">
+                                <i class="fa-solid fa-gear"></i>
+                            </div>
+                            <span class="icon-label">Settings</span>
+                        </div>
+                        <div class="desktop-icon" id="icon-snake" data-app="snake">
+                            <div class="icon-wrapper">
+                                <i class="fa-solid fa-gamepad"></i>
+                            </div>
+                            <span class="icon-label">Snake Game</span>
+                        </div>
+                    </div>
+
+                    <!-- Sandbox Desktop Taskbar (at bottom of desktop) -->
+                    <div class="desktop-taskbar">
+                        <div class="start-btn" id="osStartBtn">
+                            <i class="fa-solid fa-cube"></i> <span>PureOS</span>
+                        </div>
+                        <div class="taskbar-apps" id="taskbarApps">
+                            <!-- Active app icons will appear here -->
+                        </div>
+                        <div class="taskbar-widgets">
+                            <div class="taskbar-widget" id="desktopTime">12:00 PM</div>
+                            <div class="taskbar-widget" id="desktopBattery"><i class="fa-solid fa-battery-three-quarters"></i> 85%</div>
+                            <div class="taskbar-widget" id="desktopWifi"><i class="fa-solid fa-wifi"></i></div>
+                        </div>
+                    </div>
+
+                    <!-- Sandbox Desktop Start Menu -->
+                    <div class="desktop-start-menu" id="desktopStartMenu">
+                        <div class="start-header">
+                            <i class="fa-solid fa-circle-user avatar"></i>
+                            <div class="user-details">
+                                <span class="username">Guest User</span>
+                                <span class="host">pureos-sandbox</span>
+                            </div>
+                        </div>
+                        <div class="start-list">
+                            <div class="start-item" data-app="file-explorer"><i class="fa-solid fa-folder"></i> File Explorer</div>
+                            <div class="start-item" data-app="terminal"><i class="fa-solid fa-terminal"></i> Terminal Console</div>
+                            <div class="start-item" data-app="settings"><i class="fa-solid fa-gear"></i> System Settings</div>
+                            <div class="start-item" data-app="snake"><i class="fa-solid fa-gamepad"></i> Play Snake</div>
+                        </div>
+                        <div class="start-footer">
+                            <button class="shutdown-btn" id="btnShutdown"><i class="fa-solid fa-power-off"></i> Shut Down</button>
+                        </div>
+                    </div>
+
+                    <!-- Windows App Containers (rendered inside desktop, dynamic position via JS) -->
+                    
+                    <!-- App 1: File Explorer -->
+                    <div class="os-window" id="win-file-explorer" style="display: none; width: 620px; height: 420px; left: 10%; top: 10%;">
+                        <div class="win-titlebar">
+                            <div class="win-title"><i class="fa-solid fa-folder-open"></i> File Explorer</div>
+                            <div class="win-controls">
+                                <button class="win-btn btn-min" data-app="file-explorer"><i class="fa-solid fa-minus"></i></button>
+                                <button class="win-btn btn-max" data-app="file-explorer"><i class="fa-solid fa-square-full"></i></button>
+                                <button class="win-btn btn-close" data-app="file-explorer"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                        </div>
+                        <div class="win-navbar">
+                            <button class="nav-btn" id="fe-back-btn" disabled><i class="fa-solid fa-arrow-left"></i></button>
+                            <div class="path-bar" id="fe-path-bar">/root</div>
+                        </div>
+                        <div class="win-body-explorer">
+                            <div class="fe-sidebar">
+                                <div class="sidebar-folder active" data-path="/root"><i class="fa-solid fa-house"></i> Home</div>
+                                <div class="sidebar-folder" data-path="/root/system"><i class="fa-solid fa-gears"></i> System</div>
+                                <div class="sidebar-folder" data-path="/root/apps"><i class="fa-solid fa-shapes"></i> Applications</div>
+                                <div class="sidebar-folder" data-path="/root/user"><i class="fa-solid fa-user-gear"></i> User Directory</div>
+                            </div>
+                            <div class="fe-content" id="fe-content-area">
+                                <!-- Folder contents will be rendered dynamically -->
+                            </div>
+                        </div>
+                        <div class="win-statusbar">
+                            <span id="fe-status-items">5 Items</span>
+                        </div>
+                    </div>
+
+                    <!-- App 2: Terminal -->
+                    <div class="os-window" id="win-terminal" style="display: none; width: 550px; height: 380px; left: 20%; top: 15%;">
+                        <div class="win-titlebar">
+                            <div class="win-title"><i class="fa-solid fa-terminal"></i> Terminal</div>
+                            <div class="win-controls">
+                                <button class="win-btn btn-min" data-app="terminal"><i class="fa-solid fa-minus"></i></button>
+                                <button class="win-btn btn-max" data-app="terminal"><i class="fa-solid fa-square-full"></i></button>
+                                <button class="win-btn btn-close" data-app="terminal"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                        </div>
+                        <div class="win-body-terminal" id="terminal-scroll-area">
+                            <div class="term-line">Pure OS v1.0.4 Shell Console [sandbox]</div>
+                            <div class="term-line">Type 'help' to view available system commands.</div>
+                            <div class="term-output-history" id="terminalHistory"></div>
+                            <div class="term-input-line">
+                                <span class="term-prompt">pureos@system:~$</span>
+                                <input type="text" class="term-input" id="terminalInput" autofocus autocomplete="off" spellcheck="false">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- App 3: Settings -->
+                    <div class="os-window" id="win-settings" style="display: none; width: 480px; height: 400px; left: 30%; top: 20%;">
+                        <div class="win-titlebar">
+                            <div class="win-title"><i class="fa-solid fa-gear"></i> Settings</div>
+                            <div class="win-controls">
+                                <button class="win-btn btn-min" data-app="settings"><i class="fa-solid fa-minus"></i></button>
+                                <button class="win-btn btn-max" data-app="settings"><i class="fa-solid fa-square-full"></i></button>
+                                <button class="win-btn btn-close" data-app="settings"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                        </div>
+                        <div class="win-body-settings">
+                            <div class="settings-nav">
+                                <div class="settings-nav-item active" data-tab="personalization"><i class="fa-solid fa-paintbrush"></i> Personalization</div>
+                                <div class="settings-nav-item" data-tab="system"><i class="fa-solid fa-circle-info"></i> System Info</div>
+                            </div>
+                            <div class="settings-content">
+                                <!-- Personalization Tab -->
+                                <div class="settings-tab-panel active" id="tab-personalization">
+                                    <h4>Wallpaper</h4>
+                                    <div class="wallpaper-grid">
+                                        <div class="wallpaper-item active" data-wp="dark-grid" style="background: radial-gradient(circle, #1e293b, #0f172a);"></div>
+                                        <div class="wallpaper-item" data-wp="matrix" style="background: #052e16;"></div>
+                                        <div class="wallpaper-item" data-wp="sunset" style="background: linear-gradient(135deg, #f43f5e, #fb923c);"></div>
+                                        <div class="wallpaper-item" data-wp="pure-brutal" style="background: #e2f952;"></div>
+                                    </div>
+                                    
+                                    <h4>System Theme Accent</h4>
+                                    <div class="theme-accent-selectors">
+                                        <button class="accent-dot active" data-accent="blue" style="background-color: #3b82f6;"></button>
+                                        <button class="accent-dot" data-accent="pink" style="background-color: #ec4899;"></button>
+                                        <button class="accent-dot" data-accent="lime" style="background-color: #10b981;"></button>
+                                        <button class="accent-dot" data-accent="purple" style="background-color: #8b5cf6;"></button>
+                                    </div>
+
+                                    <h4>Desktop GUI Scale</h4>
+                                    <div class="scale-adjuster">
+                                        <input type="range" id="guiScaleSlider" min="0.8" max="1.3" step="0.1" value="1.0">
+                                        <span id="guiScaleValue">1.0x</span>
+                                    </div>
+                                </div>
+
+                                <!-- System Tab -->
+                                <div class="settings-tab-panel" id="tab-system" style="display:none;">
+                                    <div class="sys-detail-card">
+                                        <h4>Pure OS 64-bit</h4>
+                                        <p>Version 1.0.4 stable release</p>
+                                        <hr>
+                                        <div class="sys-stat-row">
+                                            <span>Processor:</span>
+                                            <span>Virtual Core 64bit</span>
+                                        </div>
+                                        <div class="sys-stat-row">
+                                            <span>Memory:</span>
+                                            <span>1024 MB RAM</span>
+                                        </div>
+                                        <div class="sys-stat-row">
+                                            <span>Renderer:</span>
+                                            <span>Canvas Double-Buffered GUI</span>
+                                        </div>
+                                        <div class="sys-stat-row">
+                                            <span>Audio:</span>
+                                            <span>Web Audio API Synth</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- App 4: Snake Game -->
+                    <div class="os-window" id="win-snake" style="display: none; width: 400px; height: 460px; left: 15%; top: 8%;">
+                        <div class="win-titlebar">
+                            <div class="win-title"><i class="fa-solid fa-gamepad"></i> Snake Game</div>
+                            <div class="win-controls">
+                                <button class="win-btn btn-min" data-app="snake"><i class="fa-solid fa-minus"></i></button>
+                                <button class="win-btn btn-max" data-app="snake" disabled><i class="fa-solid fa-square-full"></i></button>
+                                <button class="win-btn btn-close" data-app="snake"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                        </div>
+                        <div class="win-body-game">
+                            <div class="game-hud">
+                                <div class="score-box">SCORE: <span id="snakeScore">000</span></div>
+                                <div class="high-score-box">HIGH: <span id="snakeHighScore">000</span></div>
+                            </div>
+                            <canvas id="snakeCanvas" width="360" height="320"></canvas>
+                            <div class="game-controls">
+                                <button class="btn-game" id="btnStartSnake">Play / Restart</button>
+                                <p class="game-instruction">Use Arrow Keys on your keyboard or keyboard focus to direct the snake.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sandbox OS Shutdown Overlay -->
+                    <div class="desktop-shutdown-overlay" id="desktopShutdownOverlay">
+                        <div class="shutdown-content">
+                            <i class="fa-solid fa-power-off shutdown-icon"></i>
+                            <h3>Pure OS has shut down safely.</h3>
+                            <button class="btn-primary" id="btnRestartOS">Boot OS <i class="fa-solid fa-rotate-right"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 4: KERNEL SPECIFICATIONS -->
+        <section id="kernel" class="kernel-section">
+            <div class="container">
+                <div class="section-header">
+                    <h2 class="section-title">KERNEL DESIGN</h2>
+                    <p class="section-subtitle">Examine the low-level layered architecture of Pure OS.</p>
+                </div>
+
+                <div class="kernel-container">
+                    <!-- Left: Interactive Diagram -->
+                    <div class="kernel-diagram">
+                        <div class="kernel-layer layer-user" data-layer="user">
+                            <span class="layer-num">01</span>
+                            <span class="layer-name">User Applications</span>
+                        </div>
+                        <div class="kernel-layer layer-sys" data-layer="syscall">
+                            <span class="layer-num">02</span>
+                            <span class="layer-name">System Call Interface (SCI)</span>
+                        </div>
+                        <div class="kernel-layer layer-core" data-layer="core">
+                            <span class="layer-num">03</span>
+                            <span class="layer-name">PureKern Core Services</span>
+                        </div>
+                        <div class="kernel-layer layer-drivers" data-layer="drivers">
+                            <span class="layer-num">04</span>
+                            <span class="layer-name">Device Driver Layer</span>
+                        </div>
+                        <div class="kernel-layer layer-hardware" data-layer="hardware">
+                            <span class="layer-num">05</span>
+                            <span class="layer-name">Hardware Abstraction Layer (HAL)</span>
+                        </div>
+                    </div>
+
+                    <!-- Right: Info Panel detailing the active layer -->
+                    <div class="kernel-info-panel" id="kernelInfoPanel">
+                        <div class="info-default">
+                            <i class="fa-solid fa-circle-nodes info-icon"></i>
+                            <h3>Interactive Architecture Map</h3>
+                            <p>Hover over or tap any kernel layer on the diagram to inspect its specifications, driver capabilities, and file system hookups.</p>
+                        </div>
+                        <div class="info-content" id="kernelInfoContent" style="display: none;">
+                            <div class="info-header">
+                                <span class="layer-badge" id="infoLayerBadge">Layer 01</span>
+                                <h3 id="infoLayerTitle">User Applications</h3>
+                            </div>
+                            <p class="info-description" id="infoLayerDesc">
+                                The topmost ring containing GUI environments, custom software apps, terminals, and client-run executable programs.
+                            </p>
+                            <div class="info-details-box">
+                                <h4 class="details-title">Key Elements:</h4>
+                                <ul class="details-list" id="infoLayerList">
+                                    <li>Window Manager & Framebuffer GUI</li>
+                                    <li>Interactive terminal Shell (PureSH)</li>
+                                    <li>Built-in games & core system utilities</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 5: GALLERY & MEDIA SHOWROOM -->
+        <section id="gallery" class="gallery-section">
+            <div class="container">
+                <div class="section-header">
+                    <h2 class="section-title">SYSTEM SHOWCASE</h2>
+                    <p class="section-subtitle">Visual highlights of the Pure OS user interface, file structure, and terminal modules.</p>
+                </div>
+
+                <!-- Showcase Carousel / Slider -->
+                <div class="carousel-container">
+                    <div class="carousel-track-wrapper">
+                        <div class="carousel-track" id="carouselTrack">
+                            <!-- Slides will contain custom SVG mockups and generated images -->
+                            <div class="carousel-slide">
+                                <div class="slide-card">
+                                    <div class="slide-img-wrapper">
+                                        <!-- SVG mockup of Desktop GUI -->
+                                        <svg class="svg-slide-mockup" viewBox="0 0 800 450">
+                                            <rect width="800" height="450" fill="#0f172a" />
+                                            <circle cx="400" cy="225" r="180" fill="url(#circleGlow)" opacity="0.3" />
+                                            <!-- Desktop Icons -->
+                                            <rect x="30" y="30" width="40" height="40" rx="5" fill="#3b82f6" />
+                                            <text x="35" y="90" fill="#94a3b8" font-family="Plus Jakarta Sans" font-size="10">Explorer</text>
+                                            
+                                            <rect x="30" y="110" width="40" height="40" rx="5" fill="#ec4899" />
+                                            <text x="38" y="170" fill="#94a3b8" font-family="Plus Jakarta Sans" font-size="10">Terminal</text>
+                                            
+                                            <!-- Simulated Window -->
+                                            <rect x="180" y="60" width="480" height="300" rx="10" fill="#1e293b" stroke="rgba(255,255,255,0.1)" stroke-width="2" />
+                                            <path d="M180 90 L660 90" stroke="rgba(255,255,255,0.1)" stroke-width="2" />
+                                            <circle cx="200" cy="75" r="5" fill="#ef4444" />
+                                            <circle cx="215" cy="75" r="5" fill="#eab308" />
+                                            <circle cx="230" cy="75" r="5" fill="#22c55e" />
+                                            <text x="250" y="80" fill="#fff" font-family="Plus Jakarta Sans" font-size="12" font-weight="600">PureOS File System</text>
+                                            
+                                            <!-- Explorer mock structure -->
+                                            <rect x="200" y="110" width="100" height="230" rx="5" fill="rgba(0,0,0,0.2)" />
+                                            <text x="210" y="135" fill="#3b82f6" font-family="Plus Jakarta Sans" font-size="12"><tspan font-weight="bold">/</tspan> root</text>
+                                            <text x="220" y="165" fill="#94a3b8" font-family="Plus Jakarta Sans" font-size="12">├─ system</text>
+                                            <text x="220" y="195" fill="#94a3b8" font-family="Plus Jakarta Sans" font-size="12">├─ apps</text>
+                                            <text x="220" y="225" fill="#94a3b8" font-family="Plus Jakarta Sans" font-size="12">└─ user</text>
+                                            
+                                            <rect x="320" y="110" width="320" height="230" rx="5" fill="rgba(0,0,0,0.1)" />
+                                            <rect x="340" y="130" width="60" height="60" rx="5" fill="#3b82f6" opacity="0.3" />
+                                            <text x="350" y="210" fill="#fff" font-family="Plus Jakarta Sans" font-size="11">system/</text>
+                                            <rect x="420" y="130" width="60" height="60" rx="5" fill="#ec4899" opacity="0.3" />
+                                            <text x="435" y="210" fill="#fff" font-family="Plus Jakarta Sans" font-size="11">apps/</text>
+                                            <rect x="500" y="130" width="60" height="60" rx="5" fill="#10b981" opacity="0.3" />
+                                            <text x="515" y="210" fill="#fff" font-family="Plus Jakarta Sans" font-size="11">user/</text>
+
+                                            <!-- Taskbar -->
+                                            <rect x="0" y="410" width="800" height="40" fill="#0b0f19" opacity="0.9" />
+                                            <rect x="10" y="415" width="60" height="30" rx="5" fill="#3b82f6" />
+                                            <circle cx="750" cy="430" r="4" fill="#10b981" />
+                                            <text x="25" y="434" fill="#fff" font-family="Plus Jakarta Sans" font-size="12" font-weight="bold">Start</text>
+                                            <text x="760" y="434" fill="#94a3b8" font-family="Plus Jakarta Sans" font-size="11">12:00</text>
+                                            
+                                            <defs>
+                                                <radialGradient id="circleGlow" cx="50%" cy="50%" r="50%">
+                                                    <stop offset="0%" stop-color="#3b82f6" />
+                                                    <stop offset="100%" stop-color="#3b82f6" stop-opacity="0" />
+                                                </radialGradient>
+                                            </defs>
+                                        </svg>
+                                    </div>
+                                    <div class="slide-info">
+                                        <h3>Interactive Graphical Interface</h3>
+                                        <p>A screenshot mock representing the responsive window alignment, custom folder structures, and active workspace settings.</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="carousel-slide">
+                                <div class="slide-card">
+                                    <div class="slide-img-wrapper">
+                                        <!-- SVG mockup of Shell CLI -->
+                                        <svg class="svg-slide-mockup" viewBox="0 0 800 450">
+                                            <rect width="800" height="450" fill="#0b0f19" />
+                                            <!-- Grid Overlay -->
+                                            <path d="M 0,0 L 800,0 M 0,50 L 800,50 M 0,100 L 800,100 M 0,150 L 800,150 M 0,200 L 800,200 M 0,250 L 800,250 M 0,300 L 800,300 M 0,350 L 800,350 M 0,400 L 800,400" stroke="rgba(255,255,255,0.02)" stroke-width="1" />
+                                            <!-- Window Frame -->
+                                            <rect x="60" y="40" width="680" height="370" rx="8" fill="#020617" stroke="#10b981" stroke-width="2" />
+                                            <circle cx="85" cy="55" r="5" fill="#ef4444" />
+                                            <circle cx="100" cy="55" r="5" fill="#eab308" />
+                                            <circle cx="115" cy="55" r="5" fill="#22c55e" />
+                                            <text x="135" y="60" fill="#10b981" font-family="JetBrains Mono" font-size="12">pureos_kernel@sys-console:~</text>
+                                            
+                                            <!-- Console Content -->
+                                            <text x="80" y="100" fill="#10b981" font-family="JetBrains Mono" font-size="13">pureos_core: loading module [vfs_mount]... OK</text>
+                                            <text x="80" y="125" fill="#10b981" font-family="JetBrains Mono" font-size="13">pureos_core: loading module [display_fb]... OK</text>
+                                            <text x="80" y="150" fill="#10b981" font-family="JetBrains Mono" font-size="13">pureos_core: hardware abstraction check: 64-bit flag present</text>
+                                            <text x="80" y="175" fill="#10b981" font-family="JetBrains Mono" font-size="13">pureos_core: launching desktop process [window_manager]...</text>
+                                            <text x="80" y="210" fill="#eab308" font-family="JetBrains Mono" font-size="13">WARNING: dynamic font scaling set to FONT_SCALE=1.0</text>
+                                            
+                                            <text x="80" y="250" fill="#3b82f6" font-family="JetBrains Mono" font-size="13">pureos@system:~$ </text>
+                                            <text x="215" y="250" fill="#fff" font-family="JetBrains Mono" font-size="13">kernel_info --compile</text>
+                                            
+                                            <!-- Box Drawing -->
+                                            <text x="80" y="280" fill="#fff" font-family="JetBrains Mono" font-size="13">┌────────────────────────────────────────────────────────┐</text>
+                                            <text x="80" y="300" fill="#fff" font-family="JetBrains Mono" font-size="13">│  PureKern 64-bit Architecture Specifications           │</text>
+                                            <text x="80" y="320" fill="#fff" font-family="JetBrains Mono" font-size="13">│  Compiler: GCC 13.2.0 (Target: x86_64-pureos-elf)      │</text>
+                                            <text x="80" y="340" fill="#fff" font-family="JetBrains Mono" font-size="13">│  Heap Status: 256MB free / Scheduler: Round-Robin      │</text>
+                                            <text x="80" y="360" fill="#fff" font-family="JetBrains Mono" font-size="13">└────────────────────────────────────────────────────────┘</text>
+                                            <text x="80" y="390" fill="#3b82f6" font-family="JetBrains Mono" font-size="13">pureos@system:~$ </text>
+                                            <rect x="215" y="377" width="8" height="15" fill="#10b981" />
+                                        </svg>
+                                    </div>
+                                    <div class="slide-info">
+                                        <h3>Developer Console & Compilation</h3>
+                                        <p>Pure OS features a custom C-based kernel compiler and microkernel system call logging structure for system engineering.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Slide Navigation Controls -->
+                    <button class="carousel-control prev-btn" id="carouselPrevBtn" aria-label="Previous Slide">
+                        <i class="fa-solid fa-chevron-left"></i>
+                    </button>
+                    <button class="carousel-control next-btn" id="carouselNextBtn" aria-label="Next Slide">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                    
+                    <!-- Carousel Indicators / Dots -->
+                    <div class="carousel-dots" id="carouselDots">
+                        <button class="dot active" data-slide="0"></button>
+                        <button class="dot" data-slide="1"></button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 6: ABOUT US & NEWSLETTER -->
+        <section id="about" class="about-section">
+            <div class="container">
+                <div class="about-grid">
+                    <!-- Left: Description and Team -->
+                    <div class="about-details">
+                        <h2 class="section-title">ABOUT PURE OS</h2>
+                        <p class="about-text">
+                            Pure OS started as a hobby project to design a high-fidelity, responsive graphical operating system written completely from scratch. Combining low-level assembly drivers with a modern double-buffered UI renderer, Pure OS challenges the limits of custom kernel environments.
+                        </p>
+                        <p class="about-text">
+                            Our team believes in open-source systems, performant design parameters, and pixel-perfect layouts scaled directly to hardware profiles.
+                        </p>
+                        
+                        <div class="stat-boxes">
+                            <div class="stat-box">
+                                <div class="stat-num">100%</div>
+                                <div class="stat-lbl">Open Source</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-num">&lt; 1s</div>
+                                <div class="stat-lbl">Boot Sequence</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-num">64-bit</div>
+                                <div class="stat-lbl">Native Core</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Dynamic Neo-brutalist Contact Card -->
+                    <div class="about-contact-card">
+                        <div class="contact-header">
+                            <h3>Stay Updated</h3>
+                            <p>Subscribe to our newsletter for release notes, kernel logs, and customization guides.</p>
+                        </div>
+                        <form class="contact-form" id="newsletterForm">
+                            <div class="input-group">
+                                <label for="emailInput">Email Address</label>
+                                <input type="email" id="emailInput" placeholder="developer@pureos.org" required autocomplete="off">
+                            </div>
+                            <button type="submit" class="btn-submit">
+                                <span>Join Mailing List</span> <i class="fa-solid fa-paper-plane"></i>
+                            </button>
+                            <div class="form-feedback" id="newsletterFeedback"></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Site Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-top">
+                <div class="footer-logo">
+                    <span class="logo-text">Pure<span>OS</span></span>
+                    <p>Building the future of lightweight graphical microkernel interfaces.</p>
+                </div>
+                <div class="footer-links-grid">
+                    <div class="links-col">
+                        <h4>Navigation</h4>
+                        <a href="#home">Home</a>
+                        <a href="#features">Features</a>
+                        <a href="#live-os">Simulator</a>
+                    </div>
+                    <div class="links-col">
+                        <h4>Resources</h4>
+                        <a href="#kernel">Kernel Maps</a>
+                        <a href="#gallery">Gallery</a>
+                        <a href="#about">About System</a>
+                    </div>
+                    <div class="links-col">
+                        <h4>System Specs</h4>
+                        <a href="#">Github Core</a>
+                        <a href="#">Compiler toolchain</a>
+                        <a href="#">ISO Releases</a>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p class="copyright">&copy; 2026 Pure OS Project. Released under MIT License.</p>
+                <div class="footer-socials">
+                    <a href="#" aria-label="Github"><i class="fa-brands fa-github"></i></a>
+                    <a href="#" aria-label="Discord"><i class="fa-brands fa-discord"></i></a>
+                    <a href="#" aria-label="Twitter"><i class="fa-brands fa-x-twitter"></i></a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Audio assets for simulated OS (Synthesized programmatically using Web Audio API) -->
+
+    <!-- GSAP Animation Library + ScrollTrigger Plugin -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+
+    <!-- JS Scripts -->
+    <script src="script.js"></script>
+</body>
+</html>

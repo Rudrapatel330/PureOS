@@ -1,11 +1,19 @@
 #ifndef _MATH_H
 #define _MATH_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define M_PI 3.14159265358979323846
 #define M_SQRT2 1.41421356237309504880
 
 #ifndef NAN
 #define NAN (0.0 / 0.0)
+#endif
+
+#ifndef INFINITY
+#define INFINITY (__builtin_inff())
 #endif
 
 #define isnan(x) ((x) != (x))
@@ -49,7 +57,16 @@ double ldexp(double x, int exp);
 double trunc(double x);
 double cbrt(double x);
 double atan(double x);
+double round(double x);
+float roundf(float x);
 
 long int lrintf(float x);
+
+static inline double nearbyint(double x) { return round(x); }
+static inline int isfinite(double x) { return 1; }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

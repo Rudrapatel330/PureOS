@@ -1,0 +1,10 @@
+#ifndef STD_BRIDGE_VECTOR_H
+#define STD_BRIDGE_VECTOR_H
+
+#include <EASTL/vector.h>
+
+namespace std {
+    using eastl::vector;
+}
+
+#endif

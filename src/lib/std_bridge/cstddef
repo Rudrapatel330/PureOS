@@ -1,0 +1,12 @@
+#ifndef STD_BRIDGE_CSTDDEF_H
+#define STD_BRIDGE_CSTDDEF_H
+
+#include <stddef.h>
+
+namespace std {
+    using ::size_t;
+    using ::ptrdiff_t;
+    typedef decltype(nullptr) nullptr_t;
+}
+
+#endif

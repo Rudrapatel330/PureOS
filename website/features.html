@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Features | PureOS</title>
+    <link rel="stylesheet" href="./style.css">
+    <style>
+        :root {
+            --primary-bg: #d8e2dc; /* Soft Mint/Grey */
+            --text-main: #242423;
+            --accent: #9d8189; /* Dusty Rose */
+            --secondary-bg: #ffe5d9;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4rem;
+            margin-top: 4rem;
+        }
+        .feature-item {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        .feature-img {
+            width: 100%;
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+        }
+    </style>
+</head>
+<body style="background-color: var(--primary-bg);">
+    <nav id="navbar" class="scrolled">
+        <div class="container nav-content">
+            <a href="index.html" class="logo">PURE.OS</a>
+            <div class="nav-links">
+                <a href="index.html">Home</a>
+                <a href="#details">Details</a>
+                <a href="#" class="btn btn-primary" style="padding: 0.6rem 1.5rem; font-size: 0.8rem;">Download</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="section" style="padding-top: 10rem;">
+        <div class="container">
+            <div class="section-header" style="text-align: left; margin-bottom: 4rem;">
+                <span class="hero-tag" style="background: var(--accent);">Deep Dive</span>
+                <h1 style="font-size: 4rem;">System Architecture</h1>
+                <p style="max-width: 600px;">Explore the technical brilliance and design philosophy behind PureOS.</p>
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-item reveal">
+                    <img src="/images/5terminal.png" alt="Terminal" class="feature-img">
+                    <h3>Powerful Terminal</h3>
+                    <p>A Unix-like environment with modern enhancements, supporting full ANSI colors and smooth scrolling.</p>
+                </div>
+                <div class="feature-item reveal">
+                    <img src="/images/6editor.png" alt="Editor" class="feature-img">
+                    <h3>Integrated Editor</h3>
+                    <p>A minimalist text editor built for speed, with syntax highlighting and auto-save capabilities.</p>
+                </div>
+                <div class="feature-item reveal">
+                    <img src="/images/7mail.png" alt="Mail" class="feature-img">
+                    <h3>Secure Communication</h3>
+                    <p>Built-in mail client with end-to-end encryption support and a distraction-free interface.</p>
+                </div>
+                <div class="feature-item reveal">
+                    <img src="/images/3controlmenue.png" alt="Control" class="feature-img">
+                    <h3>Control Center</h3>
+                    <p>Manage every aspect of your system from a centralized, beautiful glassmorphic panel.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer style="padding: 5rem 0; text-align: center; background: rgba(0,0,0,0.05);">
+        <div class="container">
+            <p>© 2026 PureOS Project. Designed for Perfection.</p>
+        </div>
+    </footer>
+
+    <script type="module" src="./main.ts"></script>
+</body>
+</html>

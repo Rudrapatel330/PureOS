@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PureBrowser Test Page</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f0f4f8; padding: 40px; margin: 0; }
+        .card { background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); padding: 25px; margin-bottom: 25px; max-width: 600px; margin-left: auto; margin-right: auto; }
+        h1 { color: #1a365d; text-align: center; margin-bottom: 30px; }
+        h2 { color: #2d3748; margin-top: 0; }
+        p { color: #4a5568; line-height: 1.6; }
+        .btn { background-color: #3182ce; color: white; border: none; border-radius: 4px; padding: 10px 20px; font-weight: bold; cursor: pointer; display: inline-block; margin-top: 10px; }
+        .btn:hover { background-color: #2b6cb0; }
+        .highlight { background-color: #fefcbf; border-left: 4px solid #d69e2e; }
+    </style>
+</head>
+<body>
+    <h1>PureBrowser Local Test</h1>
+    
+    <div class="card" id="card1">
+        <h2>DOM Manipulation</h2>
+        <p id="msg">This text will be changed by JavaScript.</p>
+        <button class="btn" id="btnChange">Change Text</button>
+    </div>
+
+    <div class="card">
+        <h2>Interactive Hover</h2>
+        <p>Hover over the button above to see the CSS :hover state in action, powered by our new fast-redraw path.</p>
+    </div>
+
+    <script>
+        var btn = document.getElementById('btnChange');
+        var msg = document.getElementById('msg');
+        var card = document.getElementById('card1');
+        
+        btn.addEventListener('click', function(e) {
+            msg.innerHTML = "<b>Success!</b> JavaScript successfully changed this content via innerHTML.";
+            card.classList.toggle('highlight');
+        });
+    </script>
+</body>
+</html>

@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 #include "chat.h"
 #include "../kernel/heap.h"
 #include "../kernel/string.h"
@@ -72,7 +73,7 @@ typedef struct {
 } chat_state_t;
 
 // --- UI Constants ---
-#define SIDE_WIDTH 150
+static int get_sidebar_width(void) { return ui_get_font_scale() * 10; }
 #define CHAT_PADDING 10
 
 // --- Implementation ---
@@ -89,8 +90,8 @@ static void chat_draw(window_t *win) {
     winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, th->bg);
 
     // Sidebar (Contacts)
-    winmgr_fill_rect(win, 0, 24, SIDE_WIDTH, win->height - 24, th->menu_bg);
-    winmgr_fill_rect(win, SIDE_WIDTH - 1, 24, 1, win->height - 24, th->border);
+    winmgr_fill_rect(win, 0, 24, get_sidebar_width(), win->height - 24, th->menu_bg);
+    winmgr_fill_rect(win, get_sidebar_width() - 1, 24, 1, win->height - 24, th->border);
     winmgr_draw_text(win, 10, 35, "Contacts", th->fg);
     
     int cy = 60;
@@ -104,9 +105,9 @@ static void chat_draw(window_t *win) {
     }
 
     // Chat Area
-    int chat_x = SIDE_WIDTH + 10;
+    int chat_x = get_sidebar_width() + 10;
     int chat_y = 40;
-    int chat_w = win->width - SIDE_WIDTH - 20;
+    int chat_w = win->width - get_sidebar_width() - 20;
 
     // Status
     if (!s->connected) {
@@ -146,7 +147,7 @@ static void chat_draw(window_t *win) {
 
     // Debug Overlay (Top)
     if (s->debug_buf[0]) {
-        winmgr_draw_text(win, SIDE_WIDTH + 10, 26, s->debug_buf, 0xFFFFFF00);
+        winmgr_draw_text(win, get_sidebar_width() + 10, 26, s->debug_buf, 0xFFFFFF00);
     }
 }
 
@@ -335,10 +336,10 @@ static void chat_on_mouse(void *w, int x, int y, int buttons) {
             chat_send_message(win);
         }
         // Connect click (if disconnected)
-        if (!s->connected && !s->connecting && x < SIDE_WIDTH) {
+        if (!s->connected && !s->connecting && x < get_sidebar_width()) {
             s->connecting = 1;
             win->needs_redraw = 1;
-        } else if (s->connected && x < SIDE_WIDTH && y >= 50) {
+        } else if (s->connected && x < get_sidebar_width() && y >= 50) {
             int idx = (y - 50) / 20;
             if (idx >= 0 && idx < s->contacts_count) {
                 strcpy(s->target_username, s->contacts[idx]);

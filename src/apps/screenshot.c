@@ -1,3 +1,4 @@
+#include "../kernel/ui_layout.h"
 #include "../kernel/heap.h"
 #include "../kernel/screen.h"
 #include "../kernel/string.h"
