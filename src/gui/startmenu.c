@@ -54,6 +54,7 @@ extern void mail_app_init();
 extern void chat_init();
 extern void phone_init();
 extern void recorder_init();
+extern void pong_init();
 
 // --- Launch wrappers ---
 static void launch_term() { terminal_init(); }
@@ -72,12 +73,13 @@ static void launch_mail() { mail_app_init(); }
 static void launch_chat() { chat_init(); }
 static void launch_phone() { phone_init(); }
 static void launch_recorder() { recorder_init(); }
+static void launch_pong() { pong_init(); }
 
 static menu_item_t pinned_items[] = {
-    {"Terminal", 0xFF38B764, 0, 0, launch_term},
+    {"Terminal", 0xFF38B764, "/TERMINAL.PNG", 0, launch_term},
     {"Editor", 0xFF5B8BF5, "/NOTES.PNG", 0, launch_editor},
     {"Calculator", 0xFF00ADEF, "/CALCULAT.PNG", 0, launch_calc},
-    {"Paint", 0xFFFF6B6B, 0, 0, launch_paint},
+    {"Paint", 0xFFFF6B6B, "/PAINT.PNG", 0, launch_paint},
     {"Explorer", 0xFFFFC107, "/FILEEXPL.PNG", 0, launch_files},
     {"Settings", 0xFF607D8B, "/SETTINGS.PNG", 0, launch_settings},
     {"Browser", 0xFF4FC3F7, "/BROWSER.PNG", 0, launch_browser},
@@ -89,7 +91,8 @@ static menu_item_t pinned_items[] = {
     {"Mail", 0xFF00AADD, "/MAIL.PNG", 0, launch_mail},
     {"Chat", 0xFF25D366, "/CHAT.PNG", 0, launch_chat},
     {"Phone", 0xFF0078D4, "/MOBILE.PNG", 0, launch_phone},
-    {"Recorder", 0xFFFF4400, "/RECORD.PNG", 0, launch_recorder}};
+    {"Recorder", 0xFFFF4400, "/RECORD.PNG", 0, launch_recorder},
+    {"Pong", 0xFF9C27B0, "/PONG.PNG", 0, launch_pong}};
 #define PINNED_COUNT (sizeof(pinned_items) / sizeof(pinned_items[0]))
 
 static int hovered_item = -1;
@@ -466,7 +469,6 @@ void startmenu_draw(uint32_t *buffer, rect_t clip) {
     int hw = cell_w_loc;
     int hh = CELL_H;
 
-    // Draw transparent gray hover overlay
     for (int oy = 0; oy < hh; oy++) {
       int dst_y = start_y_abs + hy + oy - menu_y_offset;
       if (dst_y < clip.y || dst_y >= clip.y + clip.h) continue;
@@ -478,7 +480,6 @@ void startmenu_draw(uint32_t *buffer, rect_t clip) {
         if (dst_x < clip.x || dst_x >= clip.x + clip.w) continue;
         
         uint32_t dst = dst_row[dst_x];
-        // 25% white blend
         uint32_t r = (((dst >> 16) & 0xFF) * 192 + 255 * 64) >> 8;
         uint32_t g = (((dst >> 8) & 0xFF) * 192 + 255 * 64) >> 8;
         uint32_t b = ((dst & 0xFF) * 192 + 255 * 64) >> 8;
@@ -518,8 +519,26 @@ int startmenu_handle_mouse(int mx, int my, int buttons) {
   }
 
   if (new_hover != hovered_item) {
+    int old_hover = hovered_item;
     hovered_item = new_hover;
-    compositor_invalidate_rect(0, sy, menu_w, menu_h);
+    
+    // Invalidate old hover area
+    if (old_hover >= 0) {
+      int col = old_hover % GRID_COLS;
+      int row = old_hover / GRID_COLS;
+      int hx = PADDING + col * cell_w;
+      int hy = grid_y + row * CELL_H;
+      compositor_invalidate_rect(hx, sy + hy, cell_w, CELL_H);
+    }
+    
+    // Invalidate new hover area
+    if (new_hover >= 0) {
+      int col = new_hover % GRID_COLS;
+      int row = new_hover / GRID_COLS;
+      int hx = PADDING + col * cell_w;
+      int hy = grid_y + row * CELL_H;
+      compositor_invalidate_rect(hx, sy + hy, cell_w, CELL_H);
+    }
   }
 
   if (down_edge && hovered_item >= 0) {

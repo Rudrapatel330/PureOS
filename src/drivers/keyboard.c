@@ -20,6 +20,9 @@ int alt_pressed = 0;
 int ctrl_pressed = 0;
 int caps_lock = 0;
 
+// Global key held state (indexed by scancode, 1=held, 0=released)
+uint8_t key_state[256] = {0};
+
 // Keyboard Buffer
 #define KB_BUFFER_SIZE 256
 static char kb_buffer[KB_BUFFER_SIZE];
@@ -72,6 +75,13 @@ const char scancode_ascii_upper[] = {
 // Keyboard Handler
 // Polling Handler
 void receive_keyboard_byte(uint8_t scancode) {
+  // Track all key held states
+  if (scancode & 0x80) {
+    key_state[scancode & 0x7F] = 0; // Key released
+  } else {
+    key_state[scancode] = 1; // Key pressed
+  }
+
   // Check for Shift Key
   if (scancode == 0x2A || scancode == 0x36) {
     shift_pressed = 1;

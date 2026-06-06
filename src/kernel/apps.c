@@ -19,6 +19,7 @@ extern void phone_init();
 extern void recorder_init();
 
 extern void audio_recv_test_init();
+extern void pong_init();
 
 // Wrapper for videoplayer to match void (*launch)(void)
 static void videoplayer_launch() { videoplayer_init(NULL); }
@@ -32,6 +33,7 @@ const app_entry_t installed_apps[] = {
     {"Photos", photos_init},     {"Mail", mail_app_init},
     {"Chat", chat_init},         {"Phone", phone_init},
     {"Recorder", recorder_init}, {"Audio Test", audio_recv_test_init},
+    {"Pong", pong_init},
 };
 
 const int installed_apps_count =

@@ -434,6 +434,7 @@ void desktop_task() {
     }
 
     int any_anim = 0;
+    int any_window_warp = 0;
     {
       extern window_t windows[];
       for (int i = 0; i < MAX_WINDOWS; i++) {
@@ -441,7 +442,9 @@ void desktop_task() {
             windows[i].vel_x != 0 || windows[i].vel_y != 0 ||
             windows[i].anim_scale.active)) {
           any_anim = 1;
-          break;
+          if (windows[i].is_animating) {
+            any_window_warp = 1;
+          }
         }
       }
       extern int startmenu_is_animating();
@@ -465,6 +468,12 @@ void desktop_task() {
       }
       compositor_invalidate_rect(mouse_x - half_size, mouse_y - half_size,
                                  inv_size, inv_size);
+    }
+
+    // ALWAYS invalidate full screen during window warp animations to prevent 
+    // any small rects (from mouse, widgets, or old bounds) from slicing the mesh
+    if (any_window_warp) {
+      compositor_invalidate_rect(0, 0, screen_width, screen_height);
     }
 
     if (tick_elapsed && (redraw_pending || ui_dirty > 0 || mouse_moved ||
@@ -515,14 +524,15 @@ void desktop_task() {
     if (tick_elapsed) {
       extern window_t *sysmon_win, *chat_win, *phone_win, *recorder_win;
       // We will add audio test win here
-      extern window_t *audio_test_win;
+      extern window_t *audio_test_win, *pong_win;
       extern void sysmon_update(window_t *), chat_update(window_t *), phone_update(window_t *), recorder_update(window_t *);
-      extern void audio_test_update(window_t *);
+      extern void audio_test_update(window_t *), pong_update(window_t *);
       if (sysmon_win) sysmon_update(sysmon_win);
       if (chat_win) chat_update(chat_win);
       if (phone_win) phone_update(phone_win);
       if (recorder_win) recorder_update(recorder_win);
       if (audio_test_win) audio_test_update(audio_test_win);
+      if (pong_win) pong_update(pong_win);
     }
 
     videoplayer_update();
@@ -592,7 +602,8 @@ void kernel_poll_events(void) {
   // If we are in a blocking loop (e.g. browser navigation), we still want the
   // screen to update.
   extern int ui_dirty, mouse_moved;
-  if (ui_dirty || mouse_moved) {
+  extern int compositor_needs_render(void);
+  if (ui_dirty || mouse_moved || compositor_needs_render()) {
     if (mouse_moved) {
       extern int last_mouse_x, last_mouse_y, mouse_x, mouse_y;
       extern void compositor_invalidate_rect(int x, int y, int w, int h);
@@ -604,6 +615,24 @@ void kernel_poll_events(void) {
       }
       compositor_invalidate_rect(mouse_x - half_size, mouse_y - half_size,
                                  inv_size, inv_size);
+
+      // Check if any windows are warping
+      int any_window_warp = 0;
+      extern window_t windows[];
+      for (int i = 0; i < 32; i++) {
+        if (windows[i].id != 0 && windows[i].is_animating) {
+          any_window_warp = 1;
+          break;
+        }
+      }
+
+      // During active window warp animation, invalidate full screen to prevent
+      // cracked seam lines from small rect rendering slicing the warp blend
+      if (any_window_warp) {
+        extern int screen_width, screen_height;
+        compositor_invalidate_rect(0, 0, screen_width, screen_height);
+      }
+
       last_mouse_x = mouse_x;
       last_mouse_y = mouse_y;
       mouse_moved = 0;
