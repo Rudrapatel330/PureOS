@@ -1,6 +1,6 @@
 <div align="center">
   <h1>💿 PureOS</h1>
-  <p><b>A custom-built x86-64 operating system with a full windowed GUI, TCP/IP networking stack, TLS encryption, and 15+ built-in desktop applications — all written from scratch in C and Assembly.</b></p>
+  <p><b>A custom-built x86-64 operating system with a full windowed GUI, TCP/IP networking stack, TLS encryption, and 16+ built-in desktop applications — all written from scratch in C and Assembly.</b></p>
   <br>
   <img src="https://img.shields.io/badge/Language-C%20%2F%20x86--64%20Assembly-blue" alt="Language">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
@@ -44,7 +44,7 @@ flowchart TD
         GPU[VGA / BGA Display]
         KBD[PS/2 Keyboard]
         MOUSE[PS/2 Mouse]
-        AUDIO[ES1370 Audio]
+        AUDIO[AC97 / ES1370 Audio]
         USB_HW[USB UHCI]
     end
 
@@ -105,7 +105,7 @@ flowchart TD
     end
 
     subgraph APP[Applications]
-        APPS[15+ Native GUI Apps]
+        APPS[16+ Native GUI Apps]
     end
 
     HW --> KRN
@@ -142,7 +142,7 @@ PureOS features a modern, composited desktop environment with rich visual effect
 
 ## 📦 Built-in Applications
 
-PureOS ships with **15+ native desktop applications**, all built directly into the kernel:
+PureOS ships with **16+ native desktop applications**, all built directly into the kernel:
 
 ### System Utilities
 | App | Description |
@@ -169,6 +169,7 @@ PureOS ships with **15+ native desktop applications**, all built directly into t
 | 🎬 **Video Player** | Embedded MPEG video playback with frame decoding and audio sync |
 | 📄 **PDF Reader** | Full-featured PDF viewer powered by a native port of the **MuPDF** library — renders real PDF documents with fonts, images, and vector graphics |
 | 🎙️ **Voice Recorder** | Audio recording app with AC97 PCM capture, real-time waveform visualization, and high-fidelity playback through the restored AC97 DMA engine |
+| 🏓 **Pong** | Classic arcade game with 3 modes (1P vs Bot, 2P Local, Bot vs Bot), AC97 synthesized sound effects, and smooth keyboard-polled paddle controls |
 
 #### 🎙️ Voice Recorder Architecture
 The recorder interacts directly with the AC97 hardware through a high-performance DMA-backed capture system:
@@ -198,6 +199,112 @@ graph LR
 | 📞 **Phone** | Modern voice calling app with circular dialpad, integrated contacts, 48kHz bidirectional streaming, and jitter-buffered playback |
 
 ---
+
+## 🏓 Pong — Native Arcade Game
+
+PureOS includes a fully native implementation of the classic 1972 Pong arcade game, deeply integrated into the kernel's event loop with authentic sound effects and AI opponents.
+
+### Game Modes
+
+| Mode | Description | Controls |
+|------|-------------|----------|
+| **1 Player** | You vs AI Bot with trajectory prediction | ↑↓ Arrow Keys |
+| **2 Players** | Local multiplayer on the same keyboard | P1: `W`/`S` — P2: ↑↓ Arrow Keys |
+| **Bot vs Bot** | Spectator mode — two AIs battle it out | None (just watch!) |
+
+### System Integration
+
+The game hooks directly into the kernel's main tick loop for frame-perfect updates:
+
+```mermaid
+graph TD
+    A["🖥️ Kernel Main Loop<br/>(kernel.c → tick_elapsed)"] --> B["🏓 pong_update()<br/>Called every frame"]
+    B --> C["⌨️ key_state Polling<br/>(keyboard.c)"]
+    B --> D["⚽ Ball Physics<br/>Position + Velocity"]
+    B --> E["🤖 Bot AI<br/>Trajectory Prediction"]
+    B --> F["🔊 AC97 Sound<br/>PCM Square Waves"]
+    
+    C --> G["Paddle Movement<br/>8px per frame at 60fps"]
+    D --> H["Collision Detection<br/>Walls + Paddles"]
+    H --> F
+    E --> I["Bounce Simulation<br/>5-bounce lookahead"]
+    
+    F --> L["ac97_play_pcm()<br/>DMA to Sound Card"]
+    L --> M["🔈 ICH AC97<br/>Host Audio Output"]
+```
+
+### Audio — Authentic 1972 Arcade Sounds via AC97
+
+Instead of using the primitive PC Speaker, Pong synthesizes digital square-wave PCM buffers at game startup and plays them through the AC97 sound card via DMA — the same audio hardware used by the Voice Recorder and Phone apps:
+
+| Game Event | Frequency | Duration | Sound Character |
+|-----------|-----------|----------|------------------|
+| Ball → Wall | 226 Hz | 16 ms | Quick, low "tick" |
+| Ball → Paddle | 459 Hz | 96 ms | Satisfying mid "boop" |
+| Player Scores | 490 Hz | 257 ms | Long, harsh buzz |
+
+> **Historical Note:** 459 Hz is exactly 2× 226 Hz — a perfect octave. Allan Alcorn designed the original 1972 Pong audio using the arcade machine's video sync frequencies.
+
+```mermaid
+sequenceDiagram
+    participant P as 🏓 Pong Game
+    participant G as generate_beep()
+    participant K as kmalloc_ap()
+    participant A as ac97_play_pcm()
+    participant H as 🔈 ICH AC97 Hardware
+
+    Note over P: Game starts
+    P->>G: Generate 3 beeps (226Hz, 459Hz, 490Hz)
+    G->>K: Allocate physically contiguous memory
+    K-->>G: Returns virtual ptr + physical address
+    G->>G: Fill buffer with 48kHz 16-bit stereo square wave
+    G-->>P: Store physical addresses for instant playback
+
+    Note over P: Ball hits paddle
+    P->>A: ac97_play_pcm(paddle_phys, size, 48000, 16, 2)
+    A->>H: Program BDL with physical address + start DMA
+    H-->>H: DMA reads PCM samples → analog output
+    Note over H: 🔊 "Boop!" (459Hz for 96ms)
+```
+
+### Input — Zero-Delay Keyboard Polling
+
+Standard keyboard input suffers from the ~500ms "typematic delay" (press → pause → repeat). Pong bypasses this entirely by polling a global `key_state[256]` array that tracks real-time key held state at the hardware interrupt level:
+
+```mermaid
+graph LR
+    A["Keyboard IRQ"] -->|"Scancode"| B["keyboard.c handler"]
+    B -->|"Press: key_state[sc] = 1"| C["key_state array"]
+    B -->|"Release: key_state[sc] = 0"| C
+    
+    D["pong_update()<br/>Every frame"]--> |"Reads"| C
+    D -->|"key_state 0x48?"| E["Move paddle UP 8px"]
+    D -->|"key_state 0x50?"| F["Move paddle DOWN 8px"]
+```
+
+> The paddle responds instantly on press and stops instantly on release — no stutter, no delay.
+
+### Bot AI — Trajectory Prediction with Bounce Simulation
+
+The AI doesn't simply follow the ball. It calculates the ball's predicted arrival point by simulating up to 5 wall bounces ahead:
+
+```mermaid
+graph TD
+    A["Ball moving toward bot?"] -->|Yes| B["Calculate time to reach paddle X"]
+    A -->|No| C["Drift toward screen center"]
+    B --> D["Predict Y = ball_y + ball_vy × time"]
+    D --> E{"Predicted Y out of bounds?"}
+    E -->|"Y < top wall"| F["Reflect off top"]
+    E -->|"Y > bottom wall"| G["Reflect off bottom"]
+    E -->|"In bounds"| H["Move toward predicted Y"]
+    F --> I{"Bounces < 5?"}
+    G --> I
+    I -->|Yes| E
+    I -->|No| H
+    H --> J["Paddle slides at 5px/frame<br/>(intentionally slower than player 8px)"]
+```
+
+In **Bot vs Bot** mode, the two AIs have slightly different reaction speeds (5.0 vs 5.5 px/frame) and dead zones (±10 vs ±8 px) to ensure asymmetric, interesting matches.
 
 ## 🌐 Networking Stack
 
