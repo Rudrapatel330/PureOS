@@ -169,7 +169,53 @@ PureOS ships with **16+ native desktop applications**, all built directly into t
 | 🎬 **Video Player** | Embedded MPEG video playback with frame decoding and audio sync |
 | 📄 **PDF Reader** | Full-featured PDF viewer powered by a native port of the **MuPDF** library — renders real PDF documents with fonts, images, and vector graphics |
 | 🎙️ **Voice Recorder** | Audio recording app with AC97 PCM capture, real-time waveform visualization, and high-fidelity playback through the restored AC97 DMA engine |
+| 🎵 **Music Player** | MP3 audio player with real-time UI synchronization, custom `dr_mp3` decoding, and flawless software resampling to native 48kHz stereo |
 | 🏓 **Pong** | Classic arcade game with 3 modes (1P vs Bot, 2P Local, Bot vs Bot), AC97 synthesized sound effects, and smooth keyboard-polled paddle controls |
+
+#### 🎵 Music Player Architecture
+The Music Player is a complete end-to-end MP3 playback system deeply integrated with the OS kernel and audio hardware to provide flawless, skip-free audio and real-time UI updates:
+
+```mermaid
+graph TD
+    subgraph Storage
+        MP3["🎵 MP3 File on Disk<br/>(e.g., 44.1kHz Mono)"]
+    end
+
+    subgraph Decoding & Processing
+        DRMP3["🧠 dr_mp3 Decoder<br/>(Extracts PCM Frames)"]
+        RESAMP["⚙️ Software Resampler<br/>(64-bit Linear Interpolation)"]
+    end
+
+    subgraph Hardware Output
+        PCM["🎛️ 48kHz Stereo PCM<br/>(Guaranteed Native Format)"]
+        AC97["🔈 AC97 Hardware DMA<br/>(Even-Aligned 64k Chunks)"]
+        SPK(("🔊 Speakers"))
+    end
+
+    subgraph UI & Kernel
+        TICK["🖥️ Kernel Timer<br/>(tick_elapsed)"]
+        UI["📊 UI Progress Bar<br/>(Invalidates at 25 FPS)"]
+    end
+
+    MP3 --> DRMP3
+    DRMP3 -->|"Raw Audio"| RESAMP
+    RESAMP -->|"Upmixes & Pitch-Corrects"| PCM
+    PCM --> AC97
+    AC97 --> SPK
+
+    TICK -.->|"Polls Player State"| UI
+    PCM -.->|"Calculates Time"| UI
+
+    style MP3 fill:#1DB954,color:#fff
+    style AC97 fill:#457b9d,color:#fff
+    style RESAMP fill:#e63946,color:#fff
+    style SPK fill:#1d3557,color:#fff
+```
+
+**Key Engineering Highlights:**
+- **Software Resampler Bypass:** VirtualBox and many legacy physical AC97 codecs have buggy implementations of Variable Rate Audio (VRA), often ignoring requests to play 44.1kHz audio and playing it too fast (sounding "robotic"). The Music Player completely bypasses this hardware limitation by passing the audio through a highly optimized **64-bit linear interpolation software resampler** that flawlessly pitch-corrects and upmixes all MP3s into pristine 48,000Hz Stereo before hitting the hardware.
+- **DMA Phase Alignment:** The OS strictly aligns all hardware DMA chunk lengths to even numbers (`65534`). This prevents the disastrous "channel swapping" phase-cancellation bug that occurs when an audio driver feeds an odd number of samples to an inherently paired stereo hardware interface.
+- **Kernel-Polled UI Sync:** Instead of relying on manual window-resize events to trigger a redraw, the Music Player's progress bar is securely hooked directly into the kernel's main execution loop (`tick_elapsed`). The kernel polls the player's audio progress and selectively invalidates only the bottom 90 pixels of the window at a rate-limited 25 FPS, ensuring silky-smooth animations with virtually zero CPU overhead.
 
 #### 🎙️ Voice Recorder Architecture
 The recorder interacts directly with the AC97 hardware through a high-performance DMA-backed capture system:
