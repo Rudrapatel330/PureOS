@@ -134,16 +134,19 @@ static void fm_refresh() {
 
 // Draw a small 16x16 folder icon
 static void fm_draw_folder_icon(window_t *win, int x, int y) {
-  // Folder tab
-  winmgr_fill_rect(win, x, y + 4, 8, 3, 0xFE00); // Orange tab
-  // Folder body
-  winmgr_fill_rect(win, x, y + 4, 16, 12, 0xFE60); // Yellow body
+  // Folder tab (back)
+  winmgr_fill_rect(win, x + 1, y + 2, 6, 3, 0xFE00); // Orange tab
+  // White paper inside
+  winmgr_fill_rect(win, x + 3, y + 4, 10, 8, 0xFFFF); // White paper
+  winmgr_draw_rect(win, x + 3, y + 4, 10, 8, 0x8410); // Gray border
+  // Folder front body
+  winmgr_fill_rect(win, x, y + 6, 16, 10, 0xFE60); // Yellow body
   // Shadow
   winmgr_fill_rect(win, x, y + 15, 16, 1, 0xC560); // Dark edge
-  winmgr_fill_rect(win, x + 15, y + 4, 1, 12, 0xC560);
+  winmgr_fill_rect(win, x + 15, y + 6, 1, 10, 0xC560);
   // Highlight
-  winmgr_fill_rect(win, x, y + 4, 1, 11, 0xFFE0); // Light left
-  winmgr_fill_rect(win, x, y + 4, 16, 1, 0xFFE0); // Light top
+  winmgr_fill_rect(win, x, y + 6, 1, 9, 0xFFE0); // Light left
+  winmgr_fill_rect(win, x, y + 6, 16, 1, 0xFFE0); // Light top
 }
 
 // Draw a small 16x16 file icon

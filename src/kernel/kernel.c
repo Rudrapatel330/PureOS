@@ -524,15 +524,16 @@ void desktop_task() {
     if (tick_elapsed) {
       extern window_t *sysmon_win, *chat_win, *phone_win, *recorder_win;
       // We will add audio test win here
-      extern window_t *audio_test_win, *pong_win;
+      extern window_t *audio_test_win, *pong_win, *song_player_win;
       extern void sysmon_update(window_t *), chat_update(window_t *), phone_update(window_t *), recorder_update(window_t *);
-      extern void audio_test_update(window_t *), pong_update(window_t *);
+      extern void audio_test_update(window_t *), pong_update(window_t *), song_player_update(window_t *);
       if (sysmon_win) sysmon_update(sysmon_win);
       if (chat_win) chat_update(chat_win);
       if (phone_win) phone_update(phone_win);
       if (recorder_win) recorder_update(recorder_win);
       if (audio_test_win) audio_test_update(audio_test_win);
       if (pong_win) pong_update(pong_win);
+      if (song_player_win) song_player_update(song_player_win);
     }
 
     videoplayer_update();

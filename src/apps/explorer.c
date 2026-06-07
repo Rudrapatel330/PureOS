@@ -523,16 +523,37 @@ static void draw_navigation_toolbar(window_t *win) {
   // Toolbar area
   winmgr_fill_rect(win, tx, 32, w - tx, 40, COL_SIDEBAR_BG);
   
-  // Navigation Icons (Back, Forward, Up, New Folder, New File, Delete)
-  const char *nav_icons[] = {"\xE2\x86\x90", "\xE2\x86\x91", "\xF0\x9F\x93\x81\x2B", "\xF0\x9F\x93\x84\x2B", "\xF0\x9F\x97\x91"};
+  // Navigation Icons (Back, Up, New Folder, New File, Delete)
   int nx = tx + 15;
-  for (int i = 0; i < 5; i++) {
-    winmgr_draw_text(win, nx, 42, nav_icons[i], COL_TEXT_MUTED);
-    nx += 30;
-  }
+  
+  // Back
+  winmgr_draw_text(win, nx, 42, "<", COL_TEXT_MUTED);
+  nx += 25;
+  
+  // Up
+  winmgr_draw_text(win, nx, 42, "^", COL_TEXT_MUTED);
+  nx += 30;
+
+  // New Folder Button
+  winmgr_fill_rect(win, nx, 38, 80, 20, COL_ADDR_BG);
+  winmgr_draw_rect(win, nx, 38, 80, 20, COL_ADDR_EDGE);
+  winmgr_draw_text(win, nx + 5, 42, "+ Folder", COL_TEXT_WHT);
+  nx += 90;
+
+  // New File Button
+  winmgr_fill_rect(win, nx, 38, 70, 20, COL_ADDR_BG);
+  winmgr_draw_rect(win, nx, 38, 70, 20, COL_ADDR_EDGE);
+  winmgr_draw_text(win, nx + 5, 42, "+ File", COL_TEXT_WHT);
+  nx += 80;
+
+  // Delete Button
+  winmgr_fill_rect(win, nx, 38, 60, 20, COL_ADDR_BG);
+  winmgr_draw_rect(win, nx, 38, 60, 20, COL_ADDR_EDGE);
+  winmgr_draw_text(win, nx + 5, 42, "Delete", COL_TEXT_WHT);
+  nx += 70;
 
   // Path Bar (Breadcrumb style)
-  int bx = tx + 160;
+  int bx = tx + 320;
   int bw = w - bx - 220; // Room for search
   winmgr_draw_rounded_rect_ex(win, bx, 35, bw, 28, COL_ADDR_BG, 1, COL_ADDR_EDGE, 6);
   
@@ -749,17 +770,18 @@ void explorer_draw(window_t *win) {
   // App Background (entire window)
   winmgr_fill_rect(win, 0, 0, win->width, win->height, COL_APP_BG);
 
-  // Note: draw order matters. Background -> layout components -> overlays
-  draw_sidebar(win);
-  draw_header(win);
-  draw_navigation_toolbar(win);
-  draw_column_headers(win);
-
+  // Draw file list/search results first so headers can properly "clip" them by drawing over them
   if (app->search_active) {
       draw_search_results(win);
   } else {
       draw_file_list(win);
   }
+
+  // Note: draw order matters. Background -> layout components -> overlays
+  draw_sidebar(win);
+  draw_header(win);
+  draw_navigation_toolbar(win);
+  draw_column_headers(win);
 
   draw_status_bar(win);
   draw_input_dialog(win);
@@ -1333,33 +1355,38 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
   if (ry >= 32 && ry < 72 && rx >= get_sidebar_width()) {
     int tx = get_sidebar_width();
     
-    // Icons: Back(0), Up(1), NewDir(2), NewFile(3), Delete(4) at nx += 30
-    if (rx >= tx + 15 && rx < tx + 45) { // Back/Up (merged for now as placeholder)
+    // Icons: Back, Up, NewDir, NewFile, Delete
+    if (rx >= tx + 10 && rx < tx + 35) { // Back
         explorer_go_up(app);
         explorer_refresh(win);
         return;
     }
-    if (rx >= tx + 75 && rx < tx + 105) { // New Folder
+    if (rx >= tx + 35 && rx < tx + 65) { // Up
+        explorer_go_up(app);
+        explorer_refresh(win);
+        return;
+    }
+    if (rx >= tx + 70 && rx < tx + 150) { // New Folder
         app->dialog_active = 1;
         app->dialog_input[0] = 0;
         app->dialog_cursor = 0;
         win->needs_redraw = 1;
         return;
     }
-    if (rx >= tx + 105 && rx < tx + 135) { // New File
+    if (rx >= tx + 160 && rx < tx + 230) { // New File
         app->dialog_active = 2;
         app->dialog_input[0] = 0;
         app->dialog_cursor = 0;
         win->needs_redraw = 1;
         return;
     }
-    if (rx >= tx + 135 && rx < tx + 165) { // Delete
+    if (rx >= tx + 240 && rx < tx + 300) { // Delete
         action_delete_selected();
         return;
     }
     
-    // Breadcrumb (bx = tx + 160)
-    if (rx >= tx + 160) {
+    // Breadcrumb (bx = tx + 320)
+    if (rx >= tx + 320) {
         // Just refresh for now
         explorer_refresh(win);
         return;
@@ -1425,6 +1452,7 @@ void explorer_init() {
   win->app_type = 5;
   win->blur_enabled = 0;        // Opaque
   win->scroll_line_height = 30; // smooth scroll
+  win->flags |= WINDOW_FLAG_NO_TITLEBAR; // Prevent OS from drawing double titlebar
 
   // Reset state
   app->at_this_pc = 0;

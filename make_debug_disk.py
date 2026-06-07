@@ -84,5 +84,15 @@ def create_debug_disk():
     except Exception as e:
         print(f"Error uploading icons: {e}")
 
+    # 7. Upload Songs
+    try:
+        from bulk_upload_songs import main as upload_songs
+        print("Uploading songs...")
+        upload_songs()
+    except ImportError:
+        print("Warning: bulk_upload_songs.py not found, skipping song upload")
+    except Exception as e:
+        print(f"Error uploading songs: {e}")
+
 if __name__ == '__main__':
     create_debug_disk()

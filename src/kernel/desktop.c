@@ -316,11 +316,11 @@ static int hovered_icon = -1;
 
 // PNG Icon Caching for desktop/taskbar
 static const char *app_icon_paths[] = {
-    [APP_TERMINAL] = 0,
+    [APP_TERMINAL] = "/TERMINAL.PNG",
     [APP_CALCULATOR] = "/CALCULAT.PNG",
     [APP_EDITOR] = "/NOTES.PNG",
     [APP_COMPUTER] = 0,
-    [APP_PAINT] = 0,
+    [APP_PAINT] = "/PAINT.PNG",
     [APP_FILEMGR] = "/FILEEXPL.PNG",
     [APP_TASKMGR] = 0,
     [APP_BROWSER] = "/BROWSER.PNG",

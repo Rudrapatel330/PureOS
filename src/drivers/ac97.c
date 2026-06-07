@@ -33,6 +33,7 @@ static uint8_t *ac97_po_ring = 0;
 static uint32_t ac97_po_ring_phys = 0;
 static volatile uint32_t ac97_po_write_pos = 0;
 static int ac97_po_running = 0;
+static uint8_t ac97_po_last_civ = 0;  // Tracks last processed CIV for progress
 
 static void irq_unmask(uint8_t irq) {
     uint16_t port;
@@ -56,6 +57,59 @@ uint64_t ac97_handler(registers_t *regs) {
     }
     if (po_sr & (AC97_SR_BCIS | AC97_SR_LVBCI | AC97_SR_FIFOE)) {
         outw(ac97_nabmbar + AC97_PO_SR, po_sr & 0x1E);
+        
+        extern uint32_t ac97_large_pcm_remaining;
+        extern const uint16_t *ac97_large_pcm_data;
+        extern uint32_t ac97_samples_played;
+        
+        // Track completed BDL entries - CIV advanced past completed entries
+        // The interrupt fires when a BDL entry completes, so we accumulate
+        // the samples from completed entries
+        {
+            uint8_t civ = inb(ac97_nabmbar + AC97_PO_CIV);
+            extern uint32_t ac97_bdl_entry_samples[32];
+            extern int ac97_bdl_entry_count;
+            
+            // Count completed entries between last tracked CIV and current civ
+            while (ac97_po_last_civ != civ) {
+                if (ac97_po_last_civ < (uint8_t)ac97_bdl_entry_count) {
+                    ac97_samples_played += ac97_bdl_entry_samples[ac97_po_last_civ];
+                }
+                ac97_po_last_civ = (ac97_po_last_civ + 1) % AC97_BDL_ENTRIES;
+            }
+        }
+        
+        if (ac97_large_pcm_remaining > 0) {
+            uint8_t civ = inb(ac97_nabmbar + AC97_PO_CIV);
+            uint8_t lvi = inb(ac97_nabmbar + AC97_PO_LVI);
+            
+            while (ac97_large_pcm_remaining > 0) {
+                uint8_t next_lvi = (lvi + 1) % AC97_BDL_ENTRIES;
+                if (next_lvi == civ) break; 
+                
+                uint32_t chunk = ac97_large_pcm_remaining;
+                if (chunk > 65534) chunk = 65534;
+
+                ac97_po_bdl[next_lvi].addr = (uint32_t)(uintptr_t)ac97_large_pcm_data;
+                ac97_po_bdl[next_lvi].length = chunk;
+                ac97_po_bdl[next_lvi].flags = 0x8000;
+                
+                // Track this entry's size
+                extern uint32_t ac97_bdl_entry_samples[32];
+                extern int ac97_bdl_entry_count;
+                ac97_bdl_entry_samples[next_lvi] = chunk;
+                if (next_lvi >= (uint8_t)ac97_bdl_entry_count)
+                    ac97_bdl_entry_count = next_lvi + 1;
+
+                ac97_large_pcm_data += chunk;
+                ac97_large_pcm_remaining -= chunk;
+                
+                lvi = next_lvi;
+                outb(ac97_nabmbar + AC97_PO_LVI, lvi);
+            }
+            
+            outb(ac97_nabmbar + AC97_PO_CR, inb(ac97_nabmbar + AC97_PO_CR) | 0x01);
+        }
     }
     return (uint64_t)regs;
 }
@@ -235,7 +289,10 @@ static void ac97_po_setup_bdl(void) {
 }
 
 void ac97_stream_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint8_t bits, uint8_t channels) {
-    (void)sample_rate; (void)bits; (void)channels;
+    (void)bits; (void)channels;
+    if (sample_rate > 0) {
+        ac97_write_mixer(0x2E, sample_rate);
+    }
     const uint8_t *src = (const uint8_t *)data;
 
     uint32_t chunk_size = AC97_PO_RING_SIZE / AC97_BDL_ENTRIES;
@@ -300,32 +357,56 @@ void ac97_stream_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint
     }
 }
 
+uint32_t ac97_large_pcm_remaining = 0;
+uint32_t ac97_large_pcm_total = 0;
+const uint16_t *ac97_large_pcm_data = 0;
+
+// Accurate playback position tracking
+// Tracks samples actually played by hardware (completed BDL entries)
+uint32_t ac97_samples_played = 0;
+// BDL entry sizes so we know how many samples each completed entry had
+uint32_t ac97_bdl_entry_samples[32];
+int ac97_bdl_entry_count = 0;
+
 void ac97_play_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint8_t bits, uint8_t channels) {
-    (void)sample_rate; (void)bits; (void)channels;
+    (void)bits; (void)channels;
     ac97_po_running = 0; // Mutually exclusive with streaming
 
+    // Set Front DAC Rate
+    if (sample_rate > 0) {
+        ac97_write_mixer(0x2E, sample_rate);
+    }
+
     uint32_t total_samples = size / 2; // assuming 16-bit
-    uint32_t samples_remaining = total_samples;
-    const uint16_t *src_ptr = (const uint16_t *)data;
+    ac97_large_pcm_total = total_samples;
+    ac97_large_pcm_remaining = total_samples;
+    ac97_large_pcm_data = (const uint16_t *)data;
+    
+    // Reset accurate playback tracking
+    ac97_samples_played = 0;
+    ac97_po_last_civ = 0;
+    ac97_bdl_entry_count = 0;
+    memset(ac97_bdl_entry_samples, 0, sizeof(ac97_bdl_entry_samples));
+    
     int bdl_idx = 0;
 
-    while (samples_remaining > 0 && bdl_idx < AC97_BDL_ENTRIES) {
-        uint32_t chunk_samples = samples_remaining;
-        if (chunk_samples > 65535) chunk_samples = 65535;
+    while (ac97_large_pcm_remaining > 0 && bdl_idx < AC97_BDL_ENTRIES) {
+        uint32_t chunk_samples = ac97_large_pcm_remaining;
+        if (chunk_samples > 65534) chunk_samples = 65534;
 
-        ac97_po_bdl[bdl_idx].addr = (uint32_t)(uintptr_t)src_ptr;
+        ac97_po_bdl[bdl_idx].addr = (uint32_t)(uintptr_t)ac97_large_pcm_data;
         ac97_po_bdl[bdl_idx].length = chunk_samples;
+        ac97_po_bdl[bdl_idx].flags = 0x8000; // IOC for EVERY entry so we can refill
         
-        samples_remaining -= chunk_samples;
-        src_ptr += chunk_samples;
+        // Track each entry's sample count for progress reporting
+        ac97_bdl_entry_samples[bdl_idx] = chunk_samples;
         
-        if (samples_remaining == 0) {
-            ac97_po_bdl[bdl_idx].flags = 0x8000; // IOC for last entry
-        } else {
-            ac97_po_bdl[bdl_idx].flags = 0;
-        }
+        ac97_large_pcm_remaining -= chunk_samples;
+        ac97_large_pcm_data += chunk_samples;
+        
         bdl_idx++;
     }
+    ac97_bdl_entry_count = bdl_idx;
 
     outb(ac97_nabmbar + AC97_PO_CR, 0x02); // Reset
     for(int i=0; i<500; i++) inb(0x80);
@@ -333,7 +414,7 @@ void ac97_play_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint8_
     for(int i=0; i<200; i++) inb(0x80);
     outw(ac97_nabmbar + AC97_PO_SR, 0x1E); // Clear status
 
-    outl(ac97_nabmbar + AC97_PO_BDBA, (uint32_t)(uintptr_t)ac97_po_bdl);
+    outl(ac97_nabmbar + AC97_PO_BDBA, ac97_po_bdl_phys);
     outb(ac97_nabmbar + AC97_PO_LVI, bdl_idx - 1);
     outb(ac97_nabmbar + AC97_PO_CR, 0x01 | 0x10); // Run + IOCE
 }
@@ -351,13 +432,17 @@ int ac97_is_playback_done(void) {
 }
 
 void ac97_stop_playback(void) {
-    if (ac97_po_running) {
-        // Stop the DMA engine
-        outb(ac97_nabmbar + AC97_PO_CR, 0); 
-        ac97_po_running = 0;
-        print_serial("AC97: Streaming playback stopped\n");
-    }
+    // Stop the DMA engine
+    outb(ac97_nabmbar + AC97_PO_CR, 0); 
+    ac97_po_running = 0;
+    print_serial("AC97: Streaming playback stopped\n");
+    
     // Clear ring buffer unconditionally so we don't play stale audio later
     memset(ac97_po_ring, 0, AC97_PO_RING_SIZE);
     ac97_po_write_pos = 0;
+    
+    // Also stop large PCM
+    extern uint32_t ac97_large_pcm_remaining;
+    ac97_large_pcm_remaining = 0;
+    ac97_samples_played = 0;
 }

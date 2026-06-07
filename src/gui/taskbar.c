@@ -219,24 +219,33 @@ static void taskbar_update_magnification(int mx, int my) {
   int is_vertical = (global_config.taskbar_position == 1 ||
                      global_config.taskbar_position == 2);
 
-  int effect_width = 150; // Pixels
   float max_scale = 1.6f;
   int min_size = 64;
 
-  int total_base_w = g_taskbar.icon_count * min_size;
-
   if (!is_vertical) {
+    // 1. Calculate perfectly continuous fractional index (u)
+    float u = -1.0f;
+    if (g_taskbar.hovered_index != -1) {
+      for (int i = 0; i < g_taskbar.icon_count; i++) {
+        float sw = 64.0f * g_taskbar.icons[i].scale;
+        float left = g_taskbar.icons[i].x - (sw - 64.0f) / 2.0f;
+        if (mx >= left && mx < left + sw) {
+          float offset = (mx - (left + sw / 2.0f)) / sw;
+          u = (float)i + offset;
+          break;
+        }
+      }
+    }
+    // 2. Apply target scales using Cosine curve based on index distance
     for (int i = 0; i < g_taskbar.icon_count; i++) {
-      if (g_taskbar.hovered_index == -1) {
+      if (u < 0.0f) {
         g_taskbar.icons[i].target_scale = 1.0f;
       } else {
-        int dist = i - g_taskbar.hovered_index;
-        if (dist < 0) dist = -dist; // absolute value
-        
-        if (dist == 0) {
-          g_taskbar.icons[i].target_scale = max_scale;
-        } else if (dist == 1) {
-          g_taskbar.icons[i].target_scale = 1.3f; // Just a little bit
+        float dist = kabs_f((float)i - u);
+        float radius = 2.5f;
+        if (dist < radius) {
+          float angle = (dist / radius) * 1.57079f;
+          g_taskbar.icons[i].target_scale = 1.0f + (max_scale - 1.0f) * kcos(angle);
         } else {
           g_taskbar.icons[i].target_scale = 1.0f;
         }
@@ -248,7 +257,7 @@ static void taskbar_update_magnification(int mx, int my) {
       total_w += (int)(min_size * g_taskbar.icons[i].target_scale);
     }
 
-    float start_x = (float)(screen_width - (total_w + 66 + 55)) / 2.0f + 60.0f;
+    float start_x = (float)(screen_width - (total_w + 104)) / 2.0f + 60.0f;
     float cur_x = start_x;
     for (int i = 0; i < g_taskbar.icon_count; i++) {
       float sw = (float)min_size * g_taskbar.icons[i].target_scale;
@@ -257,17 +266,29 @@ static void taskbar_update_magnification(int mx, int my) {
       cur_x += sw;
     }
   } else {
+    // 1. Calculate perfectly continuous fractional index (u)
+    float u = -1.0f;
+    if (g_taskbar.hovered_index != -1) {
+      for (int i = 0; i < g_taskbar.icon_count; i++) {
+        float sh = 64.0f * g_taskbar.icons[i].scale;
+        float top = g_taskbar.icons[i].y - (sh - 64.0f) / 2.0f;
+        if (my >= top && my < top + sh) {
+          float offset = (my - (top + sh / 2.0f)) / sh;
+          u = (float)i + offset;
+          break;
+        }
+      }
+    }
+    // 2. Apply target scales using Cosine curve based on index distance
     for (int i = 0; i < g_taskbar.icon_count; i++) {
-      if (g_taskbar.hovered_index == -1) {
+      if (u < 0.0f) {
         g_taskbar.icons[i].target_scale = 1.0f;
       } else {
-        int dist = i - g_taskbar.hovered_index;
-        if (dist < 0) dist = -dist; // absolute value
-        
-        if (dist == 0) {
-          g_taskbar.icons[i].target_scale = max_scale;
-        } else if (dist == 1) {
-          g_taskbar.icons[i].target_scale = 1.3f; // Just a little bit
+        float dist = kabs_f((float)i - u);
+        float radius = 2.5f;
+        if (dist < radius) {
+          float angle = (dist / radius) * 1.57079f;
+          g_taskbar.icons[i].target_scale = 1.0f + (max_scale - 1.0f) * kcos(angle);
         } else {
           g_taskbar.icons[i].target_scale = 1.0f;
         }
@@ -279,7 +300,7 @@ static void taskbar_update_magnification(int mx, int my) {
       total_w += (int)(min_size * g_taskbar.icons[i].target_scale);
     }
 
-    float start_y = (float)(screen_height - (total_w + 66 + 55)) / 2.0f + 60.0f;
+    float start_y = (float)(screen_height - (total_w + 104)) / 2.0f + 60.0f;
     float cur_y = start_y;
     for (int i = 0; i < g_taskbar.icon_count; i++) {
       float sw = (float)min_size * g_taskbar.icons[i].target_scale;
@@ -326,7 +347,7 @@ void taskbar_tick_animations(float dt) {
   extern os_config_t global_config;
   int is_vertical = (global_config.taskbar_position == 1 ||
                      global_config.taskbar_position == 2);
-  float speed = 12.0f;
+  float speed = 30.0f;
   int animating = 0;
 
   float ddx = g_taskbar.dock_x - g_taskbar.anim_dock_x;
@@ -334,7 +355,6 @@ void taskbar_tick_animations(float dt) {
   float ddw = g_taskbar.dock_w - g_taskbar.anim_dock_w;
   float ddh = g_taskbar.dock_h - g_taskbar.anim_dock_h;
 
-  int dock_animating = 0;
   if (kabs_f(ddx) > 0.5f || kabs_f(ddy) > 0.5f || kabs_f(ddw) > 0.5f ||
       kabs_f(ddh) > 0.5f) {
     g_taskbar.anim_dock_x += ddx * speed * dt;
@@ -342,7 +362,6 @@ void taskbar_tick_animations(float dt) {
     g_taskbar.anim_dock_w += ddw * speed * dt;
     g_taskbar.anim_dock_h += ddh * speed * dt;
     animating = 1;
-    dock_animating = 1;
   } else {
     g_taskbar.anim_dock_x = g_taskbar.dock_x;
     g_taskbar.anim_dock_y = g_taskbar.dock_y;
@@ -380,11 +399,13 @@ void taskbar_tick_animations(float dt) {
     }
 
     // Y Bounce (Hop) animation
-    float target_y =
-        (!is_vertical && i == g_taskbar.hovered_index) ? -15.0f : 0.0f;
+    float target_y = 0.0f;
+    if (!is_vertical && g_taskbar.hovered_index != -1) {
+      target_y = -25.0f * (icon->scale - 1.0f);
+    }
     float dy = target_y - icon->y_offset;
     if (kabs_f(dy) > 0.1f) {
-      icon->y_offset += dy * 15.0f * dt;
+      icon->y_offset += dy * speed * dt;
       animating = 1;
     } else {
       icon->y_offset = target_y;
@@ -392,12 +413,13 @@ void taskbar_tick_animations(float dt) {
 
     // X Bounce animation
     float target_x_off = 0.0f;
-    if (is_vertical && i == g_taskbar.hovered_index) {
-      target_x_off = (global_config.taskbar_position == 1) ? 15.0f : -15.0f;
+    if (is_vertical && g_taskbar.hovered_index != -1) {
+      float dir = (global_config.taskbar_position == 1) ? 1.0f : -1.0f;
+      target_x_off = dir * 25.0f * (icon->scale - 1.0f);
     }
     float dx_off = target_x_off - icon->x_offset;
     if (kabs_f(dx_off) > 0.1f) {
-      icon->x_offset += dx_off * 15.0f * dt;
+      icon->x_offset += dx_off * speed * dt;
       animating = 1;
     } else {
       icon->x_offset = target_x_off;
@@ -407,14 +429,14 @@ void taskbar_tick_animations(float dt) {
   if (animating) {
     extern int screen_width, screen_height;
     extern void compositor_invalidate_rect(int x, int y, int w, int h);
-    if (dock_animating || g_taskbar.edit_mode) {
+    if (g_taskbar.edit_mode) {
       compositor_invalidate_rect(0, 0, screen_width, screen_height);
     } else if (!is_vertical) {
-      compositor_invalidate_rect(0, screen_height - 100, screen_width, 100);
+      compositor_invalidate_rect(0, screen_height - 150, screen_width, 150);
     } else if (global_config.taskbar_position == 1) {
-      compositor_invalidate_rect(0, 0, 100, screen_height);
+      compositor_invalidate_rect(0, 0, 150, screen_height);
     } else {
-      compositor_invalidate_rect(screen_width - 100, 0, 100, screen_height);
+      compositor_invalidate_rect(screen_width - 150, 0, 150, screen_height);
     }
   }
 }
@@ -556,7 +578,7 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
     dock_y = screen_height - dock_h;
   } else {
     dock_w = 74;
-    dock_h = 66 + 55 + (int)total_icon_w;
+    dock_h = 104 + (int)total_icon_w;
     dock_y = (screen_height - dock_h) / 2;
     dock_x =
         (global_config.taskbar_position == 1) ? 8 : (screen_width - dock_w - 8);
@@ -618,7 +640,7 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
                              buffer, 0);
 
   // Calculate centered content bounds to keep icons grouped together
-  int content_w = 66 + 55 + (int)total_icon_w;
+  int content_w = 104 + (int)total_icon_w;
   int content_x = (screen_width - content_w) / 2;
 
   // 3. Eagle/Start Icon & Separator
@@ -731,14 +753,16 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
   if (in_dock) {
     for (int i = 0; i < g_taskbar.icon_count; i++) {
       if (!is_vertical) {
-        int ix = g_taskbar.icons[i].x;
-        if (mx >= ix && mx < ix + 64) {
+        float sw = 64.0f * g_taskbar.icons[i].scale;
+        float left = g_taskbar.icons[i].x - (sw - 64.0f) / 2.0f;
+        if (mx >= left && mx < left + sw) {
           hovered = i;
           break;
         }
       } else {
-        int iy = g_taskbar.icons[i].y;
-        if (my >= iy && my < iy + 64) {
+        float sh = 64.0f * g_taskbar.icons[i].scale;
+        float top = g_taskbar.icons[i].y - (sh - 64.0f) / 2.0f;
+        if (my >= top && my < top + sh) {
           hovered = i;
           break;
         }
@@ -835,8 +859,8 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
   if (!is_vertical) {
     float total_icon_w = 0.0f;
     for (int i = 0; i < g_taskbar.icon_count; i++)
-      total_icon_w += (48.0f * g_taskbar.icons[i].scale);
-    int content_w = 66 + 55 + (int)total_icon_w;
+      total_icon_w += (64.0f * g_taskbar.icons[i].scale);
+  int content_w = 104 + (int)total_icon_w;
     int content_x = (screen_width - content_w) / 2;
 
     if (mx >= content_x && mx < content_x + 55) {
@@ -852,15 +876,16 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
 
   extern int ctrl_pressed;
   for (int i = 0; i < g_taskbar.icon_count; i++) {
-    int ix = (int)g_taskbar.icons[i].x;
-    int iy = (int)g_taskbar.icons[i].y;
-    int isz = (int)(48 * g_taskbar.icons[i].scale);
-
     int hit = 0;
-    if (!is_vertical && mx >= ix && mx < ix + isz)
-      hit = 1;
-    if (is_vertical && my >= iy && my < iy + isz)
-      hit = 1;
+    if (!is_vertical) {
+      float sw = 64.0f * g_taskbar.icons[i].scale;
+      float left = g_taskbar.icons[i].x - (sw - 64.0f) / 2.0f;
+      if (mx >= left && mx < left + sw) hit = 1;
+    } else {
+      float sh = 64.0f * g_taskbar.icons[i].scale;
+      float top = g_taskbar.icons[i].y - (sh - 64.0f) / 2.0f;
+      if (my >= top && my < top + sh) hit = 1;
+    }
 
     if (hit) {
       if (g_taskbar.icons[i].is_running && g_taskbar.icons[i].win_ref && !ctrl_pressed) {
@@ -882,7 +907,7 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
             anim_start_spring(&win->anim_h, 32.0f, (float)win->height, restore_k, restore_d);
           } else {
             anim_start_spring(&win->anim_x, (float)g_taskbar.dock_x, (float)win->x, restore_k, restore_d);
-            anim_start_spring(&win->anim_y, (float)iy, (float)win->y, restore_k, restore_d);
+            anim_start_spring(&win->anim_y, g_taskbar.icons[i].y, (float)win->y, restore_k, restore_d);
             anim_start_spring(&win->anim_w, 32.0f, (float)win->width, restore_k, restore_d);
             anim_start_spring(&win->anim_h, 32.0f, (float)win->height, restore_k, restore_d);
           }
@@ -893,11 +918,11 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
         extern int next_anim_origin_x;
         extern int next_anim_origin_y;
         if (!is_vertical) {
-          next_anim_origin_x = ix + isz / 2;
+          next_anim_origin_x = (int)(g_taskbar.icons[i].x + 32.0f * g_taskbar.icons[i].scale);
           next_anim_origin_y = g_taskbar.dock_y + 20;
         } else {
           next_anim_origin_x = g_taskbar.dock_x + 20;
-          next_anim_origin_y = iy + isz / 2;
+          next_anim_origin_y = (int)(g_taskbar.icons[i].y + 32.0f * g_taskbar.icons[i].scale);
         }
         launch_app_by_id(g_taskbar.icons[i].app_id);
       }

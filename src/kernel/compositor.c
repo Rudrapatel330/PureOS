@@ -488,9 +488,22 @@ void compositor_invalidate_rect(int x, int y, int w, int h) {
   dirty_rects[dirty_count++] = r;
 }
 
+int compositor_needs_render(void) {
+  return compositor_is_dirty();
+}
+
 void compositor_invalidate_window(window_t *win) {
+  // Invalidate final bounds
   compositor_invalidate_rect(win->x - 4, win->y - 4, win->width + 8,
                              win->height + 8);
+
+  // Invalidate animating bounds to clear cracked trails
+  if (win->is_animating) {
+    compositor_invalidate_rect((int)win->anim_x.current_val - 20,
+                               (int)win->anim_y.current_val - 20,
+                               (int)win->anim_w.current_val + 40,
+                               (int)win->anim_h.current_val + 40);
+  }
 }
 
 void compositor_set_debug(int enabled) { debug_mode = enabled; }
@@ -566,9 +579,9 @@ static void compositor_render_rect(rect_t clip) {
 
   if (!skip_desktop) {
     if (desktop_buffer) {
-      // Use padded rendering for blur context to prevent flickering at edges
-      // Using a radius of 10 for padding to match a single-pass radius 8 blur
-      int r = current_should_blur ? 10 : 0;
+      // Use exact clip rendering without padding. Padded rendering was overwriting the global 
+      // backbuffer outside the clip bounds, causing sysmenu flickering and torn UI artifacts.
+      int r = 0;
       rect_t padded = {clip.x - r, clip.y - r, clip.w + r * 2, clip.h + r * 2};
       
       // Clamp padded rect to screen bounds with strict positive checks

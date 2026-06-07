@@ -1797,6 +1797,18 @@ void winmgr_tick_animations(float dt) {
       win->watchdog++;
       int force_complete = (win->watchdog > 120);
 
+      // Snap to crisp pixels if visually settled (within 0.5px)
+      float snap_dx = win->anim_x.current_val - win->anim_x.end_val;
+      float snap_dy = win->anim_y.current_val - win->anim_y.end_val;
+      float snap_dw = win->anim_w.current_val - win->anim_w.end_val;
+      float snap_dh = win->anim_h.current_val - win->anim_h.end_val;
+      if ((snap_dx < 0 ? -snap_dx : snap_dx) < 0.5f &&
+          (snap_dy < 0 ? -snap_dy : snap_dy) < 0.5f &&
+          (snap_dw < 0 ? -snap_dw : snap_dw) < 0.5f &&
+          (snap_dh < 0 ? -snap_dh : snap_dh) < 0.5f) {
+        force_complete = 1;
+      }
+
       if ((!win->anim_x.active && !win->anim_y.active && !win->anim_w.active &&
            !win->anim_h.active) || force_complete) {
         

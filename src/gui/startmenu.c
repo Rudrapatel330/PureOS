@@ -55,6 +55,7 @@ extern void chat_init();
 extern void phone_init();
 extern void recorder_init();
 extern void pong_init();
+extern void song_app_init();
 
 // --- Launch wrappers ---
 static void launch_term() { terminal_init(); }
@@ -74,6 +75,7 @@ static void launch_chat() { chat_init(); }
 static void launch_phone() { phone_init(); }
 static void launch_recorder() { recorder_init(); }
 static void launch_pong() { pong_init(); }
+static void launch_music() { song_app_init(); }
 
 static menu_item_t pinned_items[] = {
     {"Terminal", 0xFF38B764, "/TERMINAL.PNG", 0, launch_term},
@@ -92,7 +94,8 @@ static menu_item_t pinned_items[] = {
     {"Chat", 0xFF25D366, "/CHAT.PNG", 0, launch_chat},
     {"Phone", 0xFF0078D4, "/MOBILE.PNG", 0, launch_phone},
     {"Recorder", 0xFFFF4400, "/RECORD.PNG", 0, launch_recorder},
-    {"Pong", 0xFF9C27B0, "/PONG.PNG", 0, launch_pong}};
+    {"Pong", 0xFF9C27B0, "/PONG.PNG", 0, launch_pong},
+    {"Music", 0xFF1DB954, "/MUSIC.PNG", 0, launch_music}};
 #define PINNED_COUNT (sizeof(pinned_items) / sizeof(pinned_items[0]))
 
 static int hovered_item = -1;
