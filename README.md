@@ -354,7 +354,7 @@ In **Bot vs Bot** mode, the two AIs have slightly different reaction speeds (5.0
 
 ## 🌐 Networking Stack
 
-PureOS implements a **complete TCP/IP networking stack from scratch** — no external libraries for the core protocols:
+PureOS implements a robust TCP/IP networking stack powered by **lwIP (Lightweight IP)**, the industry-standard embedded network stack:
 
 ```mermaid
 graph TB
@@ -363,22 +363,19 @@ graph TB
     end
 
     subgraph Data Link
-        ETH[Ethernet Frame<br>Parser and Builder]
+        ETH[Ethernet Frame<br>MAC Address Handling]
     end
 
-    subgraph Network
+    subgraph Network Stack (lwIP)
         ARP[ARP<br>Address Resolution]
         IPV4[IPv4<br>Packet Routing]
         DHCP[DHCP<br>Auto IP Config]
-    end
-
-    subgraph Transport
-        TCP[TCP<br>Reliable Streams<br>3-Way Handshake<br>Retransmission]
+        TCP[TCP<br>Reliable Streams]
         UDP_P[UDP<br>Datagram Protocol]
+        DNS[lwIP DNS<br>Domain Resolution]
     end
 
     subgraph Application
-        DNS[DNS<br>Domain Resolution]
         HTTP[HTTP 1.1<br>GET / POST Requests]
         SMTP[SMTP<br>Email Sending]
         TLS[TLS 1.2<br>Encrypted Connections<br>via BearSSL]
@@ -401,22 +398,19 @@ graph TB
     style SMTP fill:#e63946,color:#fff
     style HTTP fill:#457b9d,color:#fff
     style DNS fill:#f4a261,color:#000
+    style IPV4 fill:#264653,color:#fff
 ```
 
 ### Protocol Capabilities
 
 | Protocol | Implementation Details |
 |---|---|
-| **Ethernet** | Raw frame construction and parsing, MAC address handling |
-| **ARP** | Address Resolution Protocol with ARP cache and request/reply |
-| **IPv4** | Full IP packet routing, header checksum, fragmentation support |
-| **DHCP** | Automatic IP address, subnet, gateway and DNS configuration |
-| **UDP** | Connectionless datagram transport for DNS and DHCP |
-| **TCP** | Upgraded implementation: Support for **4 concurrent connections**, 3-way handshake, sequence tracking, ACK management, retransmission, and non-blocking draining |
-| **DNS** | Domain name resolution with query building and response parsing |
-| **HTTP 1.1** | GET/POST requests, header parsing, chunked transfer decoding |
-| **TLS 1.2** | Secure encrypted connections via an integrated **BearSSL** library port (RSA, AES, SHA-256, X.509 certificates) |
-| **SMTP** | Authenticated email sending with STARTTLS / direct TLS (port 465) |
+| **TCP/IP Suite** | Fully integrated **lwIP** stack providing rock-solid IPv4 routing, ARP, TCP segment reassembly, congestion control, and UDP datagrams. |
+| **DHCP** | Automatic IP address, subnet, gateway and DNS configuration. |
+| **DNS** | Replaced legacy manual packet-crafting with robust `lwIP` API for DNS resolution. |
+| **HTTP 1.1** | GET/POST requests, header parsing, chunked transfer decoding. |
+| **TLS 1.2** | Secure encrypted connections via an integrated **BearSSL** library port (RSA, AES, SHA-256, X.509 certificates). |
+| **SMTP** | Authenticated email sending with STARTTLS / direct TLS (port 465). |
 
 ---
 
@@ -500,6 +494,33 @@ graph LR
 | **Layout Engine** | `layout.c` | Computes block/inline positioning, width/height, margins, padding |
 | **JS Interpreter** | `js.c` | Basic JavaScript execution: variables, functions, DOM manipulation |
 | **Browser Shell** | `browser.c` | URL bar, navigation, page fetch over HTTP/HTTPS, rendering orchestration |
+
+### 🚀 Browser Engine Rendering Pipeline
+
+Our browser uses the powerful `litehtml` engine to accurately render CSS and HTML. We've recently made massive improvements to how the browser handles modern web fallbacks and manages its layout loop:
+
+```mermaid
+sequenceDiagram
+    participant Net as 🌐 lwIP Network
+    participant Brw as 🖥️ Browser App
+    participant Lyt as 📐 Litehtml Engine
+    participant GUI as 🎨 Compositor
+
+    Brw->>Net: https_get("https://google.com/search?q=...")
+    Net-->>Brw: Chunked Encoded HTML (Status 200)
+    Note over Brw: ⏳ Status Bar: "Rendering..."
+    Brw->>Lyt: parse_html(page_content)
+    Note over Lyt: 🛡️ CSS Reset: Hides script, style, noscript
+    Lyt->>Lyt: Build DOM & Compute CSS Layout
+    Lyt-->>Brw: Layout Tree Ready
+    Brw->>GUI: Invalidate Window
+    GUI-->>Brw: Draw Callback (60 FPS)
+    Note over Brw: ✅ Status Bar: "Ready"
+```
+
+**Key Rendering Engineering Fixes:**
+- **Duplicate Rendering Bug Fixed:** Previously, modern sites like Google Search displayed duplicate content because fallback HTML inside `<noscript>`, raw JS inside inline `<script>`, and CSS code inside `<style>` blocks were rendering as visible text due to missing generic display resets. By implementing strict CSS display rules (`display: none !important`), the browser now renders clean, accurate pages.
+- **Asynchronous UI Sync:** The browser now intelligently updates the status bar to "Rendering..." during the heavy, CPU-intensive layout parsing phase. This prevents perceived UI lag by giving users immediate visual feedback before the layout tree is fully calculated.
 
 ---
 
