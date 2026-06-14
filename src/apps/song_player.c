@@ -55,6 +55,8 @@ typedef struct {
     char lyrics_text[8192];
     int lyrics_loaded; // 0=none, 1=loading, 2=loaded, -1=failed
     float lyrics_scroll_y;
+    
+    float lyrics_line_scales[512]; // Per-line smooth animation state
 } song_app_t;
 
 window_t *song_player_win = 0;
@@ -389,6 +391,24 @@ static void draw_sidebar(window_t *win, song_app_t *app) {
     }
 }
 
+static int parse_lrc_time(const char *line, char **out_text) {
+    if (line[0] == '[') {
+        char *end = strchr(line, ']');
+        if (end) {
+            *out_text = end + 1;
+            if (**out_text == ' ') (*out_text)++;
+            if (line[3] == ':') {
+                int m = (line[1] - '0') * 10 + (line[2] - '0');
+                int s = (line[4] - '0') * 10 + (line[5] - '0');
+                return m * 60 + s;
+            }
+            return -1; // metadata tag
+        }
+    }
+    *out_text = (char *)line;
+    return -1;
+}
+
 static void draw_main_area(window_t *win, song_app_t *app) {
     int mx = 250;
     int mw = win->width - mx;
@@ -430,30 +450,106 @@ static void draw_main_area(window_t *win, song_app_t *app) {
             // Draw lyrics
             if (app->lyrics_loaded == 2) {
                 int max_y = win->height - 100;
-                int start_y = 100 + (int)app->lyrics_scroll_y;
-                char *line = app->lyrics_text;
-                int current_y = start_y;
                 
+                // Pass 1: Find active line index
+                extern void mp3_get_progress(uint32_t*, uint32_t*);
+                uint32_t pos_ms = 0, dur_ms = 0;
+                mp3_get_progress(&pos_ms, &dur_ms);
+                int current_time = pos_ms / 1000;
+                int active_line_idx = -1;
+                int current_idx = 0;
+                
+                char *line = app->lyrics_text;
                 while (line && *line) {
                     char *next = strchr(line, '\n');
                     if (next) *next = 0;
                     
-                    if (current_y > 80 && current_y < max_y) {
-                        if (strlen(line) > 0) {
-                            winmgr_draw_text(win, mx + 100, current_y, line, COL_SP_TEXT_WHT);
+                    char *text_content;
+                    int t = parse_lrc_time(line, &text_content);
+                    if (t != -1 && t <= current_time) {
+                        active_line_idx = current_idx;
+                    }
+                    
+                    if (strlen(text_content) > 0) {
+                        current_idx++;
+                    }
+                    
+                    if (next) { *next = '\n'; line = next + 1; }
+                    else { break; }
+                }
+                
+                // Target scroll calculation
+                if (active_line_idx != -1) {
+                    float target_scroll = -(active_line_idx * 60 - (max_y - 100) / 2);
+                    if (target_scroll > 0) target_scroll = 0;
+                    app->lyrics_scroll_y += (target_scroll - app->lyrics_scroll_y) * 0.1f;
+                    winmgr_invalidate_rect(win, 250, 80, win->width - 250, win->height - 180);
+                }
+                
+                // Pass 2: Draw lines
+                int start_y = 100 + (int)app->lyrics_scroll_y;
+                int current_y = start_y;
+                current_idx = 0;
+                
+                extern int ttf_get_default_font(void);
+                extern void ttf_set_size(int, float);
+                extern int ttf_text_width(int, const char *);
+                extern void ttf_draw_text(void *, int, int, int, const char *, uint32_t);
+                int fs = ttf_get_default_font();
+                
+                line = app->lyrics_text;
+                while (line && *line) {
+                    char *next = strchr(line, '\n');
+                    if (next) *next = 0;
+                    
+                    char *text_content;
+                    parse_lrc_time(line, &text_content);
+                    
+                    if (strlen(text_content) > 0) {
+                        if (current_y > 40 && current_y < max_y + 60) {
+                            int is_active = (current_idx == active_line_idx);
+                            float target_scale = is_active ? 1.0f : 0.0f;
+                            
+                            if (current_idx < 512) {
+                                app->lyrics_line_scales[current_idx] += (target_scale - app->lyrics_line_scales[current_idx]) * 0.15f; // Fast, smooth interpolation
+                            }
+                            
+                            float scale_factor = (current_idx < 512) ? app->lyrics_line_scales[current_idx] : target_scale;
+                            
+                            int r = 179 + (int)((255 - 179) * scale_factor);
+                            int g = 179 + (int)((255 - 179) * scale_factor);
+                            int b = 179 + (int)((255 - 179) * scale_factor);
+                            uint32_t color = 0xFF000000 | (r << 16) | (g << 8) | b;
+                            
+                            if (fs != -1) {
+                                int scale = 22 + (int)(18.0f * scale_factor); // 22 to 40
+                                ttf_set_size(fs, scale);
+                                int tw = ttf_text_width(fs, text_content);
+                                int text_x = mx + (mw / 2) - (tw / 2);
+                                
+                                // Draw text sharply. If it's the active line (scale_factor > 0.5), fake a BOLD weight 
+                                // to make it look incredibly solid and crystal clear instead of soft/blurry.
+                                ttf_draw_text(win, fs, text_x, current_y, text_content, color);
+                                if (scale_factor > 0.5f) {
+                                    ttf_draw_text(win, fs, text_x + 1, current_y, text_content, color);
+                                }
+                            } else {
+                                extern int ui_measure_text_width(const char*, int);
+                                extern void ui_draw_text_scaled(window_t *win, int x, int y, const char *text, uint32_t color, int font_scale);
+                                int scale = 16 + (int)(8.0f * scale_factor);
+                                int tw = ui_measure_text_width(text_content, scale);
+                                int text_x = mx + (mw / 2) - (tw / 2);
+                                ui_draw_text_scaled(win, text_x, current_y, text_content, color, scale);
+                            }
                         }
+                        current_y += 60;
+                        current_idx++;
                     }
                     
                     if (next) {
                         *next = '\n';
                         line = next + 1;
-                        current_y += 30; // Line height
                     } else {
-                        if (current_y > 80 && current_y < max_y) {
-                            if (strlen(line) > 0) {
-                                winmgr_draw_text(win, mx + 100, current_y, line, COL_SP_TEXT_WHT);
-                            }
-                        }
                         break;
                     }
                 }
@@ -1045,6 +1141,7 @@ void song_handle_mouse(window_t *win, int mx, int my, int buttons) {
         if (app->hover_idx != -1) {
             app->current_song_idx = app->hover_idx;
             app->is_playing = 1;
+            app->is_searching = 0;
             
             app->lyrics_loaded = 0;
             strcpy(lyrics_fetch_title, app->songs[app->current_song_idx].title);

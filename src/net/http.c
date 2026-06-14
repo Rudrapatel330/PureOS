@@ -440,8 +440,8 @@ int http_get(const char *url, char *response, int max_len) {
 // Perform an HTTPS GET request using TLS
 int https_get(const char *url, char *response, int max_len) {
   http_download_progress = 0;
-  static char host[128];
-  static char path[256];
+  char host[128];
+  char path[256];
 
   if (!parse_url(url, host, sizeof(host), path, sizeof(path))) {
     print_serial("HTTPS: Invalid URL\n");
@@ -489,7 +489,7 @@ int https_get(const char *url, char *response, int max_len) {
     return conn_res;
   }
 
-  static char request[1024];
+  char request[1024];
   int rlen = 0;
 
   strcpy(request, "GET ");
@@ -663,8 +663,8 @@ int https_get(const char *url, char *response, int max_len) {
 // Returns: number of body bytes placed in response, or -1 on error
 int http_post(const char *url, const char *post_data, int post_len,
               const char *content_type, char *response, int max_len) {
-  static char host[128];
-  static char path[256];
+  char host[128];
+  char path[256];
 
   if (!parse_url(url, host, sizeof(host), path, sizeof(path))) {
     print_serial("HTTP POST: Invalid URL\n");
@@ -697,7 +697,7 @@ int http_post(const char *url, const char *post_data, int post_len,
   }
 
   // Build POST request
-  static char request[2048];
+  char request[2048];
   strcpy(request, "POST ");
   strcat(request, path);
   strcat(request, " HTTP/1.1\r\n");

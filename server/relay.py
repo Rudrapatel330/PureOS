@@ -99,24 +99,53 @@ async def handle_ytlyrics(request):
     q = request.query.get('q', '')
     if not q:
         return web.Response(status=400)
+        
+    import re
+    # Clean up common YouTube metadata from the title to improve lyrics search
+    clean_q = q
+    clean_q = re.sub(r'(?i)\(lyric(s)?(\s*video)?\)', '', clean_q)
+    clean_q = re.sub(r'(?i)\(official(\s*(music|lyric)?\s*video|audio)?\)', '', clean_q)
+    clean_q = re.sub(r'(?i)\[official(\s*(music|lyric)?\s*video|audio)?\]', '', clean_q)
+    clean_q = re.sub(r'(?i)\(live\)', '', clean_q)
+    clean_q = re.sub(r'(?i)ft\.|feat\.', '', clean_q)
+    clean_q = re.sub(r'- topic', '', clean_q, flags=re.IGNORECASE)
+    clean_q = clean_q.strip()
     
-    url = f"https://lrclib.net/api/search?q={q}"
+    print(f"[YT Lyrics] Received query: '{q}'")
+    print(f"[YT Lyrics] Cleaned query: '{clean_q}'")
+    url = f"https://lrclib.net/api/search?q={clean_q}"
     import requests
     loop = asyncio.get_event_loop()
     def do_fetch():
         try:
-            res = requests.get(url, timeout=5)
+            print(f"[YT Lyrics] Requesting URL: {url}")
+            res = requests.get(url, timeout=20)
+            print(f"[YT Lyrics] Response status: {res.status_code}")
             if res.status_code == 200:
                 data = res.json()
                 if data and len(data) > 0:
-                    return data[0].get('plainLyrics', '')
-        except:
+                    sl = data[0].get('syncedLyrics', '')
+                    pl = data[0].get('plainLyrics', '')
+                    lyrics = sl if sl else pl
+                    if lyrics:
+                        print(f"[YT Lyrics] Found {len(data)} results. Returning lyrics length: {len(lyrics)}")
+                        return lyrics
+                    else:
+                        print(f"[YT Lyrics] Found {len(data)} results, but lyrics are empty!")
+                else:
+                    print(f"[YT Lyrics] No results found from API.")
+            else:
+                print(f"[YT Lyrics] API returned non-200: {res.text}")
+        except Exception as e:
+            print(f"[YT Lyrics] Exception during fetch: {e}")
             pass
+        return None
         return None
         
     data = await loop.run_in_executor(None, do_fetch)
     if data:
         return web.Response(text=data)
+    print(f"[YT Lyrics] Returning 404 Not Found")
     return web.Response(status=404)
 
 # username -> (type, obj)
