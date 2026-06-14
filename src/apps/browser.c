@@ -43,6 +43,9 @@ extern int browser_engine_get_width(void* engine);
 extern int browser_engine_on_mouse(void* engine, int doc_x, int doc_y);
 extern void browser_engine_on_click(void* engine, int doc_x, int doc_y);
 
+extern void winmgr_draw_circle_solid(window_t *win, int cx, int cy, int radius, uint32_t color);
+extern void winmgr_fill_rect_gradient_v(window_t *win, int x, int y, int w, int h, uint32_t top_color, uint32_t bottom_color);
+
 static void* litehtml_engine = 0;
 
 // Page content
@@ -68,10 +71,12 @@ static int browser_updating = 0;
 char status_text[128] = "PureBrowser (FrogFind Enabled)";
 
 // Browser window dimensions
-#define TOOLBAR_H 30
-#define URLBAR_X 80
-#define URLBAR_W 390
-#define CONTENT_Y (TOOLBAR_H + 2)
+// Browser window dimensions
+#define TABBAR_H 40
+#define URLBAR_H 42
+#define BOOKMARK_H 32
+#define TOOLBAR_H (TABBAR_H + URLBAR_H + BOOKMARK_H)
+#define CONTENT_Y TOOLBAR_H
 
 // Simple HTML token types
 #define TOK_TEXT 0
@@ -997,41 +1002,85 @@ static void browser_draw_render_node(window_t *win, render_node_t *node,
 
 static void browser_draw_cb(void *w) {
   window_t *win = (window_t *)w;
-  int cx = 2, cy = 24;
-  int cw = win->width - 4;
+  int cw = win->width;
+  int ch = win->height;
 
-  const theme_t *theme = theme_get();
- 
-  winmgr_fill_rect(win, cx, cy, cw, TOOLBAR_H, theme->titlebar);
-  winmgr_draw_text(win, cx + 7, cy + 10, "<", theme->fg);
-  winmgr_draw_text(win, cx + 33, cy + 10, ">", theme->fg);
-  winmgr_draw_text(win, cx + 55, cy + 10, "R", theme->fg);
+  // Background for the tab bar area
+  winmgr_fill_rect(win, 0, 0, cw, TABBAR_H, 0xFFFFFFFF);
 
-  int ux = cx + URLBAR_X;
-  int uy = cy + 4;
-  winmgr_fill_rect(win, ux, uy, URLBAR_W, 22, theme->input_bg);
-  winmgr_draw_rect(win, ux, uy, URLBAR_W, 22,
-                   url_editing ? theme->accent : theme->border);
-  winmgr_draw_text(win, ux + 4, uy + 7, url_bar, theme->fg);
+  // Draw Tabs
+  int tab_x = 80;
+  // Active Tab
+  winmgr_fill_rect_gradient_v(win, tab_x, 8, 160, 32, 0xFFFFFFFF, 0xFFFFFFFF);
+  winmgr_draw_rounded_rect_ex(win, tab_x, 8, 160, 32, 0xFFFFFFFF, 1, 0xFFE0E0E0, 6);
+  winmgr_draw_text(win, tab_x + 30, 18, "New Tab", 0xFF000000);
+  // Fake favicon
+  winmgr_fill_rect(win, tab_x + 10, 18, 12, 12, 0xFF4285F4); // Blue square
+
+  // Inactive Tab
+  tab_x += 162;
+  winmgr_draw_rounded_rect_ex(win, tab_x, 8, 160, 32, 0xFFF1F3F4, 1, 0xFFE0E0E0, 6);
+  winmgr_draw_text(win, tab_x + 30, 18, "New Tab", 0xFF888888);
+  winmgr_fill_rect(win, tab_x + 10, 18, 12, 12, 0xFF888888); // Gray square
+
+  // Draw URL Bar Row
+  winmgr_fill_rect(win, 0, TABBAR_H, cw, URLBAR_H, 0xFFFFFFFF);
+  winmgr_draw_line(win, 0, TABBAR_H + URLBAR_H - 1, cw, TABBAR_H + URLBAR_H - 1, 0xFFE0E0E0); // Separator
+
+  // Navigation buttons
+  int nav_y = TABBAR_H + 12;
+  winmgr_draw_text(win, 20, nav_y, "<-", 0xFF888888);
+  winmgr_draw_text(win, 50, nav_y, "->", 0xFF888888);
+  winmgr_draw_text(win, 80, nav_y, "R", 0xFF888888);
+  winmgr_draw_text(win, 110, nav_y, "H", 0xFF888888);
+
+  // Address bar
+  int url_x = 140;
+  int url_w = cw - 200;
+  if (url_w < 100) url_w = 100;
+  winmgr_draw_rounded_rect_ex(win, url_x, TABBAR_H + 6, url_w, 30, 0xFFF1F3F4, 1, url_editing ? 0xFF4285F4 : 0xFFE0E0E0, 15);
+  winmgr_draw_text(win, url_x + 12, TABBAR_H + 14, url_bar, 0xFF000000);
+
+  // Star Icon
+  winmgr_draw_text(win, url_x + url_w - 24, TABBAR_H + 14, "*", 0xFFF4B400); // Yellow star
 
   if (is_loading) {
     extern volatile int http_download_progress;
     int progress_bytes = http_download_progress;
     
-    int progress_w = (progress_bytes * (URLBAR_W - 2)) / 131072;
-    if (progress_w > URLBAR_W - 2) progress_w = URLBAR_W - 2;
+    int progress_w = (progress_bytes * (url_w - 20)) / 131072;
+    if (progress_w > url_w - 24) progress_w = url_w - 24;
     if (progress_w < 5 && progress_bytes > 0) progress_w = 5;
     if (progress_bytes == 0) progress_w = 2;
 
-    winmgr_fill_rect(win, ux + 1, uy + 22 - 3, progress_w, 2, theme->accent);
+    winmgr_fill_rect(win, url_x + 10, TABBAR_H + 32, progress_w, 2, 0xFF4285F4);
 
     win->needs_redraw = 1;
     ui_dirty = 1;
   }
 
-  int content_top = cy + CONTENT_Y;
-  int content_h = win->height - 26 - TOOLBAR_H - 20;
-  winmgr_fill_rect(win, cx, content_top, cw, content_h, theme->bg);
+  // Bookmarks Bar Row
+  int bmk_top = TABBAR_H + URLBAR_H;
+  winmgr_fill_rect(win, 0, bmk_top, cw, BOOKMARK_H, 0xFFFFFFFF);
+  winmgr_draw_line(win, 0, bmk_top + BOOKMARK_H - 1, cw, bmk_top + BOOKMARK_H - 1, 0xFFE0E0E0); // Separator
+
+  // Bookmarks
+  int bmk_y = bmk_top + 10;
+  // Wikipedia
+  winmgr_fill_rect(win, 20, bmk_y, 10, 10, 0xFF7BB561); 
+  winmgr_draw_text(win, 36, bmk_y - 2, "Wikipedia", 0xFF333333);
+  
+  // DuckDuckGo
+  winmgr_fill_rect(win, 120, bmk_y, 10, 10, 0xFFDE5833); 
+  winmgr_draw_text(win, 136, bmk_y - 2, "DuckDuckGo", 0xFF333333);
+  
+  // GitHub
+  winmgr_fill_rect(win, 230, bmk_y, 10, 10, 0xFF24292E); 
+  winmgr_draw_text(win, 246, bmk_y - 2, "GitHub", 0xFF333333);
+
+  int content_top = CONTENT_Y;
+  int content_h = ch - content_top;
+  winmgr_fill_rect(win, 0, content_top, cw, content_h, 0xFFFFFFFF);
 
   // Smooth scrolling tick
   anim_tick(&scroll_anim, 0.04f);
@@ -1042,8 +1091,7 @@ static void browser_draw_cb(void *w) {
       ui_dirty = 1;
   }
 
-  int draw_y = content_top + 4 - scroll_y;
-  int content_x = cx + 6;
+  int content_x = 0;
   link_count = 0;
   form_count = 0;
 
@@ -1052,37 +1100,28 @@ static void browser_draw_cb(void *w) {
   int is_updating = browser_updating;
   __asm__ volatile("sti");
 
-  int sy = win->height - 18;
-  winmgr_draw_rect(win, cx, sy, cw, 16, 0xFFDDDDDD);
-  winmgr_draw_text(win, cx + 4, sy + 4, status_text, 0xFF444444);
-  
-  if (is_updating) {
-    return;
-  }
-  
   // Render Litehtml Engine
-  if (litehtml_engine) {
-      if (layout_dirty || cw - 12 != cached_layout_width) {
-          browser_engine_render(litehtml_engine, cw - 12);
-          cached_layout_width = cw - 12;
+  if (!is_updating && litehtml_engine) {
+      if (layout_dirty || cw != cached_layout_width) {
+          browser_engine_render(litehtml_engine, cw);
+          cached_layout_width = cw;
           layout_dirty = 0;
       }
       
-      int content_y_scroll = scroll_y;
-      int doc_height = browser_engine_get_height(litehtml_engine);
-      
-      // Setup temporary surface for hardware backbuffer caching if preferred,
-      // but for simplicity we draw directly with our litehtml container.
-      
-      // Define clipping rect for the content area
       int clip_x = content_x;
       int clip_y = content_top;
-      int clip_w = cw - 12;
+      int clip_w = cw;
       int clip_h = content_h;
       
-      // Draw litehtml document directly to the window surface using our graphics hooks
-      // Notice we draw at Y = content_top - scroll_y
       browser_engine_draw(litehtml_engine, win, content_x, content_top - scroll_y, clip_x, clip_y, clip_w, clip_h);
+  }
+
+  // Draw status bar over content area
+  if (status_text[0] != 0) {
+      int sy = win->height - 24;
+      winmgr_draw_rect(win, 0, sy, cw, 24, 0xFFDDDDDD);
+      winmgr_fill_rect(win, 1, sy + 1, cw - 2, 22, 0xFFF1F3F4);
+      winmgr_draw_text(win, 6, sy + 6, status_text, 0xFF444444);
   }
 }
 
@@ -1141,27 +1180,40 @@ static void browser_key_cb(void *w, int key, char c) {
 
 static void browser_mouse_cb(void *w, int mx, int my, int buttons) {
   window_t *win = (window_t *)w;
-  if (!(buttons & 1))
-    return;
-  if (my >= 24 && my < 54) {
-    if (mx >= URLBAR_X && mx < URLBAR_X + URLBAR_W) {
-      url_editing = 1;
-      ui_dirty = 1;
-      win->needs_redraw = 1;
-      return;
-    }
-    if (mx > URLBAR_X + URLBAR_W) {
-      if (!is_loading) {
-        url_editing = 0;
-        browser_navigate(url_bar);
+  
+  if (buttons & 1) { // Left click
+    // Handle URL bar click
+    int url_x = 140;
+    int url_w = win->width - 200;
+    if (url_w < 100) url_w = 100;
+    if (my >= TABBAR_H && my < TABBAR_H + URLBAR_H) {
+      if (mx >= url_x && mx < url_x + url_w) {
+        url_editing = 1;
+        ui_dirty = 1;
+        win->needs_redraw = 1;
+        return;
       }
-      return;
+      // Click outside URL bar (Star, Navigation)
+      if (mx > url_x + url_w) {
+        if (!is_loading) {
+          url_editing = 0;
+          browser_navigate(url_bar);
+        }
+        return;
+      }
+    }
+    
+    // Handle Bookmarks bar clicks
+    if (my >= TABBAR_H + URLBAR_H && my < CONTENT_Y) {
+      if (mx >= 20 && mx < 100) { browser_navigate("https://www.wikipedia.org"); return; }
+      if (mx >= 120 && mx < 200) { browser_navigate("https://duckduckgo.com"); return; }
+      if (mx >= 230 && mx < 300) { browser_navigate("https://github.com"); return; }
     }
   }
+
   // Translate screen coords to litehtml document coords
-  // content_x = cx(2) + 6 = 8,  content_top = cy(24) + CONTENT_Y(32) = 56
-  int content_x_off = 2 + 6;
-  int content_top_off = 24 + CONTENT_Y;
+  int content_x_off = 0;
+  int content_top_off = CONTENT_Y;
   int doc_x = mx - content_x_off;
   int doc_y = my - content_top_off + scroll_y;
 
@@ -1272,7 +1324,7 @@ void browser_init(void) {
   js_init();
   anim_init_val(&scroll_anim, 0.0f);
   print_serial("BROWSER: JS init done\n");
-  browser_win = winmgr_create_window(-1, -1, 850, 650, "PureBrowser");
+  browser_win = winmgr_create_window(-1, -1, 1000, 700, "PureBrowser");
   print_serial("BROWSER: Window created\n");
   if (!browser_win)
     return;
@@ -1284,6 +1336,8 @@ void browser_init(void) {
   win->on_close = browser_on_close;
   win->app_type = 7;
   win->bg_color = 0xFFFFFF;
+  // Enable modern custom frameless UI
+  win->flags |= 0x01; // WINDOW_FLAG_NO_TITLEBAR
   win->needs_redraw = 1;
   browser_set_home();
   print_serial("BROWSER: Home set, parsing...\n");
