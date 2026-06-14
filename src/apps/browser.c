@@ -1237,12 +1237,22 @@ static void browser_mouse_cb(void *w, int mx, int my, int buttons) {
 
   // Hover state update (CSS :hover, :focus)
   if (litehtml_engine && doc_y >= 0) {
-      if (browser_engine_on_mouse(litehtml_engine, doc_x, doc_y)) {
-          // If hover state changed, we just need a redraw (not a full relayout)
-          // Since litehtml on_mouse_over does not recompute layout, we must trigger layout to apply CSS pseudo-classes
-          layout_dirty = 1; 
-          ui_dirty = 1;
-          win->needs_redraw = 1;
+      static int last_hover_x = -1000;
+      static int last_hover_y = -1000;
+      int dx = doc_x - last_hover_x;
+      int dy = doc_y - last_hover_y;
+      
+      // Only perform expensive hit-testing if the mouse moved more than 5 pixels
+      if (dx * dx + dy * dy > 25) {
+          last_hover_x = doc_x;
+          last_hover_y = doc_y;
+          if (browser_engine_on_mouse(litehtml_engine, doc_x, doc_y)) {
+              // If hover state changed, we just need a redraw (not a full relayout)
+              // Since litehtml on_mouse_over does not recompute layout, we must trigger layout to apply CSS pseudo-classes
+              layout_dirty = 1; 
+              ui_dirty = 1;
+              win->needs_redraw = 1;
+          }
       }
   }
 
