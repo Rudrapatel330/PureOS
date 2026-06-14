@@ -5,6 +5,97 @@ from aiohttp import web, WSCloseCode
 TCP_PORT = 7860
 HTTP_WS_PORT = 7862
 
+import urllib.parse
+import traceback
+import subprocess
+import os
+
+async def handle_ytsearch(request):
+    query = request.query.get('q', '')
+    print(f"[YT Search] Received query: '{query}'")
+    if not query:
+        return web.Response(text="")
+        
+    try:
+        import yt_dlp
+        ydl_opts = {
+            'quiet': True,
+            'extract_flat': 'in_playlist',
+            'dump_single_json': True,
+            'simulate': True
+        }
+        loop = asyncio.get_event_loop()
+        def do_req():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(f"ytsearch15:{query}", download=False)
+        info = await loop.run_in_executor(None, do_req)
+        out = []
+        for entry in info.get('entries', []):
+            title = entry.get('title')
+            videoId = entry.get('id')
+            if title and videoId:
+                title = title.replace('|', '-')
+                out.append(f"{title}|{videoId}")
+        return web.Response(text="\n".join(out))
+    except Exception as e:
+        traceback.print_exc()
+        return web.Response(text="Error")
+
+async def handle_ytplay(request):
+    vid = request.query.get('id', '')
+    print(f"[YT Play] Requested streaming for video ID: '{vid}'")
+    if not vid:
+        return web.Response(status=400)
+    
+    import uuid
+    loop = asyncio.get_event_loop()
+    def do_download():
+        unique_id = uuid.uuid4().hex
+        fname = f"temp_{vid}_{unique_id}.mp3"
+        subprocess.run(["yt-dlp", "-x", "--audio-format", "mp3", "--audio-quality", "5", "-o", fname, f"https://www.youtube.com/watch?v={vid}"], check=False)
+        if os.path.exists(fname):
+            try:
+                with open(fname, "rb") as f:
+                    d = f.read()
+                os.remove(fname)
+                return d
+            except Exception as e:
+                print(f"Error reading/removing {fname}: {e}")
+                return None
+        return None
+        
+    data = await loop.run_in_executor(None, do_download)
+    if data:
+        return web.Response(body=data, content_type="audio/mpeg")
+    return web.Response(status=500)
+
+async def handle_ytthumb(request):
+    vid = request.query.get('id', '')
+    if not vid:
+        return web.Response(status=400)
+    
+    url = f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"
+    import requests
+    loop = asyncio.get_event_loop()
+    def do_fetch():
+        try:
+            res = requests.get(url, timeout=5)
+            if res.status_code == 200:
+                return res.content
+            # Fallback to default
+            res = requests.get(f"https://i.ytimg.com/vi/{vid}/default.jpg", timeout=5)
+            if res.status_code == 200:
+                return res.content
+        except:
+            pass
+        return None
+        
+    data = await loop.run_in_executor(None, do_fetch)
+    if data:
+        return web.Response(body=data, content_type="image/jpeg")
+    return web.Response(status=404)
+
+
 # username -> (type, obj)
 clients = {}
 os_phone_state = 'IDLE'
@@ -432,7 +523,13 @@ async def handle_index(request):
 async def main():
     tcp_server = await asyncio.start_server(handle_tcp, '0.0.0.0', TCP_PORT)
     app = web.Application()
-    app.add_routes([web.get('/', handle_index), web.get('/ws', handle_ws_route)])
+    app.add_routes([
+        web.get('/', handle_index), 
+        web.get('/ws', handle_ws_route),
+        web.get('/ytsearch', handle_ytsearch),
+        web.get('/ytplay', handle_ytplay),
+        web.get('/ytthumb', handle_ytthumb)
+    ])
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', HTTP_WS_PORT)

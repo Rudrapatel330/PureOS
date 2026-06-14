@@ -186,8 +186,17 @@ int http_get(const char *url, char *response, int max_len) {
     print_serial("HTTP: Using proxy\n");
   } else {
     // Direct connection
-    target_ip = dns_resolve(host);
     target_port = 80;
+    char *colon = strchr(host, ':');
+    if (colon) {
+        *colon = 0;
+        int pt = 0;
+        for (char *c = colon + 1; *c >= '0' && *c <= '9'; c++) {
+             pt = pt * 10 + (*c - '0');
+        }
+        if (pt > 0) target_port = pt;
+    }
+    target_ip = dns_resolve(host);
     if (target_ip == 0) {
       print_serial("HTTP: DNS failed for ");
       print_serial(host);
@@ -670,6 +679,17 @@ int http_post(const char *url, const char *post_data, int post_len,
   print_serial(path);
   print_serial("\n");
 
+  int target_port = is_https ? 443 : 80;
+  char *colon = strchr(host, ':');
+  if (colon) {
+      *colon = 0;
+      int pt = 0;
+      for (char *c = colon + 1; *c >= '0' && *c <= '9'; c++) {
+           pt = pt * 10 + (*c - '0');
+      }
+      if (pt > 0) target_port = pt;
+  }
+
   uint32_t ip = dns_resolve(host);
   if (ip == 0) {
     print_serial("HTTP POST: DNS failed\n");
@@ -728,7 +748,7 @@ int http_post(const char *url, const char *post_data, int post_len,
     tcp_conn_t *conn = kmalloc(sizeof(tcp_conn_t));
     if (!conn)
       return -1;
-    if (tcp_connect(conn, ip, 80) != 0) {
+    if (tcp_connect(conn, ip, target_port) != 0) {
       tcp_close(conn);
       kfree(conn);
       return -3;

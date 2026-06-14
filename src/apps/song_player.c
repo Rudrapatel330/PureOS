@@ -44,6 +44,12 @@ typedef struct {
     
     int show_now_playing;
     animation_t now_playing_anim;
+    
+    char search_query[64];
+    int search_cursor;
+    int is_searching;
+    int search_focused;
+    int yt_fetching;
 } song_app_t;
 
 window_t *song_player_win = 0;
@@ -115,6 +121,135 @@ static uint32_t *load_cover_image(const char *filename, int *w, int *h) {
     return argb;
 }
 
+static void load_local_songs(song_app_t *app) {
+    app->song_count = 0;
+    FileInfo list[64];
+    fs_list_files("/", list, 64);
+    for (int i = 0; i < 64 && app->song_count < MAX_SONGS; i++) {
+        if (list[i].name[0] == 0) continue;
+        if (strstr(list[i].name, ".MP3") || strstr(list[i].name, ".mp3")) {
+            strcpy(app->songs[app->song_count].filename_mp3, list[i].name);
+            strcpy(app->songs[app->song_count].title, list[i].name);
+            char *dot = strstr(app->songs[app->song_count].title, ".");
+            if (dot) *dot = 0;
+            strcpy(app->songs[app->song_count].filename_png, app->songs[app->song_count].title);
+            strcat(app->songs[app->song_count].filename_png, ".PNG");
+            app->songs[app->song_count].cover_img = load_cover_image(app->songs[app->song_count].filename_png, &app->songs[app->song_count].cover_w, &app->songs[app->song_count].cover_h);
+            app->song_count++;
+        }
+    }
+}
+
+static char search_query_global[64];
+static void yt_search_thread(void) {
+    char url[256];
+    strcpy(url, "http://10.0.2.2:7862/ytsearch?q=");
+    int j = strlen(url);
+    for (int i = 0; search_query_global[i] && j < 255; i++) {
+        if (search_query_global[i] == ' ') url[j++] = '+';
+        else url[j++] = search_query_global[i];
+    }
+    url[j] = 0;
+    
+    char *res = kmalloc(32768);
+    if (res && song_player_win) {
+        extern int http_get(const char*, char*, int);
+        int len = http_get(url, res, 32767);
+        if (len > 0) {
+            res[len] = 0;
+            song_app_t *app = get_app(song_player_win);
+            if (app) {
+                app->song_count = 0;
+                char *line = res;
+                while (line && *line && app->song_count < MAX_SONGS) {
+                    char *next = strchr(line, '\n');
+                    if (next) *next = 0;
+                    char *sep = strchr(line, '|');
+                    if (sep) {
+                        *sep = 0;
+                        strncpy(app->songs[app->song_count].title, line, 63);
+                        app->songs[app->song_count].title[63] = 0;
+                        strcpy(app->songs[app->song_count].filename_mp3, "yt:");
+                        strncat(app->songs[app->song_count].filename_mp3, sep + 1, 12);
+                        app->songs[app->song_count].filename_mp3[15] = 0;
+                        app->songs[app->song_count].cover_img = 0;
+                        app->song_count++;
+                    }
+                    if (next) line = next + 1;
+                    else break;
+                }
+                app->yt_fetching = 0;
+                song_player_win->needs_redraw = 1;
+                extern int ui_dirty; ui_dirty = 1;
+
+                // Download thumbnails progressively
+                for (int i = 0; i < app->song_count; i++) {
+                    if (strncmp(app->songs[i].filename_mp3, "yt:", 3) == 0 && !app->songs[i].cover_img) {
+                        char thumb_url[256];
+                        strcpy(thumb_url, "http://10.0.2.2:7862/ytthumb?id=");
+                        strncat(thumb_url, app->songs[i].filename_mp3 + 3, 20);
+                        
+                        char *tdata = kmalloc(150000); // 150KB should be plenty for mqdefault.jpg
+                        if (tdata) {
+                            int tlen = http_get(thumb_url, tdata, 149999);
+                            if (tlen > 0) {
+                                int w, h, channels;
+                                uint8_t *img = stbi_load_from_memory((uint8_t*)tdata, tlen, &w, &h, &channels, 4);
+                                if (img) {
+                                    int total_pixels = w * h;
+                                    uint32_t *argb = (uint32_t *)kmalloc(total_pixels * 4);
+                                    if (argb) {
+                                        for (int p = 0; p < total_pixels; p++) {
+                                            uint8_t r = img[p*4 + 0];
+                                            uint8_t g = img[p*4 + 1];
+                                            uint8_t b = img[p*4 + 2];
+                                            uint8_t a = img[p*4 + 3];
+                                            argb[p] = (a << 24) | (r << 16) | (g << 8) | b;
+                                        }
+                                        app->songs[i].cover_img = argb;
+                                        app->songs[i].cover_w = w;
+                                        app->songs[i].cover_h = h;
+                                        song_player_win->needs_redraw = 1;
+                                        ui_dirty = 1;
+                                    }
+                                    stbi_image_free(img);
+                                }
+                            }
+                            kfree(tdata);
+                        }
+                    }
+                }
+            }
+        }
+        kfree(res);
+    }
+    if (song_player_win) {
+        song_app_t *app = get_app(song_player_win);
+        if (app) app->yt_fetching = 0;
+    }
+    extern void exit(int status);
+    exit(0);
+}
+
+static char yt_fetch_vid[64];
+static void yt_play_thread(void) {
+    char url[256];
+    strcpy(url, "http://10.0.2.2:7862/ytplay?id=");
+    strcat(url, yt_fetch_vid);
+    int max_size = 5000000;
+    uint8_t *fdata = kmalloc(max_size);
+    if (fdata) {
+        extern int http_get(const char*, char*, int);
+        int rs = http_get(url, (char*)fdata, max_size);
+        if (rs > 0) {
+            mp3_play(fdata, rs);
+        }
+        kfree(fdata);
+    }
+    extern void exit(int status);
+    exit(0);
+}
+
 static void song_stretch_blit(window_t *win, int dx, int dy, int dw, int dh, const uint32_t *src, int sw, int sh) {
     if (!src || dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
     for (int y = 0; y < dh; y++) {
@@ -138,8 +273,8 @@ static void draw_sidebar(window_t *win, song_app_t *app) {
     winmgr_fill_rect(win, 0, 0, sw, sh, COL_SP_SIDEBAR);
     
     // Top Nav with subtle highlighting
-    winmgr_draw_text(win, 30, 30, "Home", COL_SP_TEXT_WHT);
-    winmgr_draw_text(win, 30, 65, "Search", COL_SP_TEXT_MUTED);
+    winmgr_draw_text(win, 30, 30, "Home", (app->is_searching == 0) ? COL_SP_TEXT_WHT : COL_SP_TEXT_MUTED);
+    winmgr_draw_text(win, 30, 65, "Search", (app->is_searching == 1) ? COL_SP_TEXT_WHT : COL_SP_TEXT_MUTED);
     
     // Elegant divider
     winmgr_draw_rounded_rect_ex(win, 20, 110, sw - 40, 2, 0xFF282828, 0, 0, 1);
@@ -149,7 +284,7 @@ static void draw_sidebar(window_t *win, song_app_t *app) {
     // Song list in sidebar (Scrollable looking)
     int y = 180;
     
-    if (app->song_count == 0) {
+    if (app->song_count == 0 && app->is_searching == 0) {
          winmgr_draw_text(win, 30, y, "No songs found in OS.", COL_SP_TEXT_MUTED);
          winmgr_draw_text(win, 30, y + 20, "Add to Songs/ folder", COL_SP_TEXT_MUTED);
     }
@@ -174,7 +309,7 @@ static void draw_sidebar(window_t *win, song_app_t *app) {
         if (strlen(app->songs[i].title) > 20) strcat(display_title, "...");
         
         winmgr_draw_text(win, 80, y + 5, display_title, t_color);
-        winmgr_draw_text(win, 80, y + 25, "Song • PureOS", COL_SP_TEXT_MUTED);
+        winmgr_draw_text(win, 80, y + 25, strncmp(app->songs[i].filename_mp3, "yt:", 3) == 0 ? "YT Music" : "Song • PureOS", COL_SP_TEXT_MUTED);
         
         y += 65;
         if (y > sh - 60) break;
@@ -199,67 +334,81 @@ static void draw_main_area(window_t *win, song_app_t *app) {
     }
     winmgr_fill_rect(win, mx, 350, mw, mh - 350, COL_SP_BG);
     
-    // Greeting
-    winmgr_draw_text(win, mx + 40, 40, "Good evening", COL_SP_TEXT_WHT);
+    // Draw Permanent Search Bar at top center
+    int search_w = 400;
+    int search_x = (win->width - search_w) / 2;
+    int search_y = 20;
     
-    // Top 6 recent items
-    // If we have songs, we use them, otherwise we use beautiful placeholder data
-    const char* mock_mixes[] = {"Pop Mix", "Chill Vibes", "Daily Mix 1", "2010s Hits", "Lofi Beats", "Discover Weekly"};
-    uint32_t mock_colors[] = {0xFFE91E63, 0xFF4FC3F7, 0xFFFFC107, 0xFF9C27B0, 0xFF00BCD4, 0xFF4CAF50};
-    
-    for (int i = 0; i < 6; i++) {
-        int r = i / 2;
-        int c = i % 2;
-        int cx = mx + 40 + c * 340;
-        int cy = 90 + r * 80;
-        
-        winmgr_draw_rounded_rect_ex(win, cx, cy, 310, 64, 0xFF282828, 0, 0, 6); // Card background
-        
-        // Use actual song data if available
-        if (i < app->song_count) {
-             if (app->songs[i].cover_img) {
-                 // Thumbnail
-                 song_stretch_blit(win, cx, cy, 64, 64, app->songs[i].cover_img, app->songs[i].cover_w, app->songs[i].cover_h);
-             } else {
-                 winmgr_draw_rounded_rect_ex(win, cx, cy, 64, 64, mock_colors[i], 0, 0, 6);
-                 winmgr_fill_rect(win, cx + 58, cy, 6, 64, mock_colors[i]); // Straighten right edge
-             }
-             
-             char disp[32];
-             strncpy(disp, app->songs[i].title, 28); disp[28] = 0;
-             winmgr_draw_text(win, cx + 80, cy + 24, disp, COL_SP_TEXT_WHT);
-        } else {
-             // Mock Data
-             winmgr_draw_rounded_rect_ex(win, cx, cy, 64, 64, mock_colors[i], 0, 0, 6);
-             winmgr_fill_rect(win, cx + 58, cy, 6, 64, mock_colors[i]); // Straighten right edge
-             winmgr_draw_text(win, cx + 80, cy + 24, mock_mixes[i], COL_SP_TEXT_WHT);
-        }
+    winmgr_draw_rounded_rect_ex(win, search_x, search_y, search_w, 40, 0xFF333333, 0, 0, 20);
+    winmgr_draw_text(win, search_x + 20, search_y + 12, app->search_query, COL_SP_TEXT_WHT);
+    if (app->search_focused) {
+        int q_len = strlen(app->search_query);
+        winmgr_draw_rect(win, search_x + 20 + q_len * 8, search_y + 10, 2, 20, COL_SP_TEXT_WHT);
     }
-    
-    // "Made for You" or "Your Songs"
-    winmgr_draw_text(win, mx + 40, 360, (app->song_count > 0) ? "Your Songs" : "Made for You", COL_SP_TEXT_WHT);
-    
-    int list_count = (app->song_count > 0) ? app->song_count : 5;
-    for (int i = 0; i < list_count && i < 5; i++) {
-        int cx = mx + 40 + i * 170;
-        int cy = 410;
+    if (app->yt_fetching) {
+         winmgr_draw_text(win, search_x + search_w + 20, search_y + 12, "Searching...", COL_SP_TEXT_MUTED);
+    }
+    if (strlen(app->search_query) == 0 && !app->search_focused) {
+         winmgr_draw_text(win, search_x + 20, search_y + 12, "Search YouTube Music", COL_SP_TEXT_MUTED);
+    }
+
+    if (!app->is_searching) {
+        // Greeting
+        winmgr_draw_text(win, mx + 40, 80, "Good evening", COL_SP_TEXT_WHT);
         
-        winmgr_draw_rounded_rect_ex(win, cx, cy, 150, 220, COL_SP_CARD, 0, 0, 8);
+        // Top 6 recent items
+        const char* mock_mixes[] = {"Pop Mix", "Chill Vibes", "Daily Mix 1", "2010s Hits", "Lofi Beats", "Discover Weekly"};
+        uint32_t mock_colors[] = {0xFFE91E63, 0xFF4FC3F7, 0xFFFFC107, 0xFF9C27B0, 0xFF00BCD4, 0xFF4CAF50};
         
-        if (i < app->song_count) {
-            if (app->songs[i].cover_img) {
-                 song_stretch_blit(win, cx + 15, cy + 15, 120, 120, app->songs[i].cover_img, app->songs[i].cover_w, app->songs[i].cover_h);
+        for (int i = 0; i < 6; i++) {
+            int r = i / 2;
+            int c = i % 2;
+            int cx = mx + 40 + c * 340;
+            int cy = 130 + r * 80;
+            
+            winmgr_draw_rounded_rect_ex(win, cx, cy, 310, 64, 0xFF282828, 0, 0, 6); // Card background
+            
+            if (i < app->song_count) {
+                 if (app->songs[i].cover_img) {
+                     song_stretch_blit(win, cx, cy, 64, 64, app->songs[i].cover_img, app->songs[i].cover_w, app->songs[i].cover_h);
+                 } else {
+                     winmgr_draw_rounded_rect_ex(win, cx, cy, 64, 64, mock_colors[i], 0, 0, 6);
+                     winmgr_fill_rect(win, cx + 58, cy, 6, 64, mock_colors[i]);
+                 }
+                 char disp[32];
+                 strncpy(disp, app->songs[i].title, 28); disp[28] = 0;
+                 winmgr_draw_text(win, cx + 80, cy + 24, disp, COL_SP_TEXT_WHT);
             } else {
-                 winmgr_draw_rounded_rect_ex(win, cx + 15, cy + 15, 120, 120, mock_colors[i], 0, 0, 8);
+                 winmgr_draw_rounded_rect_ex(win, cx, cy, 64, 64, mock_colors[i], 0, 0, 6);
+                 winmgr_fill_rect(win, cx + 58, cy, 6, 64, mock_colors[i]);
+                 winmgr_draw_text(win, cx + 80, cy + 24, mock_mixes[i], COL_SP_TEXT_WHT);
             }
-            char disp[20];
-            strncpy(disp, app->songs[i].title, 16); disp[16] = 0;
-            winmgr_draw_text(win, cx + 15, cy + 155, disp, COL_SP_TEXT_WHT);
-            winmgr_draw_text(win, cx + 15, cy + 180, "PureOS Audio", COL_SP_TEXT_MUTED);
-        } else {
-            winmgr_draw_rounded_rect_ex(win, cx + 15, cy + 15, 120, 120, mock_colors[i], 0, 0, 8);
-            winmgr_draw_text(win, cx + 15, cy + 155, mock_mixes[i], COL_SP_TEXT_WHT);
-            winmgr_draw_text(win, cx + 15, cy + 180, "Daily Mix", COL_SP_TEXT_MUTED);
+        }
+        
+        winmgr_draw_text(win, mx + 40, 400, (app->song_count > 0) ? "Your Songs" : "Made for You", COL_SP_TEXT_WHT);
+        
+        int list_count = (app->song_count > 0) ? app->song_count : 5;
+        for (int i = 0; i < list_count && i < 5; i++) {
+            int cx = mx + 40 + i * 170;
+            int cy = 450;
+            
+            winmgr_draw_rounded_rect_ex(win, cx, cy, 150, 220, COL_SP_CARD, 0, 0, 8);
+            
+            if (i < app->song_count) {
+                if (app->songs[i].cover_img) {
+                     song_stretch_blit(win, cx + 15, cy + 15, 120, 120, app->songs[i].cover_img, app->songs[i].cover_w, app->songs[i].cover_h);
+                } else {
+                     winmgr_draw_rounded_rect_ex(win, cx + 15, cy + 15, 120, 120, mock_colors[i], 0, 0, 8);
+                }
+                char disp[20];
+                strncpy(disp, app->songs[i].title, 16); disp[16] = 0;
+                winmgr_draw_text(win, cx + 15, cy + 155, disp, COL_SP_TEXT_WHT);
+                winmgr_draw_text(win, cx + 15, cy + 180, "PureOS Audio", COL_SP_TEXT_MUTED);
+            } else {
+                winmgr_draw_rounded_rect_ex(win, cx + 15, cy + 15, 120, 120, mock_colors[i], 0, 0, 8);
+                winmgr_draw_text(win, cx + 15, cy + 155, mock_mixes[i], COL_SP_TEXT_WHT);
+                winmgr_draw_text(win, cx + 15, cy + 180, "Daily Mix", COL_SP_TEXT_MUTED);
+            }
         }
     }
 }
@@ -690,9 +839,39 @@ void song_handle_mouse(window_t *win, int mx, int my, int buttons) {
             if (new_hover_idx >= app->song_count) new_hover_idx = -1;
         }
         
-        // Main Area Card check
-        if (mx >= 280 && mx <= 430 && my >= 360 && my <= 530) {
-            if (app->song_count > 0) new_hover_idx = 0; // The first card
+        // Sidebar nav
+        if (mx >= 10 && mx <= 200 && my >= 20 && my <= 50) {
+            if (buttons & 1) { 
+                app->is_searching = 0; 
+                load_local_songs(app); 
+            }
+        }
+        if (mx >= 10 && mx <= 200 && my >= 55 && my <= 85) {
+            if (buttons & 1) { 
+                app->is_searching = 1; 
+                app->search_focused = 1;
+                app->song_count = 0; 
+            }
+        }
+        
+        int search_w = 400;
+        int search_x = (win->width - search_w) / 2;
+        int search_y = 20;
+        
+        if (mx >= search_x && mx <= search_x + search_w && my >= search_y && my <= search_y + 40) {
+            if (buttons & 1) {
+                app->is_searching = 1;
+                app->search_focused = 1;
+            }
+        } else if (buttons & 1) {
+            app->search_focused = 0;
+        }
+
+        if (!app->is_searching) {
+            // Main Area Card check
+            if (mx >= 280 && mx <= 430 && my >= 400 && my <= 570) {
+                if (app->song_count > 0) new_hover_idx = 0;
+            }
         }
         
         // Bottom bar controls
@@ -737,23 +916,34 @@ void song_handle_mouse(window_t *win, int mx, int my, int buttons) {
             app->is_playing = 1;
             
             // Trigger playback
-            int fsize = 0;
-            uint8_t *fdata = song_read_file(app->songs[app->current_song_idx].filename_mp3, &fsize);
-            if (fdata) {
-                mp3_play(fdata, fsize);
-                kfree(fdata);
+            if (strncmp(app->songs[app->current_song_idx].filename_mp3, "yt:", 3) == 0) {
+                strcpy(yt_fetch_vid, app->songs[app->current_song_idx].filename_mp3 + 3);
+                extern void* create_task(void (*entry)(), char *name);
+                create_task(yt_play_thread, "YTPlay");
+            } else {
+                int fsize = 0;
+                uint8_t *fdata = song_read_file(app->songs[app->current_song_idx].filename_mp3, &fsize);
+                if (fdata) {
+                    mp3_play(fdata, fsize);
+                    kfree(fdata);
+                }
             }
             
             winmgr_invalidate_rect(win, 0, 0, win->width, win->height);
         } else if (app->hover_btn == 2) {
             app->is_playing = !app->is_playing;
             if (app->is_playing) {
-                // Replay
-                int fsize = 0;
-                uint8_t *fdata = song_read_file(app->songs[app->current_song_idx].filename_mp3, &fsize);
-                if (fdata) {
-                    mp3_play(fdata, fsize);
-                    kfree(fdata);
+                if (strncmp(app->songs[app->current_song_idx].filename_mp3, "yt:", 3) == 0) {
+                    strcpy(yt_fetch_vid, app->songs[app->current_song_idx].filename_mp3 + 3);
+                    extern void* create_task(void (*entry)(), char *name);
+                    create_task(yt_play_thread, "YTPlay");
+                } else {
+                    int fsize = 0;
+                    uint8_t *fdata = song_read_file(app->songs[app->current_song_idx].filename_mp3, &fsize);
+                    if (fdata) {
+                        mp3_play(fdata, fsize);
+                        kfree(fdata);
+                    }
                 }
             } else {
                 mp3_stop();
@@ -762,24 +952,59 @@ void song_handle_mouse(window_t *win, int mx, int my, int buttons) {
         } else if (app->hover_btn == 1) {
             if (app->current_song_idx > 0) app->current_song_idx--;
             app->is_playing = 1;
-            int fsize = 0;
-            uint8_t *fdata = song_read_file(app->songs[app->current_song_idx].filename_mp3, &fsize);
-            if (fdata) {
-                mp3_play(fdata, fsize);
-                kfree(fdata);
+            if (strncmp(app->songs[app->current_song_idx].filename_mp3, "yt:", 3) == 0) {
+                strcpy(yt_fetch_vid, app->songs[app->current_song_idx].filename_mp3 + 3);
+                extern void* create_task(void (*entry)(), char *name);
+                create_task(yt_play_thread, "YTPlay");
+            } else {
+                int fsize = 0;
+                uint8_t *fdata = song_read_file(app->songs[app->current_song_idx].filename_mp3, &fsize);
+                if (fdata) {
+                    mp3_play(fdata, fsize);
+                    kfree(fdata);
+                }
             }
             winmgr_invalidate_rect(win, 0, 0, win->width, win->height);
         } else if (app->hover_btn == 3) {
             if (app->current_song_idx < app->song_count - 1) app->current_song_idx++;
             app->is_playing = 1;
-            int fsize = 0;
-            uint8_t *fdata = song_read_file(app->songs[app->current_song_idx].filename_mp3, &fsize);
-            if (fdata) {
-                mp3_play(fdata, fsize);
-                kfree(fdata);
+            if (strncmp(app->songs[app->current_song_idx].filename_mp3, "yt:", 3) == 0) {
+                strcpy(yt_fetch_vid, app->songs[app->current_song_idx].filename_mp3 + 3);
+                extern void* create_task(void (*entry)(), char *name);
+                create_task(yt_play_thread, "YTPlay");
+            } else {
+                int fsize = 0;
+                uint8_t *fdata = song_read_file(app->songs[app->current_song_idx].filename_mp3, &fsize);
+                if (fdata) {
+                    mp3_play(fdata, fsize);
+                    kfree(fdata);
+                }
             }
             winmgr_invalidate_rect(win, 0, 0, win->width, win->height);
         }
+    }
+}
+
+void song_handle_key(window_t *win, int key, char ascii) {
+    song_app_t *app = get_app(win);
+    if (!app || !app->search_focused) return;
+    
+    if (key == 0x0E || ascii == '\b') {
+        if (app->search_cursor > 0) {
+            app->search_query[--app->search_cursor] = 0;
+            win->needs_redraw = 1;
+        }
+    } else if (key == 0x1C || ascii == '\n' || ascii == '\r') {
+        app->search_focused = 0;
+        app->yt_fetching = 1;
+        strcpy(search_query_global, app->search_query);
+        win->needs_redraw = 1;
+        extern void* create_task(void (*entry)(), char *name);
+        create_task(yt_search_thread, "YTSearch");
+    } else if (ascii >= 32 && ascii <= 126 && app->search_cursor < 63) {
+        app->search_query[app->search_cursor++] = ascii;
+        app->search_query[app->search_cursor] = 0;
+        win->needs_redraw = 1;
     }
 }
 
@@ -818,35 +1043,11 @@ void song_app_init() {
     
     win->draw = (void (*)(void *))song_draw;
     win->on_mouse = (void (*)(void *, int, int, int))song_handle_mouse;
+    win->on_key = (void (*)(void *, int, char))song_handle_key;
     win->on_close = song_on_close;
     
     // Scan for MP3s in root directory
-    FileInfo list[64];
-    int count = 0;
-    fs_list_files("/", list, 64);
-    
-    for (int i = 0; i < 64 && count < MAX_SONGS; i++) {
-        if (list[i].name[0] == 0) continue;
-        if (strstr(list[i].name, ".MP3") || strstr(list[i].name, ".mp3")) {
-            // Copy filename
-            strcpy(app->songs[count].filename_mp3, list[i].name);
-            
-            // Derive title
-            strcpy(app->songs[count].title, list[i].name);
-            char *dot = strstr(app->songs[count].title, ".");
-            if (dot) *dot = 0; // Strip extension
-            
-            // Derive cover filename
-            strcpy(app->songs[count].filename_png, app->songs[count].title);
-            strcat(app->songs[count].filename_png, ".PNG");
-            
-            // Load cover if exists
-            app->songs[count].cover_img = load_cover_image(app->songs[count].filename_png, &app->songs[count].cover_w, &app->songs[count].cover_h);
-            
-            count++;
-        }
-    }
-    app->song_count = count;
+    load_local_songs(app);
     
     winmgr_invalidate_rect(win, 0, 0, win->width, win->height);
 }
