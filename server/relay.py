@@ -95,6 +95,29 @@ async def handle_ytthumb(request):
         return web.Response(body=data, content_type="image/jpeg")
     return web.Response(status=404)
 
+async def handle_ytlyrics(request):
+    q = request.query.get('q', '')
+    if not q:
+        return web.Response(status=400)
+    
+    url = f"https://lrclib.net/api/search?q={q}"
+    import requests
+    loop = asyncio.get_event_loop()
+    def do_fetch():
+        try:
+            res = requests.get(url, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data and len(data) > 0:
+                    return data[0].get('plainLyrics', '')
+        except:
+            pass
+        return None
+        
+    data = await loop.run_in_executor(None, do_fetch)
+    if data:
+        return web.Response(text=data)
+    return web.Response(status=404)
 
 # username -> (type, obj)
 clients = {}
@@ -528,7 +551,8 @@ async def main():
         web.get('/ws', handle_ws_route),
         web.get('/ytsearch', handle_ytsearch),
         web.get('/ytplay', handle_ytplay),
-        web.get('/ytthumb', handle_ytthumb)
+        web.get('/ytthumb', handle_ytthumb),
+        web.get('/ytlyrics', handle_ytlyrics)
     ])
     runner = web.AppRunner(app)
     await runner.setup()

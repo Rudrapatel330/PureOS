@@ -51,6 +51,10 @@ typedef struct {
     int search_focused;
     int yt_fetching;
     int yt_loading_audio;
+    
+    char lyrics_text[8192];
+    int lyrics_loaded; // 0=none, 1=loading, 2=loaded, -1=failed
+    float lyrics_scroll_y;
 } song_app_t;
 
 window_t *song_player_win = 0;
@@ -232,6 +236,50 @@ static void yt_search_thread(void) {
     exit(0);
 }
 
+static char lyrics_fetch_title[128];
+static void lyrics_fetch_thread(void) {
+    if (song_player_win) {
+        song_app_t *app = (song_app_t *)song_player_win->user_data;
+        if (app) app->lyrics_loaded = 1;
+        song_player_win->needs_redraw = 1;
+        extern int ui_dirty; ui_dirty = 1;
+    }
+
+    char url[512];
+    strcpy(url, "http://10.0.2.2:7862/ytlyrics?q=");
+    int j = strlen(url);
+    for (int i = 0; lyrics_fetch_title[i] && j < 511; i++) {
+        if (lyrics_fetch_title[i] == ' ') url[j++] = '+';
+        else url[j++] = lyrics_fetch_title[i];
+    }
+    url[j] = 0;
+    
+    char *ldata = kmalloc(8192);
+    if (ldata) {
+        extern int http_get(const char*, char*, int);
+        int len = http_get(url, ldata, 8191);
+        if (song_player_win) {
+            song_app_t *app = (song_app_t *)song_player_win->user_data;
+            if (app) {
+                if (len > 0) {
+                    ldata[len] = 0;
+                    strncpy(app->lyrics_text, ldata, 8191);
+                    app->lyrics_text[8191] = 0;
+                    app->lyrics_loaded = 2;
+                } else {
+                    app->lyrics_loaded = -1;
+                }
+                app->lyrics_scroll_y = 0;
+                song_player_win->needs_redraw = 1;
+                extern int ui_dirty; ui_dirty = 1;
+            }
+        }
+        kfree(ldata);
+    }
+    extern void exit(int status);
+    exit(0);
+}
+
 static char yt_fetch_vid[64];
 static void yt_play_thread(void) {
     if (song_player_win) {
@@ -369,8 +417,45 @@ static void draw_main_area(window_t *win, song_app_t *app) {
     }
 
     if (!app->is_searching) {
-        // Greeting
-        winmgr_draw_text(win, mx + 40, 80, "Good evening", COL_SP_TEXT_WHT);
+        if (app->is_playing || app->current_song_idx != -1) {
+            // Draw lyrics
+            if (app->lyrics_loaded == 2) {
+                int max_y = win->height - 100;
+                int start_y = 100 + (int)app->lyrics_scroll_y;
+                char *line = app->lyrics_text;
+                int current_y = start_y;
+                
+                while (line && *line) {
+                    char *next = strchr(line, '\n');
+                    if (next) *next = 0;
+                    
+                    if (current_y > 80 && current_y < max_y) {
+                        if (strlen(line) > 0) {
+                            winmgr_draw_text(win, mx + 100, current_y, line, COL_SP_TEXT_WHT);
+                        }
+                    }
+                    
+                    if (next) {
+                        *next = '\n';
+                        line = next + 1;
+                        current_y += 30; // Line height
+                    } else {
+                        if (current_y > 80 && current_y < max_y) {
+                            if (strlen(line) > 0) {
+                                winmgr_draw_text(win, mx + 100, current_y, line, COL_SP_TEXT_WHT);
+                            }
+                        }
+                        break;
+                    }
+                }
+            } else if (app->lyrics_loaded == 1) {
+                winmgr_draw_text(win, mx + 150, 200, "Loading Lyrics...", COL_SP_TEXT_MUTED);
+            } else if (app->lyrics_loaded == -1) {
+                winmgr_draw_text(win, mx + 150, 200, "Lyrics not found for this song.", COL_SP_TEXT_MUTED);
+            }
+        } else {
+            // Greeting
+            winmgr_draw_text(win, mx + 40, 80, "Good evening", COL_SP_TEXT_WHT);
         
         // Top 6 recent items
         const char* mock_mixes[] = {"Pop Mix", "Chill Vibes", "Daily Mix 1", "2010s Hits", "Lofi Beats", "Discover Weekly"};
@@ -426,6 +511,7 @@ static void draw_main_area(window_t *win, song_app_t *app) {
                 winmgr_draw_text(win, cx + 15, cy + 180, "Daily Mix", COL_SP_TEXT_MUTED);
             }
         }
+        } // Close the else block
     }
 }
 
@@ -951,6 +1037,11 @@ void song_handle_mouse(window_t *win, int mx, int my, int buttons) {
             app->current_song_idx = app->hover_idx;
             app->is_playing = 1;
             
+            app->lyrics_loaded = 0;
+            strcpy(lyrics_fetch_title, app->songs[app->current_song_idx].title);
+            extern void* create_task(void (*entry)(), char *name);
+            create_task(lyrics_fetch_thread, "YTLyrics");
+            
             // Trigger playback
             if (strncmp(app->songs[app->current_song_idx].filename_mp3, "yt:", 3) == 0) {
                 strcpy(yt_fetch_vid, app->songs[app->current_song_idx].filename_mp3 + 3);
@@ -988,6 +1079,12 @@ void song_handle_mouse(window_t *win, int mx, int my, int buttons) {
         } else if (app->hover_btn == 1) {
             if (app->current_song_idx > 0) app->current_song_idx--;
             app->is_playing = 1;
+            
+            app->lyrics_loaded = 0;
+            strcpy(lyrics_fetch_title, app->songs[app->current_song_idx].title);
+            extern void* create_task(void (*entry)(), char *name);
+            create_task(lyrics_fetch_thread, "YTLyrics");
+            
             if (strncmp(app->songs[app->current_song_idx].filename_mp3, "yt:", 3) == 0) {
                 strcpy(yt_fetch_vid, app->songs[app->current_song_idx].filename_mp3 + 3);
                 extern void* create_task(void (*entry)(), char *name);
@@ -1004,6 +1101,12 @@ void song_handle_mouse(window_t *win, int mx, int my, int buttons) {
         } else if (app->hover_btn == 3) {
             if (app->current_song_idx < app->song_count - 1) app->current_song_idx++;
             app->is_playing = 1;
+            
+            app->lyrics_loaded = 0;
+            strcpy(lyrics_fetch_title, app->songs[app->current_song_idx].title);
+            extern void* create_task(void (*entry)(), char *name);
+            create_task(lyrics_fetch_thread, "YTLyrics");
+            
             if (strncmp(app->songs[app->current_song_idx].filename_mp3, "yt:", 3) == 0) {
                 strcpy(yt_fetch_vid, app->songs[app->current_song_idx].filename_mp3 + 3);
                 extern void* create_task(void (*entry)(), char *name);
@@ -1044,6 +1147,14 @@ void song_handle_key(window_t *win, int key, char ascii) {
     }
 }
 
+void song_handle_scroll(window_t *win, int direction) {
+    song_app_t *app = get_app(win);
+    if (!app || app->lyrics_loaded != 2) return;
+    app->lyrics_scroll_y += direction * 60.0f;
+    if (app->lyrics_scroll_y > 0) app->lyrics_scroll_y = 0;
+    winmgr_invalidate_rect(win, 0, 0, win->width, win->height);
+}
+
 static void song_on_close(void *w) {
     window_t *win = (window_t *)w;
     if (song_player_win == win) song_player_win = 0; // Prevent background updates before freeing
@@ -1080,6 +1191,7 @@ void song_app_init() {
     win->draw = (void (*)(void *))song_draw;
     win->on_mouse = (void (*)(void *, int, int, int))song_handle_mouse;
     win->on_key = (void (*)(void *, int, char))song_handle_key;
+    win->on_scroll = (void (*)(void *, int))song_handle_scroll;
     win->on_close = song_on_close;
     
     // Scan for MP3s in root directory
