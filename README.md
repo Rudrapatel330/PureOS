@@ -366,7 +366,7 @@ graph TB
         ETH[Ethernet Frame<br>MAC Address Handling]
     end
 
-    subgraph Network Stack (lwIP)
+    subgraph NetworkStack [Network Stack - lwIP]
         ARP[ARP<br>Address Resolution]
         IPV4[IPv4<br>Packet Routing]
         DHCP[DHCP<br>Auto IP Config]
