@@ -169,6 +169,7 @@ typedef struct {
   // Status
   int connected;
   int error;
+  int lwip_fd; // <-- ADDED FOR LWIP
 } tcp_conn_t;
 
 int tcp_connect(tcp_conn_t *conn, uint32_t ip, uint16_t port);

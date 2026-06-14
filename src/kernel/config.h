@@ -20,7 +20,7 @@ typedef struct {
   int calendar_x, calendar_y, calendar_w, calendar_h;
   int timezone_offset_m; // in minutes (e.g. +330 for IST)
   int num_pinned;
-  int pinned[10];       // Array of APP_XXX IDs
+  int pinned[32];       // Array of APP_XXX IDs
   int taskbar_position; // 0 = Bottom, 1 = Left, 2 = Right
   int auto_hide_taskbar;
   int show_sysmon_widget;

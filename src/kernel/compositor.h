@@ -22,7 +22,8 @@ void compositor_invalidate_window(window_t *win);
 void compositor_render();
 
 // Fast Blur
-void compositor_blur_rect(int x, int y, int w, int h, int radius);
+void compositor_blur_rect(uint32_t *buffer, int x, int y, int w, int h, int radius);
+void compositor_update_blurred_bg(void);
 
 // Debug: Enable/Disable visual dirty rects
 void compositor_set_debug(int enabled);

@@ -1,6 +1,6 @@
 // filemgr.c - Windows Explorer-Style File Manager
 #include "filemgr.h"
-#include "../fs/fat.h"
+#include "../fs/vfs.h"
 #include "../fs/fs.h"
 #include "../kernel/clipboard.h"
 #include "../kernel/compositor.h"
@@ -119,15 +119,32 @@ static void fm_refresh() {
   if (at_root)
     return; // Root shows C: drive icon only
 
-  // Resolve path to FAT cluster
-  uint32_t cluster = fat_resolve_path(current_path, fat_get_root_cluster());
-  if (cluster == 0xFFFFFFFF) {
-    // Path not found - go to root
+  // Open directory using VFS
+  int fd = vfs_open(current_path, 0); // O_RDONLY
+  if (fd < 0) {
     strcpy(current_path, "/");
-    cluster = fat_get_root_cluster();
+    fd = vfs_open("/", 0);
   }
 
-  file_count = fat_list_files_gui_dir(cluster, file_list, FM_MAX_FILES);
+  if (fd >= 0) {
+    vfs_dentry_t *node;
+    int idx = 0;
+    while ((node = vfs_readdir(fd, idx)) != 0 && idx < FM_MAX_FILES) {
+      // populate file_list
+      int j = 0;
+      while (node->name[j] && j < 31) {
+        file_list[idx].name[j] = node->name[j];
+        j++;
+      }
+      file_list[idx].name[j] = 0;
+      
+      file_list[idx].size = node->inode ? node->inode->size : 0;
+      file_list[idx].is_dir = (node->inode && (node->inode->mode & VFS_DIRECTORY)) ? 1 : 0;
+      idx++;
+    }
+    file_count = idx;
+    vfs_close(fd);
+  }
 }
 
 // ======================== DRAWING ========================
@@ -495,7 +512,7 @@ static void fm_action_new_folder() {
     strcpy(full_path + len + 1, input_buffer);
   }
 
-  fat_mkdir(full_path);
+  vfs_mkdir(full_path);
   print_serial("FILEMGR: Created folder: ");
   print_serial(full_path);
   print_serial("\n");
@@ -521,7 +538,7 @@ static void fm_action_new_file() {
 
   // Create empty file
   uint8_t empty_data[1] = {0};
-  fat_write_file(full_path, empty_data, 0);
+  fs_write(full_path, empty_data, 0);
   print_serial("FILEMGR: Created file: ");
   print_serial(full_path);
   print_serial("\n");
@@ -551,7 +568,7 @@ static void fm_action_delete() {
     strcpy(full_path + len + 1, file_list[selected_index].name);
   }
 
-  fat_delete_file(full_path);
+  vfs_unlink(full_path);
   print_serial("FILEMGR: Deleted: ");
   print_serial(full_path);
   print_serial("\n");
@@ -660,11 +677,11 @@ static void fm_on_paste(void *w, const char *path) {
   int op = clipboard_get_operation();
   char msg[64] = "Transfer failed!";
   if (op == CLIPBOARD_OP_COPY) {
-    if (fat_copy_file(path, dest_path) == 0) {
+    if (vfs_copy_file(path, dest_path) == 0) {
       strcpy(msg, "Copy completed!");
     }
   } else if (op == CLIPBOARD_OP_CUT) {
-    if (fat_move_file(path, dest_path) == 0) {
+    if (vfs_move_file(path, dest_path) == 0) {
       strcpy(msg, "Move completed!");
       clipboard_set_operation(CLIPBOARD_OP_NONE);
     }

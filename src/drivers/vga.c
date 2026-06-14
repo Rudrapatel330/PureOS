@@ -55,9 +55,10 @@ static void vga_put_pixel_aa_surface(int x, int y, uint32_t color, uint8_t alpha
   uint32_t d_g = (dst >> 8) & 0xFF;
   uint32_t d_b = dst & 0xFF;
 
-  uint32_t r = ((s_r - d_r) * alpha >> 8) + d_r;
-  uint32_t g = ((s_g - d_g) * alpha >> 8) + d_g;
-  uint32_t b = ((s_b - d_b) * alpha >> 8) + d_b;
+  // Use signed arithmetic to avoid underflow when dst > src
+  uint32_t r = (uint32_t)(((int32_t)(s_r - d_r) * (int32_t)alpha >> 8) + (int32_t)d_r);
+  uint32_t g = (uint32_t)(((int32_t)(s_g - d_g) * (int32_t)alpha >> 8) + (int32_t)d_g);
+  uint32_t b = (uint32_t)(((int32_t)(s_b - d_b) * (int32_t)alpha >> 8) + (int32_t)d_b);
 
   buffer[y * buf_w + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
 }

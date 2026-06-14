@@ -8,7 +8,8 @@
 #include "startmenu.h"
 #include "sysmenu.h"
 
-extern void compositor_blur_rect(int x, int y, int w, int h, int radius);
+extern void compositor_blur_rect(uint32_t *buffer, int x, int y, int w, int h, int radius);
+extern uint32_t *backbuffer;
 
 #define TASKBAR_HEIGHT 54
 #define ICON_SIZE 36
@@ -61,7 +62,7 @@ void menubar_draw(uint32_t *buffer, rect_t clip) {
     return;
 
   // 1. Sleek Translucent Top Bar (Forced Black)
-  compositor_blur_rect(overlap.x, overlap.y, overlap.w, overlap.h, 6);
+  compositor_blur_rect(backbuffer, overlap.x, overlap.y, overlap.w, overlap.h, 6);
   vga_draw_rect_blend_lfb(overlap.x, overlap.y, overlap.w, overlap.h,
                           0xA0000000, buffer, 0); // Increased opacity fixed black
   vga_draw_rect_lfb(0, 23, screen_width, 1, 0xFF444444,
@@ -189,9 +190,12 @@ static void launch_app_by_id(int id) {
     extern void phone_init();
     phone_init();
   } break;
+  case 17: {
+    extern void song_app_init();
+    song_app_init();
+  } break;
   }
 }
-
 // Local struct for searching
 typedef struct {
   int app_id;
@@ -257,7 +261,7 @@ static void taskbar_update_magnification(int mx, int my) {
       total_w += (int)(min_size * g_taskbar.icons[i].target_scale);
     }
 
-    float start_x = (float)(screen_width - (total_w + 104)) / 2.0f + 60.0f;
+    float start_x = (float)(screen_width - (total_w + 128)) / 2.0f + 16.0f;
     float cur_x = start_x;
     for (int i = 0; i < g_taskbar.icon_count; i++) {
       float sw = (float)min_size * g_taskbar.icons[i].target_scale;
@@ -300,7 +304,7 @@ static void taskbar_update_magnification(int mx, int my) {
       total_w += (int)(min_size * g_taskbar.icons[i].target_scale);
     }
 
-    float start_y = (float)(screen_height - (total_w + 104)) / 2.0f + 60.0f;
+    float start_y = (float)(screen_height - (total_w + 128)) / 2.0f + 16.0f;
     float cur_y = start_y;
     for (int i = 0; i < g_taskbar.icon_count; i++) {
       float sw = (float)min_size * g_taskbar.icons[i].target_scale;
@@ -454,8 +458,8 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
   int num = global_config.num_pinned;
   if (num < 0)
     num = 0;
-  if (num > 10)
-    num = 10;
+  if (num > 32)
+    num = 32;
   for (int i = 0; i < num; i++) {
     int aid = global_config.pinned[i];
     int is_running = 0;
@@ -573,12 +577,12 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
   int dock_w, dock_h, dock_x, dock_y;
   if (!is_vertical) {
     dock_h = 74;
-    dock_w = screen_width;
-    dock_x = 0;
-    dock_y = screen_height - dock_h;
+    dock_w = 128 + (int)total_icon_w;
+    dock_x = (screen_width - dock_w) / 2;
+    dock_y = screen_height - dock_h - 10;
   } else {
     dock_w = 74;
-    dock_h = 104 + (int)total_icon_w;
+    dock_h = 128 + (int)total_icon_w;
     dock_y = (screen_height - dock_h) / 2;
     dock_x =
         (global_config.taskbar_position == 1) ? 8 : (screen_width - dock_w - 8);
@@ -634,22 +638,20 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
   if (!rect_intersect(clip, dock_r, &overlap))
     return;
 
-  // 2. Glass Background (Fixed Translucent Black) - No rounded corners
-  compositor_blur_rect(bd_x, bd_y, bd_w, bd_h, 0);
-  vga_draw_rect_blend_lfb_ex(bd_x, bd_y, bd_w, bd_h, 0xA0000000, 1, 0x40FFFFFF,
-                             buffer, 0);
+  // 2. Glass Background (Fixed Translucent Black) - Rounded corners
+  compositor_blur_rect(backbuffer, bd_x, bd_y, bd_w, bd_h, 0); // Disable blur to avoid ghost corners
+  vga_draw_rect_blend_lfb_ex(bd_x, bd_y, bd_w, bd_h, 0xA0000000, 0, 0,
+                             buffer, 16);
 
-  // Calculate centered content bounds to keep icons grouped together
-  int content_w = 104 + (int)total_icon_w;
-  int content_x = (screen_width - content_w) / 2;
-
-  // 3. Eagle/Start Icon & Separator
+  // 3. SysMenu Icon (FileExplorer PNG) & Separator
   if (!is_vertical) {
-    draw_eagle_icon(content_x + 16, bd_y + 8, buffer);
-    vga_draw_rect_lfb(content_x + 56, bd_y + 10, 1, bd_h - 20, 0x50FFFFFF, buffer);
+    int sep_x = bd_x + 32 + (int)total_icon_w;
+    int sys_x = bd_x + 48 + (int)total_icon_w;
+    vga_draw_rect_lfb(sep_x, bd_y + 10, 1, bd_h - 20, 0x50FFFFFF, buffer);
+    draw_icon(sys_x, bd_y + 5, 64, 64, 18, buffer); // APP_SYSMENU is 18
   } else {
-    draw_eagle_icon(bd_x + 12, bd_y + 16, buffer);
-    vga_draw_rect_lfb(bd_x + 10, bd_y + 56, bd_w - 20, 1, 0x50FFFFFF, buffer);
+    draw_icon(bd_x + 5, bd_y + 48 + (int)total_icon_w, 64, 64, 18, buffer); // Bottom of vertical dock
+    vga_draw_rect_lfb(bd_x + 10, bd_y + 32 + (int)total_icon_w, bd_w - 20, 1, 0x50FFFFFF, buffer);
   }
 
   // 5. App Icons
@@ -703,30 +705,6 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
     }
   }
 
-  // Draw Trash
-  if (!is_vertical) {
-    int x_trash = content_x + 60 + total_icon_w;
-    vga_draw_rect_lfb(x_trash + 2, bd_y + 10, 1, bd_h - 20, 0x50FFFFFF, buffer);
-    x_trash += 10;
-    vga_draw_rect_lfb(x_trash + 4, bd_y + 14, 24, 26, 0xFFcbd5e1, buffer);
-    vga_draw_rect_lfb(x_trash + 2, bd_y + 10, 28, 4, 0xFF94a3b8, buffer);
-    for (int i = 0; i < 3; i++) {
-      vga_draw_rect_lfb(x_trash + 8 + i * 6, bd_y + 18, 2, 18, 0xFF64748b,
-                        buffer);
-    }
-    vga_draw_rect_lfb(x_trash + 3, bd_y + 10, 10, 1, 0xFFf1f5f9, buffer);
-  } else {
-    int y_trash = bd_y + 60 + total_icon_w;
-    vga_draw_rect_lfb(bd_x + 10, y_trash + 2, bd_w - 20, 1, 0x50FFFFFF, buffer);
-    y_trash += 10;
-    vga_draw_rect_lfb(bd_x + 14, y_trash + 4, 26, 24, 0xFFcbd5e1, buffer);
-    vga_draw_rect_lfb(bd_x + 10, y_trash + 2, 34, 4, 0xFF94a3b8, buffer);
-    for (int i = 0; i < 3; i++) {
-      vga_draw_rect_lfb(bd_x + 18, y_trash + 8 + i * 6, 18, 2, 0xFF64748b,
-                        buffer);
-    }
-    vga_draw_rect_lfb(bd_x + 10, y_trash + 3, 1, 10, 0xFFf1f5f9, buffer);
-  }
 }
 
 int taskbar_handle_mouse(int mx, int my, int buttons) {
@@ -860,11 +838,10 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
     float total_icon_w = 0.0f;
     for (int i = 0; i < g_taskbar.icon_count; i++)
       total_icon_w += (64.0f * g_taskbar.icons[i].scale);
-  int content_w = 104 + (int)total_icon_w;
-    int content_x = (screen_width - content_w) / 2;
 
-    if (mx >= content_x && mx < content_x + 55) {
-      startmenu_show(content_x, g_taskbar.dock_y);
+    int sys_x = g_taskbar.dock_x + 48 + (int)total_icon_w;
+    if (mx >= sys_x && mx < sys_x + 64) {
+      startmenu_show(sys_x, g_taskbar.dock_y);
       return 1;
     }
   } else {

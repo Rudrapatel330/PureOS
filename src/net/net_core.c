@@ -1,20 +1,34 @@
 // net_core.c - Network Core: Ethernet framing, IP checksum, packet dispatch
 #include "../drivers/pcnet.h"
+#include "../drivers/virtio/virtio_net.h"
 #include "../kernel/heap.h"
 #include "../kernel/string.h"
 #include "net.h"
+#include "lwip/init.h"
+#include "lwip/tcpip.h"
+#include "lwip/netif.h"
+#include "lwip/dns.h"
+#include "lwip_port/ethernetif.h"
 
 extern void print_serial(const char *);
 
 // Global network config
 net_config_t net_cfg;
 
+struct netif *lwip_netif = NULL;
+
 void net_init(void) {
   print_serial("NET: Initializing stack...\n");
 
-  // Copy MAC from NE2000 driver first (needed for DHCP)
-  for (int i = 0; i < 6; i++) {
-    net_cfg.mac[i] = pcnet_dev.mac[i];
+  // Copy MAC from virtio or pcnet driver (needed for DHCP)
+  if (virtio_net_initialized) {
+    for (int i = 0; i < 6; i++) {
+      net_cfg.mac[i] = virtio_net_mac[i];
+    }
+  } else {
+    for (int i = 0; i < 6; i++) {
+      net_cfg.mac[i] = pcnet_dev.mac[i];
+    }
   }
   // Set static defaults first (fallback if DHCP fails)
   net_cfg.ip = make_ip(10, 0, 2, 15);
@@ -26,7 +40,7 @@ void net_init(void) {
   print_serial("NET: ARP init done\n");
 
   // Try DHCP if hardware exists
-  if (pcnet_dev.initialized) {
+  if (virtio_net_initialized || pcnet_dev.initialized) {
     if (dhcp_request() == 0) {
       print_serial("NET: IP obtained via DHCP\n");
     } else {
@@ -35,6 +49,25 @@ void net_init(void) {
   } else {
     print_serial("NET: No hardware, using static defaults\n");
   }
+
+  // Initialize lwIP
+  print_serial("LWIP: Initializing tcpip thread...\n");
+  tcpip_init(NULL, NULL);
+  lwip_netif = (struct netif *)kmalloc(sizeof(struct netif));
+  ip4_addr_t ipaddr, netmask, gw;
+  IP4_ADDR(&ipaddr, 10,0,2,15);
+  IP4_ADDR(&netmask, 255,255,255,0);
+  IP4_ADDR(&gw, 10,0,2,2);
+  netif_add(lwip_netif, &ipaddr, &netmask, &gw, NULL, ethernetif_init, tcpip_input);
+  netif_set_default(lwip_netif);
+  netif_set_up(lwip_netif);
+  
+  // Set up lwIP DNS server (QEMU SLIRP default is 10.0.2.3)
+  ip_addr_t dns_server;
+  IP4_ADDR(&dns_server, 10,0,2,3);
+  dns_setserver(0, &dns_server);
+  
+  print_serial("LWIP: netif added and up, DNS set\n");
 
   print_serial("NET: Stack initialized (IP: 10.0.2.15, GW: 10.0.2.2, MAC: ");
   print_serial("NET: net_cfg address: 0x");
@@ -95,13 +128,21 @@ void net_send_eth(const uint8_t *dest_mac, uint16_t type, const void *payload,
     total = 60;
   }
 
-  pcnet_send(frame, total);
+  if (virtio_net_initialized) {
+    virtio_net_send(frame, total);
+  } else {
+    pcnet_send(frame, total);
+  }
 }
 
 // Dispatch incoming packet by EtherType
 void net_receive(const uint8_t *packet, uint16_t len) {
   if (len < ETH_HEADER_LEN)
     return;
+
+  if (lwip_netif != NULL) {
+    ethernetif_input(lwip_netif, packet, len);
+  }
 
   uint16_t type = ((uint16_t)packet[12] << 8) | packet[13];
   const uint8_t *payload = packet + ETH_HEADER_LEN;

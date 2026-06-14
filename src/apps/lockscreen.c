@@ -3,7 +3,7 @@
  * lockscreen.c - PureOS Lock Screen (32-bit ARGB optimized)
  * Password: 123456
  */
-#include "../drivers/bga.h"
+#include "../kernel/hal/gfx_device.h"
 #include "../drivers/keyboard.h"
 #include "../fs/fs.h"
 #include "../kernel/config.h"
@@ -31,7 +31,7 @@ extern const unsigned int wallpaper_png_size;
 /* Serial debug */
 extern void print_serial(const char *s);
 extern void sleep(int ticks);
-extern void compositor_blur_rect(int x, int y, int w, int h, int radius);
+extern void compositor_blur_rect(uint32_t *buffer, int x, int y, int w, int h, int radius);
 
 /* ======================== COLOR HELPERS ======================== */
 
@@ -284,6 +284,75 @@ static void ls_draw_rounded_rect_outline(uint32_t *buf, int x, int y, int w, int
   }
 }
 
+/* ======================== LIQUID GLASS CARD ======================== */
+
+static void ls_draw_liquid_glass_card(uint32_t *buf, int x, int y, int w, int h, int r) {
+  if (!buf) return;
+
+  for (int j = 0; j < h; j++) {
+    for (int i = 0; i < w; i++) {
+      int px = x + i;
+      int py = y + j;
+      if (px < 0 || px >= screen_width || py < 0 || py >= screen_height) continue;
+
+      int coverage = 0;
+
+      for (int sy = 0; sy < 4; sy++) {
+        for (int sx = 0; sx < 4; sx++) {
+          float fx = (float)i + (sx + 0.5f) / 4.0f;
+          float fy = (float)j + (sy + 0.5f) / 4.0f;
+          int in = 1;
+
+          if (fx < r && fy < r) {
+            float dx = (float)r - fx, dy = (float)r - fy;
+            if (dx*dx + dy*dy > (float)(r*r)) in = 0;
+          } else if (fx >= (float)w - r && fy < r) {
+            float dx = fx - ((float)w - r), dy = (float)r - fy;
+            if (dx*dx + dy*dy > (float)(r*r)) in = 0;
+          } else if (fx < r && fy >= (float)h - r) {
+            float dx = (float)r - fx, dy = fy - ((float)h - r);
+            if (dx*dx + dy*dy > (float)(r*r)) in = 0;
+          } else if (fx >= (float)w - r && fy >= (float)h - r) {
+            float dx = fx - ((float)w - r), dy = fy - ((float)h - r);
+            if (dx*dx + dy*dy > (float)(r*r)) in = 0;
+          }
+          if (in) coverage++;
+        }
+      }
+      if (coverage == 0) continue;
+
+      // Base frost alpha: exactly 28% opacity white (71/255) for modern iOS flat glass
+      int cur_alpha = (71 * coverage) >> 4;
+
+      uint32_t bg = buf[py * screen_width + px];
+      uint8_t ba, br, bgg, bb;
+      ls_from_argb(bg, &ba, &br, &bgg, &bb);
+
+      // Vibrancy / Color Saturation Boost (iOS style)
+      // Increase saturation to mimic light gathering through thick frosted glass
+      int avg = ((int)br + (int)bgg + (int)bb) / 3;
+      int vr = avg + ((int)br - avg) * 16 / 10;
+      int vg = avg + ((int)bgg - avg) * 16 / 10;
+      int vb = avg + ((int)bb - avg) * 16 / 10;
+      
+      // Slight brightness bump (+15)
+      vr += 15; vg += 15; vb += 15;
+
+      // Clamp Vibrancy
+      if (vr > 255) vr = 255; else if (vr < 0) vr = 0;
+      if (vg > 255) vg = 255; else if (vg < 0) vg = 0;
+      if (vb > 255) vb = 255; else if (vb < 0) vb = 0;
+
+      // Flat Frost Tint Overlay (Perfectly uniform white)
+      uint32_t nr = (255 * cur_alpha + vr * (255 - cur_alpha)) >> 8;
+      uint32_t ng = (255 * cur_alpha + vg * (255 - cur_alpha)) >> 8;
+      uint32_t nb = (255 * cur_alpha + vb * (255 - cur_alpha)) >> 8;
+
+      buf[py * screen_width + px] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
+    }
+  }
+}
+
 /* ======================== BLUR & RENDER ======================== */
 
 static void ls_fast_blur(uint32_t *buf) {
@@ -524,17 +593,17 @@ void lockscreen_show(void) {
 
   // Apply background blur (Windows-style)
   print_serial("LS: Applying background blur...\n");
-  compositor_blur_rect(0, 0, screen_width, screen_height, 20); // First pass
-  compositor_blur_rect(0, 0, screen_width, screen_height, 20); // Second pass for deeper blur
+  compositor_blur_rect(backbuffer, 0, 0, screen_width, screen_height, 20); // First pass
+  compositor_blur_rect(backbuffer, 0, 0, screen_width, screen_height, 20); // Second pass for deeper blur
 
   // PRE-COPY background to all 3 BGA buffers (triple buffering) to avoid
   // flicker
   for (int i = 0; i < 3; i++) {
-    uint32_t *vram = bga_get_render_buffer();
+    uint32_t *vram = gfx_device_get_render_buffer();
     if (vram) {
       print_serial("LS: Pre-copying background to VRAM page...\n");
       memcpy(vram, backbuffer, screen_width * screen_height * 4);
-      bga_flip();
+      gfx_device_flip();
     }
   }
 
@@ -576,67 +645,77 @@ void lockscreen_show(void) {
     }
   }
 
+  uint32_t *ls_frontbuffer = (uint32_t *)kmalloc(screen_width * screen_height * 4);
+  if (ls_frontbuffer) {
+      memcpy(ls_frontbuffer, backbuffer, screen_width * screen_height * 4);
+  }
+
   while (1) {
-    /* Use BGA hardware acceleration: Get the inactive VRAM page */
-    uint32_t *ls_buffer = bga_get_render_buffer();
+    /* Use Hardware acceleration: Get the inactive VRAM page */
+    uint32_t *ls_buffer = gfx_device_get_render_buffer();
     if (!ls_buffer)
       ls_buffer = real_lfb;
+      
+    uint32_t *draw_buf = ls_frontbuffer ? ls_frontbuffer : ls_buffer;
 
     int center_x = screen_width / 2;
     int center_y = screen_height / 2;
     
-    /* Layout Constants (Entity spacing) */
-    int logo_radius = 64;
-    int logo_y = center_y - 120; // Move up to make room
-    int name_y = logo_y + logo_radius + 25; // 25px gap after logo
-    int input_y = name_y + 35; // Gap after name
-    int input_w = 300;
-    int input_h = 54; // Increased height
-    int input_r = 18; // Smoother corners for taller box
+    /* Card Layout - Liquid Glass Card containing avatar, name, and password */
+    int card_w = 360;
+    int card_h = 300;
+    int card_r = 24;
+    int card_x = center_x - card_w / 2;
+    int card_y = center_y - card_h / 2 - 20;
 
-    // Erase UI area (Frosted rect and Avatar)
-    int erase_y = logo_y - logo_radius - 20;
-    int erase_h = 420;
+    int erase_x = card_x - 20;
+    int erase_y = card_y - 20;
+    int erase_w = card_w + 40;
+    int erase_h = card_h + 40;
     for (int j = 0; j < erase_h; j++) {
       int py = erase_y + j;
       if (py >= 0 && py < screen_height) {
-        memcpy(&ls_buffer[py * screen_width + (center_x - 200)],
-               &backbuffer[py * screen_width + (center_x - 200)], 400 * 4);
+        memcpy(&draw_buf[py * screen_width + erase_x],
+               &backbuffer[py * screen_width + erase_x], erase_w * 4);
       }
     }
 
-    /* Logo Circle with Smooth AA and Correct Byte Order */
+    ls_draw_liquid_glass_card(draw_buf, card_x, card_y, card_w, card_h, card_r);
+
+    int avatar_radius = 56;
+    int avatar_center_y = card_y + 50 + avatar_radius;
+
     if (logo_pixels) {
-      for (int dy = -logo_radius; dy <= logo_radius; dy++) {
-        for (int dx = -logo_radius; dx <= logo_radius; dx++) {
+      for (int dy = -avatar_radius; dy <= avatar_radius; dy++) {
+        for (int dx = -avatar_radius; dx <= avatar_radius; dx++) {
           int d2 = dx * dx + dy * dy;
-          if (d2 <= logo_radius * logo_radius) {
+          if (d2 <= avatar_radius * avatar_radius) {
             int px = center_x + dx;
-            int py = logo_y + dy;
+            int py = avatar_center_y + dy;
             if (px >= 0 && px < screen_width && py >= 0 && py < screen_height) {
-              int sx = (dx + logo_radius) * lw / (2 * logo_radius);
-              int sy = (dy + logo_radius) * lh / (2 * logo_radius);
+              int sx = (dx + avatar_radius) * lw / (2 * avatar_radius);
+              int sy = (dy + avatar_radius) * lh / (2 * avatar_radius);
               if (sx >= 0 && sx < lw && sy >= 0 && sy < lh) {
                 uint32_t c = logo_pixels[sy * lw + sx];
                 uint8_t lr = c & 0xFF;
                 uint8_t lg = (c >> 8) & 0xFF;
                 uint8_t lb = (c >> 16) & 0xFF;
                 uint8_t la = (c >> 24) & 0xFF;
-                
-                if (d2 > (logo_radius - 1) * (logo_radius - 1)) {
-                  la = (la * (logo_radius * logo_radius - d2)) / (2 * logo_radius - 1);
+
+                if (d2 > (avatar_radius - 1) * (avatar_radius - 1)) {
+                  la = (la * (avatar_radius * avatar_radius - d2)) / (2 * avatar_radius - 1);
                 }
 
                 if (la == 255) {
-                  ls_buffer[py * screen_width + px] = 0xFF000000 | (lr << 16) | (lg << 8) | lb;
+                  draw_buf[py * screen_width + px] = 0xFF000000 | (lr << 16) | (lg << 8) | lb;
                 } else if (la > 0) {
-                  uint32_t bg = ls_buffer[py * screen_width + px];
+                  uint32_t bg = draw_buf[py * screen_width + px];
                   uint8_t ba, br, bgg, bb;
                   ls_from_argb(bg, &ba, &br, &bgg, &bb);
                   uint8_t nr = (lr * la + br * (255 - la)) >> 8;
                   uint8_t ng = (lg * la + bgg * (255 - la)) >> 8;
                   uint8_t nb = (lb * la + bb * (255 - la)) >> 8;
-                  ls_buffer[py * screen_width + px] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
+                  draw_buf[py * screen_width + px] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
                 }
               }
             }
@@ -644,45 +723,59 @@ void lockscreen_show(void) {
         }
       }
     } else {
-      ls_fill_circle(ls_buffer, center_x, logo_y, logo_radius, 0xFFE06C75);
-      ls_draw_text(ls_buffer, center_x - 12, logo_y - 16, "R", 0xFF1E2228, 4);
+      ls_fill_circle(draw_buf, center_x, avatar_center_y, avatar_radius, 0xFFE06C75);
+      ls_draw_text(draw_buf, center_x - 12, avatar_center_y - 16, "R", 0xFF1E2228, 4);
     }
 
-    /* User name - Perfectly Centered */
     int name_scale = 2;
-    int name_width = 5 * 8 * name_scale; // "rudra" is 5 chars, each 8px wide base
-    ls_draw_text(ls_buffer, center_x - (name_width / 2), name_y, "rudra", theme_get()->fg, name_scale);
+    int name_y = avatar_center_y + avatar_radius + 18;
+    int name_width = 5 * 8 * name_scale;
+    ls_draw_text(draw_buf, center_x - (name_width / 2), name_y, "rudra", theme_get()->fg, name_scale);
 
-    /* Password Card - Smooth Rounded & Transparent - Perfectly Centered */
-    int cx = center_x - (input_w / 2);
-    ls_draw_rounded_frosted_rect(ls_buffer, cx, input_y, input_w, input_h, input_r, 30, 34, 40, 180);
-    ls_draw_rounded_rect_outline(ls_buffer, cx, input_y, input_w, input_h, input_r, wrong ? 0xFFFF6464 : theme_get()->accent);
+    int input_w = 270;
+    int input_h = 50;
+    int input_r = 16;
+    int input_x = center_x - input_w / 2;
+    int input_y = name_y + 32;
 
-    /* Dots */
+    ls_draw_rounded_frosted_rect(draw_buf, input_x, input_y, input_w, input_h, input_r, 25, 28, 35, 200);
+    ls_draw_rounded_rect_outline(draw_buf, input_x, input_y, input_w, input_h, input_r, wrong ? 0xFFFF6464 : 0xAAFFFFFF);
+
     for (int i = 0; i < pw_len; i++) {
-      ls_fill_circle(ls_buffer, cx + 24 + i * 18, input_y + input_h / 2, 6, theme_get()->fg);
+      ls_fill_circle(draw_buf, input_x + 24 + i * 18, input_y + input_h / 2, 6, theme_get()->fg);
     }
 
-    /* Cursor */
     tick_count++;
     if ((tick_count / 20) % 2 == 0) {
-      ls_fill_rect(ls_buffer, cx + 24 + pw_len * 18, input_y + input_h / 2 - 12, 2, 24,
-                   theme_get()->accent);
+      ls_fill_rect(draw_buf, input_x + 24 + pw_len * 18, input_y + input_h / 2 - 12, 2, 24, theme_get()->accent);
     }
 
     if (pw_len == 0)
-      ls_draw_text(ls_buffer, cx + 20, input_y + input_h / 2 - 8, "Enter password...", 0xFF969696,
-                   1);
+      ls_draw_text(draw_buf, input_x + 20, input_y + input_h / 2 - 8, "Enter password...", 0xFF969696, 1);
     if (wrong)
-      ls_draw_text(ls_buffer, center_x - 80, input_y + input_h + 12, "Wrong password!",
-                   0xFFFF6464, 1);
+      ls_draw_text(draw_buf, center_x - 80, input_y + input_h + 12, "Wrong password!", 0xFFFF6464, 1);
 
-    /* Branding */
-    ls_draw_text(ls_buffer, center_x - 32, screen_height - 40, "PureOS",
-                 0xFFB4B4B4, 1);
+    ls_draw_text(draw_buf, center_x - 32, screen_height - 40, "PureOS", 0xFFB4B4B4, 1);
+
+    if (ls_frontbuffer) {
+      for (int j = 0; j < erase_h; j++) {
+        int py = erase_y + j;
+        if (py >= 0 && py < screen_height) {
+          memcpy(&ls_buffer[py * screen_width + erase_x],
+                 &ls_frontbuffer[py * screen_width + erase_x], erase_w * 4);
+        }
+      }
+      for (int j = 0; j < 20; j++) {
+        int py = (screen_height - 40) + j;
+        if (py >= 0 && py < screen_height) {
+          memcpy(&ls_buffer[py * screen_width + (center_x - 40)],
+                 &ls_frontbuffer[py * screen_width + (center_x - 40)], 100 * 4);
+        }
+      }
+    }
 
     /* Hardware Flip: Instant switch */
-    bga_flip();
+    gfx_device_flip();
 
     /* Ensure interrupts are enabled so keyboard IRQ fires */
     __asm__ volatile("sti");
@@ -715,6 +808,7 @@ void lockscreen_show(void) {
           compositor_invalidate_rect(0, 0, screen_width, screen_height);
 
           lockscreen_active = 0;
+          if (ls_frontbuffer) kfree(ls_frontbuffer);
           return;
         } else {
           wrong = 1;

@@ -107,22 +107,17 @@ def main():
                 try:
                     img = Image.open(full_path).convert('RGBA')
                     
-                    # Auto-crop transparent borders to normalize all icon sizes
                     alpha = img.split()[-1]
                     bbox = alpha.getbbox()
                     if bbox:
                         img = img.crop(bbox)
                     
-                    # Resize cropped image to fit within a consistent 52x52 safe area
-                    # This gives a nice uniform padding inside the 64x64 canvas
-                    safe_size = 52
+                    safe_size = 416
                     img.thumbnail((safe_size, safe_size), Image.Resampling.LANCZOS)
                     
-                    # Create a 64x64 transparent canvas
-                    target_size = 64
+                    target_size = 512
                     new_img = Image.new('RGBA', (target_size, target_size), (0, 0, 0, 0))
                     
-                    # Calculate position to center the image perfectly
                     x = (target_size - img.width) // 2
                     y = (target_size - img.height) // 2
                     

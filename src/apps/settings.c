@@ -76,7 +76,7 @@ typedef struct {
   int pwc, wp, th, di, filter, icon_int, bg_int;
   int dragging_icon, dragging_bg;
   int show_clock, show_calendar;
-  int pinned[10];
+  int pinned[32];
   int num_pinned;
   int scroll_y, tz;
   int mx, my;
@@ -86,6 +86,9 @@ typedef struct {
   int font_size, font_style;
   int picker_open;
   int dropdown_open; // 0 = none, 1 = Color Mode, 2 = Icon Filter
+  animation_t anim_toggles[64];
+  animation_t flash_toggles[64];
+  animation_t page_anim;
 } sstate_t;
 
 static uint32_t *wp_thumbs[4] = {0};
@@ -261,6 +264,61 @@ static void draw_text_spaced(window_t *win, int x, int y, const char *text, uint
     }
 }
 
+static void draw_animated_toggle(window_t *win, int x, int y, int state, animation_t *anim, animation_t *flash) {
+    if (!anim->active && anim->current_val != (float)state) {
+        if (anim->duration == 0.0f && anim->current_val == 0.0f && anim->start_val == 0.0f) {
+            anim_init_val(anim, (float)state);
+            anim->duration = 1.0f; // mark initialized
+            if (flash) anim_init_val(flash, 0.0f);
+        } else {
+            anim_start_spring(anim, anim->current_val, (float)state, 400.0f, 30.0f);
+            if (flash) anim_start_spring(flash, 1.0f, 0.0f, 150.0f, 15.0f);
+        }
+    }
+    
+    anim_tick(anim, 0.04f);
+    if (anim->active) {
+        win->needs_redraw = 1;
+        compositor_invalidate_rect(win->x, win->y, win->width, win->height);
+    }
+    
+    if (flash) {
+        anim_tick(flash, 0.04f);
+        if (flash->active) {
+            win->needs_redraw = 1;
+            compositor_invalidate_rect(win->x, win->y, win->width, win->height);
+        }
+    }
+
+    float p = anim->current_val;
+    if (p < 0.0f) p = 0.0f;
+    if (p > 1.0f) p = 1.0f;
+    
+    uint32_t bg_off = 0xFF333333;
+    uint32_t bg_on = 0xFF3B82F6;
+    
+    int r = ((bg_off >> 16) & 0xFF) + (int)((((bg_on >> 16) & 0xFF) - ((bg_off >> 16) & 0xFF)) * p);
+    int g = ((bg_off >> 8) & 0xFF) + (int)((((bg_on >> 8) & 0xFF) - ((bg_off >> 8) & 0xFF)) * p);
+    int b = (bg_off & 0xFF) + (int)(((bg_on & 0xFF) - (bg_off & 0xFF)) * p);
+    
+    float flash_val = flash ? flash->current_val : 0.0f;
+    if (flash_val > 0.0f) {
+        r = (int)(r + (255 - r) * flash_val * 0.4f);
+        g = (int)(g + (255 - g) * flash_val * 0.4f);
+        b = (int)(b + (255 - b) * flash_val * 0.4f);
+        if (r > 255) r = 255;
+        if (g > 255) g = 255;
+        if (b > 255) b = 255;
+    }
+    
+    uint32_t current_bg = 0xFF000000 | (r << 16) | (g << 8) | b;
+    
+    winmgr_draw_rounded_rect_ex(win, x, y, 55, 30, current_bg, 0, 0, 15);
+    
+    int knob_x = x + 4 + (int)(24.0f * p);
+    winmgr_draw_rounded_rect_ex(win, knob_x, y + 4, 22, 22, 0xFFFFFFFF, 0, 0, 11);
+}
+
 static void settings_draw(void *w) {
   int fs = ui_get_font_scale();
   window_t *win = (window_t *)w;
@@ -290,8 +348,13 @@ static void settings_draw(void *w) {
   }
 
   // 2. CONTENT AREA (CARDS)
+  anim_tick(&s->page_anim, 0.04f);
+  if (s->page_anim.active) {
+      win->needs_redraw = 1;
+      compositor_invalidate_rect(win->x, win->y, win->width, win->height);
+  }
   int cx = get_cx();
-  int cy = 50 - s->scroll_y; // Apply scroll offset
+  int cy = 50 - s->scroll_y + (int)s->page_anim.current_val; // Apply scroll and animation offset
   int card_w = win->width - cx - 20;
 
   if (s->page == PA) { // Home
@@ -346,23 +409,22 @@ static void settings_draw(void *w) {
     draw_text_spaced(win, cx + 20, cy + 20, "Auto-hide Taskbar", 0xFFFFFFFF, 18, 1);
     draw_text_spaced(win, cx + 20, cy + 20 + fs + 20, "Automatically hide the taskbar when not in use", 0xFF888888, 14, 1);
     
-    uint32_t tah_bg = s->auto_hide_taskbar ? 0xFF3B82F6 : 0xFF333333;
-    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 25, 55, 30, tah_bg, 0, 0, 15);
-    int ah_knob_x = s->auto_hide_taskbar ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
-    winmgr_draw_rounded_rect_ex(win, ah_knob_x, cy + 29, 22, 22, 0xFFFFFFFF, 0, 0, 11);
+    draw_animated_toggle(win, cx + card_w - 75, cy + 25, s->auto_hide_taskbar, &s->anim_toggles[0], &s->flash_toggles[0]);
 
     cy += (fs * 6 + 40) + 40;
     
     // Second Card: Pinned Apps
-    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 6 + 40) + 10 * 60, 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
+    DRAW_ROUNDED_CARD(win, s, cx, cy, card_w, (fs * 6 + 40) + 18 * 50, 0xFF1C1C1C, 0xFF1C1C1C, 0xFF2A2A2A);
     draw_text_spaced(win, cx + 20, cy + 20, "Pinned Apps", 0xFFFFFFFF, 18, 1);
     draw_text_spaced(win, cx + 20, cy + 20 + fs + 20, "Select which apps appear on the dock", 0xFF888888, 14, 1);
     
     int list_y = cy + 80;
     const char *app_names[] = {"Terminal", "Calculator", "Editor",   "Computer",
                                "Paint",    "Files",      "Task Mgr", "Browser",
-                               "Video",    "Settings"};
-    for (int i = 0; i < 10; i++) {
+                               "Video",    "Settings",   "PDF Reader", "Camera",
+                               "Photos",   "Mail",       "Recorder", "Chat", 
+                               "Phone",    "Music"};
+    for (int i = 0; i < 18; i++) {
       draw_text_spaced(win, cx + 20, list_y + 10, app_names[i], 0xFFFFFFFF, 16, 1);
 
       int is_pinned = 0;
@@ -370,10 +432,7 @@ static void settings_draw(void *w) {
         if (s->pinned[j] == i) is_pinned = 1;
       }
 
-      uint32_t tp_bg = is_pinned ? 0xFF3B82F6 : 0xFF333333;
-      winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, list_y + 5, 55, 30, tp_bg, 0, 0, 15);
-      int p_knob_x = is_pinned ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
-      winmgr_draw_rounded_rect_ex(win, p_knob_x, list_y + 9, 22, 22, 0xFFFFFFFF, 0, 0, 11);
+      draw_animated_toggle(win, cx + card_w - 75, list_y + 5, is_pinned, &s->anim_toggles[20 + i], &s->flash_toggles[20 + i]);
       
       list_y += 50;
     }
@@ -447,10 +506,7 @@ static void settings_draw(void *w) {
     draw_text_spaced(win, cx + 20, cy + 20 + fs + 20, "Show or hide icons on the desktop", 0xFF888888, 14, 1);
     
     // Toggle Switch
-    uint32_t t_bg = s->di ? 0xFF3B82F6 : 0xFF333333;
-    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 32, 55, 30, t_bg, 0, 0, 15);
-    int knob_x = s->di ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
-    winmgr_draw_rounded_rect_ex(win, knob_x, cy + 36, 22, 22, 0xFFFFFFFF, 0, 0, 11);
+    draw_animated_toggle(win, cx + card_w - 75, cy + 32, s->di, &s->anim_toggles[11], &s->flash_toggles[11]);
     
     // Row 2: Icon Filter
     draw_text_spaced(win, cx + 20, cy + 120, "Icon Filter", 0xFFFFFFFF, 18, 1);
@@ -482,7 +538,7 @@ static void settings_draw(void *w) {
     draw_text_spaced(win, cx + 25, cy + 60, res_info, 0xFF888888, 14, 1);
 
     // Dropdown button (Resolution)
-    const char *res_names[] = {"800x600", "1024x768", "1280x720", "1280x800", "1440x900", "1600x900", "1920x1080"};
+    const char *res_names[] = {"800x600", "1024x768", "1280x720", "1280x800", "1440x900", "1600x900", "1920x1000", "1920x1040", "1920x1080"};
     int dr_y = cy + 32;
     int dr_h = 35;
     winmgr_draw_rounded_rect_ex(win, cx + card_w - 200, dr_y, 180, dr_h, 0xFF121212, 1, 0xFF333333, 8);
@@ -507,24 +563,15 @@ static void settings_draw(void *w) {
     
     // Digital Clock row
     draw_text_spaced(win, cx + 25, cy + 30, "Digital Clock", 0xFFFFFFFF, 18, 1);
-    uint32_t t1_bg = s->show_clock ? 0xFF3B82F6 : 0xFF333333;
-    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 25, 55, 30, t1_bg, 0, 0, 15);
-    int k1_x = s->show_clock ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
-    winmgr_draw_rounded_rect_ex(win, k1_x, cy + 29, 22, 22, 0xFFFFFFFF, 0, 0, 11);
+    draw_animated_toggle(win, cx + card_w - 75, cy + 25, s->show_clock, &s->anim_toggles[12], &s->flash_toggles[12]);
 
     // Month Calendar row
     draw_text_spaced(win, cx + 25, cy + 80, "Month Calendar", 0xFFFFFFFF, 18, 1);
-    uint32_t t2_bg = s->show_calendar ? 0xFF3B82F6 : 0xFF333333;
-    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 75, 55, 30, t2_bg, 0, 0, 15);
-    int k2_x = s->show_calendar ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
-    winmgr_draw_rounded_rect_ex(win, k2_x, cy + 79, 22, 22, 0xFFFFFFFF, 0, 0, 11);
+    draw_animated_toggle(win, cx + card_w - 75, cy + 75, s->show_calendar, &s->anim_toggles[13], &s->flash_toggles[13]);
 
     // System Monitor row
     draw_text_spaced(win, cx + 25, cy + 130, "System Monitor", 0xFFFFFFFF, 18, 1);
-    uint32_t t3_bg = s->show_sysmon ? 0xFF3B82F6 : 0xFF333333;
-    winmgr_draw_rounded_rect_ex(win, cx + card_w - 75, cy + 125, 55, 30, t3_bg, 0, 0, 15);
-    int k3_x = s->show_sysmon ? (cx + card_w - 75) + 28 : (cx + card_w - 75) + 4;
-    winmgr_draw_rounded_rect_ex(win, k3_x, cy + 129, 22, 22, 0xFFFFFFFF, 0, 0, 11);
+    draw_animated_toggle(win, cx + card_w - 75, cy + 125, s->show_sysmon, &s->anim_toggles[14], &s->flash_toggles[14]);
 
     // Legacy widgets code removed for clean UI
   } else if (s->page == PF) { // Fonts & Style
@@ -629,9 +676,9 @@ static void settings_draw(void *w) {
         int d_x = cx + card_w - 200;
         int d_y = cy + 32 + 35 + 2; 
         int item_h = 45;
-        winmgr_draw_rounded_rect_ex(win, d_x, d_y, 180, item_h * 7 + 4, 0xFF1C1C1C, 1, 0xFF444444, 8);
-        const char *res_names[] = {"800x600", "1024x768", "1280x720", "1280x800", "1440x900", "1600x900", "1920x1080"};
-        for (int i=0; i<7; i++) {
+        winmgr_draw_rounded_rect_ex(win, d_x, d_y, 180, item_h * 9 + 4, 0xFF1C1C1C, 1, 0xFF444444, 8);
+        const char *res_names[] = {"800x600", "1024x768", "1280x720", "1280x800", "1440x900", "1600x900", "1920x1000", "1920x1040", "1920x1080"};
+        for (int i=0; i<9; i++) {
             DRAW_HOVER(win, s, d_x + 2, d_y + 2 + i * item_h, 176, item_h, 0xFF1C1C1C, 0xFF3B82F6);
             draw_text_spaced(win, d_x + 10, d_y + 2 + i * item_h + (item_h - 14)/2 + 2, res_names[i], 0xFFFFFFFF, 14, 1);
         }
@@ -651,6 +698,15 @@ static void settings_draw(void *w) {
 
 static void apply_config(sstate_t *s) {
   int fs = ui_get_font_scale();
+  
+  int res_w[] = {800, 1024, 1280, 1280, 1440, 1600, 1920, 1920, 1920};
+  int res_h[] = {600, 768, 720, 800, 900, 900, 1000, 1040, 1080};
+  extern int screen_width, screen_height;
+  if (screen_width != res_w[s->sel_res] || screen_height != res_h[s->sel_res]) {
+      extern void screen_set_resolution(int width, int height);
+      screen_set_resolution(res_w[s->sel_res], res_h[s->sel_res]);
+  }
+
   strcpy(global_config.lock_password, s->pw);
   global_config.wallpaper_index = s->wp; // Save index
   global_config.wallpaper_type = 3;      // Force JPG/PNG
@@ -715,11 +771,15 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
     int nh = (ry - 45) / (item_h + spacing);
     if (ry < 45) nh = 0;
     if (nh >= 0 && nh < NP) {
-      s->page = nh;
-      s->scroll_y = 0;
-      s->picker_open = 0; // Close picker when switching pages
-      s->dropdown_open = 0;
-      win->needs_redraw = 1;
+      if (s->page != nh) {
+        s->page = nh;
+        s->scroll_y = 0;
+        s->picker_open = 0; // Close picker when switching pages
+        s->dropdown_open = 0;
+        anim_init_val(&s->page_anim, 150.0f);
+        anim_start_spring(&s->page_anim, 150.0f, 0.0f, 300.0f, 25.0f);
+        win->needs_redraw = 1;
+      }
       return;
     }
   }
@@ -764,9 +824,9 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
               int d_x = get_cx() + cw - 200;
               int d_y = cy + 32 + 35 + 2;
               int item_h = 45;
-              if (rx >= d_x && rx <= d_x + 180 && ry_scroll >= d_y && ry_scroll <= d_y + item_h * 7 + 4) {
+              if (rx >= d_x && rx <= d_x + 180 && ry_scroll >= d_y && ry_scroll <= d_y + item_h * 9 + 4) {
                   int opt = (ry_scroll - d_y - 2) / item_h;
-                  if (opt >= 0 && opt < 7) {
+                  if (opt >= 0 && opt < 9) {
                       s->sel_res = opt;
                       apply_config(s);
                   }
@@ -846,7 +906,7 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
 
   // 2. Content area compensation (Scroll)
   int content_cx = get_cx();
-  int ry_scroll = ry + s->scroll_y;
+  int ry_scroll = ry + s->scroll_y - (int)s->page_anim.current_val;
 
   // Home Page (PA)
   if (s->page == PA) {
@@ -856,7 +916,10 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
     }
     cy += 60; // Card 2 offset
     if (click && rx >= content_cx && rx <= content_cx + cw && ry_scroll >= cy && ry_scroll <= cy + (fs * 2 + 10)) {
-      s->page = PWALL; s->scroll_y = 0; win->needs_redraw = 1;
+      s->page = PWALL; s->scroll_y = 0;
+      anim_init_val(&s->page_anim, 150.0f);
+      anim_start_spring(&s->page_anim, 150.0f, 0.0f, 300.0f, 25.0f);
+      win->needs_redraw = 1;
     }
   }
 
@@ -930,7 +993,7 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
     }
     cy += (fs * 6 + 40) + 40;
     int list_y = cy + 80;
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 18; i++) {
       if (click && rx >= content_cx + cw - 75 && rx <= content_cx + cw - 20 && ry_scroll >= list_y + 5 && ry_scroll <= list_y + 35) {
         int is_pinned = 0, pin_idx = -1;
         for (int j = 0; j < s->num_pinned; j++) {
@@ -939,7 +1002,7 @@ static void settings_on_mouse(void *w, int mx, int my, int buttons) {
         if (is_pinned) {
           for (int j = pin_idx; j < s->num_pinned - 1; j++) s->pinned[j] = s->pinned[j + 1];
           s->num_pinned--;
-        } else if (s->num_pinned < 10) {
+        } else if (s->num_pinned < 32) {
           s->pinned[s->num_pinned++] = i;
         }
         apply_config(s); win->needs_redraw = 1;
@@ -1035,11 +1098,19 @@ void settings_init() {
     st->pinned[i] = global_config.pinned[i];
   }
 
+  for (int i = 0; i < 64; i++) {
+      anim_init(&st->anim_toggles[i]);
+      anim_init_val(&st->flash_toggles[i], 0.0f);
+  }
+  anim_init(&st->page_anim);
+  anim_init_val(&st->page_anim, 150.0f);
+  anim_start_spring(&st->page_anim, 150.0f, 0.0f, 300.0f, 25.0f);
+
   // Initialize selected resolution to current
   st->sel_res = 1; // Default 1024x768
-  int res_w[] = {800, 1024, 1280, 1280, 1440, 1600, 1920};
-  int res_h[] = {600, 768, 720, 800, 900, 900, 1080};
-  for (int i = 0; i < 7; i++) {
+  int res_w[] = {800, 1024, 1280, 1280, 1440, 1600, 1920, 1920, 1920};
+  int res_h[] = {600, 768, 720, 800, 900, 900, 1000, 1040, 1080};
+  for (int i = 0; i < 9; i++) {
     if (screen_width == res_w[i] && screen_height == res_h[i]) {
       st->sel_res = i;
       break;

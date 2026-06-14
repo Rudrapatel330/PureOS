@@ -7,11 +7,22 @@
 #include "../ui/ctxmenu.h"
 #include "desktop.h"
 #include "gfx_2d.h"
+#include "hal/gfx_device.h"
+#include "heap.h"
 #include "screen.h"
 #include "string.h"
 #include "window.h"
 
 extern void startmenu_draw(uint32_t *buffer, rect_t clip);
+extern void menubar_draw(uint32_t *buffer, rect_t clip);
+extern void sysmenu_draw(uint32_t *buffer, rect_t clip);
+extern int lockscreen_active;
+extern int mouse_x, mouse_y;
+extern window_t *active_window;
+
+#ifndef MAX_WINDOWS
+#define MAX_WINDOWS 32
+#endif
 
 int alt_tab_active = 0;
 int mission_control_active = 0;
@@ -33,17 +44,10 @@ uint64_t compositor_cycles = 0;
 static uint32_t last_fps_tick = 0;
 static int frames_this_second = 0;
 
-// Fast 32-bit fill using rep stosd (fills count uint32_t values)
-static inline void fast_fill_32(uint32_t *dest, uint32_t value, int count) {
-  __asm__ volatile("rep stosl"
-                   : "+D"(dest), "+c"(count)
-                   : "a"(value)
-                   : "memory");
-}
-
 #define MAX_DIRTY_RECTS 64
 
-void compositor_blur_rect(int x, int y, int w, int h, int radius);
+void compositor_blur_rect(uint32_t *buffer, int x, int y, int w, int h,
+                          int radius);
 
 static rect_t dirty_rects[MAX_DIRTY_RECTS];
 static int dirty_count = 0;
@@ -67,10 +71,12 @@ int disable_animations = 0; // Default to enabled
 
 static int debug_mode = 0;
 static int current_should_blur = 0; // Global blur state for the current frame
-static int last_bg_blurred = 0;    // Persistence for state change detection
+static int last_bg_blurred = 0;     // Persistence for state change detection
 static rect_t overlay_rect = {0, 0, 0, 0};
 static int overlay_active = 0;
 static int force_full_redraw = 0;
+
+uint32_t *blurred_desktop_buffer = 0;
 
 int magnifier_enabled = 0; // DISABLED BY DEFAULT
 float magnifier_scale = 2.0f;
@@ -164,7 +170,8 @@ void compositor_scaled_blend(window_t *win, rect_t clip) {
     }
   }
 }
-static inline float cubic_bezier(float t, float p0, float p1, float p2, float p3) {
+static inline float cubic_bezier(float t, float p0, float p1, float p2,
+                                 float p3) {
   float u = 1.0f - t;
   float tt = t * t;
   float uu = u * u;
@@ -173,8 +180,9 @@ static inline float cubic_bezier(float t, float p0, float p1, float p2, float p3
   return uuu * p0 + 3.0f * uu * t * p1 + 3.0f * u * tt * p2 + ttt * p3;
 }
 
-// S-curve sigmoid: maps [0,1] -> [0,1] with a smooth inflection at the midpoint.
-// steepness controls how sharp the transition is (6-10 is a good range).
+// S-curve sigmoid: maps [0,1] -> [0,1] with a smooth inflection at the
+// midpoint. steepness controls how sharp the transition is (6-10 is a good
+// range).
 static inline float s_curve(float t, float steepness) {
   // Logistic sigmoid remapped to [0,1] -> [0,1]
   // f(t) = 1 / (1 + e^(-steepness*(t-0.5)))
@@ -184,28 +192,41 @@ static inline float s_curve(float t, float steepness) {
   float ss = t * t * (3.0f - 2.0f * t); // smoothstep
   // Blend: sharpen the smoothstep with an extra cubic push
   float s = ss * ss * (3.0f - 2.0f * ss); // double-smoothstep for tighter S
-  (void)raw; (void)steepness; // suppress unused
+  (void)raw;
+  (void)steepness; // suppress unused
   return s;
 }
 
-// Fast fractional Bilinear Texture Sampling for high density continuous mesh resolution
-static inline uint32_t bilinear_blend_argb(uint32_t c00, uint32_t c10, uint32_t c01, uint32_t c11, int u_frac, int v_frac) {
-    if (u_frac == 0 && v_frac == 0) return c00;
+// Fast fractional Bilinear Texture Sampling for high density continuous mesh
+// resolution
+static inline uint32_t bilinear_blend_argb(uint32_t c00, uint32_t c10,
+                                           uint32_t c01, uint32_t c11,
+                                           int u_frac, int v_frac) {
+  if (u_frac == 0 && v_frac == 0)
+    return c00;
 
-    int u_inv = 256 - u_frac;
-    int v_inv = 256 - v_frac;
+  int u_inv = 256 - u_frac;
+  int v_inv = 256 - v_frac;
 
-    int w00 = (u_inv * v_inv) >> 8;
-    int w10 = (u_frac * v_inv) >> 8;
-    int w01 = (u_inv * v_frac) >> 8;
-    int w11 = (u_frac * v_frac) >> 8;
+  int w00 = (u_inv * v_inv) >> 8;
+  int w10 = (u_frac * v_inv) >> 8;
+  int w01 = (u_inv * v_frac) >> 8;
+  int w11 = (u_frac * v_frac) >> 8;
 
-    int a = ((c00 >> 24) * w00 + (c10 >> 24) * w10 + (c01 >> 24) * w01 + (c11 >> 24) * w11) >> 8;
-    int r = (((c00 >> 16) & 0xFF) * w00 + ((c10 >> 16) & 0xFF) * w10 + ((c01 >> 16) & 0xFF) * w01 + ((c11 >> 16) & 0xFF) * w11) >> 8;
-    int g = (((c00 >> 8) & 0xFF) * w00 + ((c10 >> 8) & 0xFF) * w10 + ((c01 >> 8) & 0xFF) * w01 + ((c11 >> 8) & 0xFF) * w11) >> 8;
-    int b = ((c00 & 0xFF) * w00 + (c10 & 0xFF) * w10 + (c01 & 0xFF) * w01 + (c11 & 0xFF) * w11) >> 8;
+  int a = ((c00 >> 24) * w00 + (c10 >> 24) * w10 + (c01 >> 24) * w01 +
+           (c11 >> 24) * w11) >>
+          8;
+  int r = (((c00 >> 16) & 0xFF) * w00 + ((c10 >> 16) & 0xFF) * w10 +
+           ((c01 >> 16) & 0xFF) * w01 + ((c11 >> 16) & 0xFF) * w11) >>
+          8;
+  int g = (((c00 >> 8) & 0xFF) * w00 + ((c10 >> 8) & 0xFF) * w10 +
+           ((c01 >> 8) & 0xFF) * w01 + ((c11 >> 8) & 0xFF) * w11) >>
+          8;
+  int b = ((c00 & 0xFF) * w00 + (c10 & 0xFF) * w10 + (c01 & 0xFF) * w01 +
+           (c11 & 0xFF) * w11) >>
+          8;
 
-    return (a << 24) | (r << 16) | (g << 8) | b;
+  return (a << 24) | (r << 16) | (g << 8) | b;
 }
 
 // 32-bit ARGB Genie Effect (Warp) Blending
@@ -222,9 +243,16 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
     return;
 
   // Failsafe: If marked as animating but no spatial animations are active,
-  // do not attempt to warp/stretch the window. This prevents "Black Box" desyncs.
+  // do not attempt to warp/stretch the window. This prevents "Black Box"
+  // desyncs.
   if (!win->anim_x.active && !win->anim_y.active && !win->anim_w.active &&
       !win->anim_h.active) {
+    win->is_animating = 0;
+    return;
+  }
+
+  // Ensure mesh arrays exist before accessing
+  if (!win->mesh_lx || !win->mesh_rx || !win->mesh_ty) {
     win->is_animating = 0;
     return;
   }
@@ -241,16 +269,22 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
     return;
 
   // Additional sanity checks for positions
-  if (cur_x < -2000 || cur_x > 4000 || cur_y < -2000 || cur_y > 4000)
+  if (cur_x < -10000 || cur_x > 10000 || cur_y < -10000 || cur_y > 10000) {
+    win->is_animating = 0;
+    win->anim_x.active = 0;
+    win->anim_y.active = 0;
     return;
+  }
 
   // Genie progress: how far along the animation is (0 = full window, 1 = icon)
   // Use the width shrinkage as the absolute source of truth for progression
   float progress = 0.0f;
   if (win->width > 0)
     progress = 1.0f - (float)(cur_w) / (float)win->width;
-  if (progress < 0) progress = 0;
-  if (progress > 1) progress = 1;
+  if (progress < 0)
+    progress = 0;
+  if (progress > 1)
+    progress = 1;
 
   // === SEPARATE VERTICAL TIMING (Stretching Effect) ===
   // Delay the rigid edge's descent, and anchor the vacuum tip.
@@ -262,17 +296,19 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
 
   float prog_top, prog_bot;
   if (win->pinch_top) {
-      // Dock is above: top edge anchors faster, bottom edge lags exponentially
-      prog_top = 1.0f - inv_p5;
-      prog_bot = p5;
+    // Dock is above: top edge anchors faster, bottom edge lags exponentially
+    prog_top = 1.0f - inv_p5;
+    prog_bot = p5;
   } else {
-      // Dock is below (standard): bottom edge anchors faster, top edge lags exponentially
-      prog_top = p5;
-      prog_bot = 1.0f - inv_p5;
+    // Dock is below (standard): bottom edge anchors faster, top edge lags
+    // exponentially
+    prog_top = p5;
+    prog_bot = 1.0f - inv_p5;
   }
 
   int ty_target = (win->launch_y >= 0) ? win->launch_y : win->taskbar_y;
-  if (ty_target < 0) ty_target = screen_height;
+  if (ty_target < 0)
+    ty_target = screen_height;
 
   int start_y = win->y;
   int start_bottom = win->y + win->height;
@@ -281,9 +317,11 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
 
   // Override cur_y and cur_h with independent stretching bounds
   cur_y = start_y + (int)((target_y - start_y) * prog_top);
-  int cur_bottom = start_bottom + (int)((target_bottom - start_bottom) * prog_bot);
+  int cur_bottom =
+      start_bottom + (int)((target_bottom - start_bottom) * prog_bot);
   cur_h = cur_bottom - cur_y;
-  if (cur_h < 2) cur_h = 2;
+  if (cur_h < 2)
+    cur_h = 2;
 
   // === PRE-LOOP: Hoist loop-invariant calculations ===
   // The dock icon X as the horizontal attractor for the Bézier bend
@@ -299,8 +337,10 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
   float rel_x = 0.5f;
   if (tx >= 0 && win->width > 0) {
     rel_x = (float)(tx - win->x) / (float)win->width;
-    if (rel_x < 0.0f) rel_x = 0.0f;
-    if (rel_x > 1.0f) rel_x = 1.0f;
+    if (rel_x < 0.0f)
+      rel_x = 0.0f;
+    if (rel_x > 1.0f)
+      rel_x = 1.0f;
   }
 
   // Pre-calculate fixed-point constants for vertical loop
@@ -313,23 +353,27 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
     int y1 = cur_y + ((i + 1) * cur_h) / 63;
 
     // Skip quad if it's entirely outside the clip/screen
-    if (y1 < clip.y || y0 >= clip.y + clip.h) continue;
-    if (y1 < 0 || y0 >= screen_height) continue;
+    if (y1 < clip.y || y0 >= clip.y + clip.h)
+      continue;
+    if (y1 < 0 || y0 >= screen_height)
+      continue;
 
     // Mesh boundaries for top and bottom of this strip
     float lx0 = win->mesh_lx[i];
     float rx0 = win->mesh_rx[i];
-    float lx1 = win->mesh_lx[i+1];
-    float rx1 = win->mesh_rx[i+1];
+    float lx1 = win->mesh_lx[i + 1];
+    float rx1 = win->mesh_rx[i + 1];
 
     // Texture Y (warped) boundaries from mesh
     float ty0 = win->mesh_ty[i];
-    float ty1 = win->mesh_ty[i+1];
+    float ty1 = win->mesh_ty[i + 1];
 
     // Draw rows within this quad
     for (int sy = y0; sy < y1; sy++) {
-      if (sy < clip.y || sy >= clip.y + clip.h) continue;
-      if (sy < 0 || sy >= screen_height) continue;
+      if (sy < clip.y || sy >= clip.y + clip.h)
+        continue;
+      if (sy < 0 || sy >= screen_height)
+        continue;
 
       // Linear interpolation factor within the quad
       float t = (y1 > y0) ? (float)(sy - y0) / (float)(y1 - y0) : 0.0f;
@@ -341,12 +385,16 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
 
       int irx = (int)clx;
       int irw = (int)(crx - clx);
-      if (irw < 2) continue;
+      if (irw < 2)
+        continue;
 
       // Vertical source Y mapping (fractional for bilinear)
       int src_y_fixed = (int)(cty * (float)win->surface_h * 256.0f);
       int src_y0 = src_y_fixed >> 8;
-      if (src_y0 >= win->surface_h) src_y0 = win->surface_h - 1;
+      if (src_y0 < 0)
+        src_y0 = 0;
+      if (src_y0 >= win->surface_h)
+        src_y0 = win->surface_h - 1;
       int src_y1 = (src_y0 + 1 < win->surface_h) ? src_y0 + 1 : src_y0;
       int v_frac = src_y_fixed & 0xFF;
 
@@ -359,12 +407,17 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
 
       for (int x = 0; x < irw; x++) {
         int cur_dx = irx + x;
-        if (cur_dx < clip.x || cur_dx >= clip.x + clip.w) continue;
-        if (cur_dx < 0 || cur_dx >= screen_width) continue;
+        if (cur_dx < clip.x || cur_dx >= clip.x + clip.w)
+          continue;
+        if (cur_dx < 0 || cur_dx >= screen_width)
+          continue;
 
         int u_fixed = x * step_x;
         int src_x0 = u_fixed >> 16;
-        if (src_x0 >= win->surface_w) src_x0 = win->surface_w - 1;
+        if (src_x0 < 0)
+          src_x0 = 0;
+        if (src_x0 >= win->surface_w)
+          src_x0 = win->surface_w - 1;
         int src_x1 = (src_x0 + 1 < win->surface_w) ? src_x0 + 1 : src_x0;
         int u_frac = (u_fixed >> 8) & 0xFF;
 
@@ -373,10 +426,12 @@ void compositor_warp_blend(window_t *win, rect_t clip) {
         uint32_t c01 = src_row1[src_x0];
         uint32_t c11 = src_row1[src_x1];
 
-        uint32_t src_px = bilinear_blend_argb(c00, c10, c01, c11, u_frac, v_frac);
+        uint32_t src_px =
+            bilinear_blend_argb(c00, c10, c01, c11, u_frac, v_frac);
 
         if ((src_px >> 24) > 0) {
-          dest_row[cur_dx] = blend_color_32(src_px, dest_row[cur_dx], win->opacity);
+          dest_row[cur_dx] =
+              blend_color_32(src_px, dest_row[cur_dx], win->opacity);
         }
       }
     }
@@ -449,14 +504,24 @@ void compositor_reset_history() {
 }
 
 void compositor_init() {
+  memset(dirty_rects, 0, sizeof(dirty_rects));
+  memset(prev_dirty_rects, 0, sizeof(prev_dirty_rects));
+  memset(prev_2_dirty_rects, 0, sizeof(prev_2_dirty_rects));
+  dirty_count = 0;
+  prev_dirty_count = 0;
+  prev_2_dirty_count = 0;
   compositor_reset_history();
   compositor_invalidate_rect(0, 0, screen_width, screen_height);
 }
 
-void compositor_invalidate_rect(int x, int y, int w, int h) {
+static void compositor_invalidate_rect_internal(int x, int y, int w, int h) {
   rect_t r = {x, y, w, h};
   rect_clip_screen(&r);
   if (r.w <= 0 || r.h <= 0)
+    return;
+  if (r.x < 0 || r.y < 0)
+    return;
+  if (r.x + r.w > screen_width || r.y + r.h > screen_height)
     return;
 
   if (dirty_count == 1 && dirty_rects[0].x == 0 && dirty_rects[0].y == 0 &&
@@ -476,6 +541,17 @@ void compositor_invalidate_rect(int x, int y, int w, int h) {
     }
   }
 
+  // Aggressive merge: union overlapping rects to keep dirty_count low
+  for (int i = 0; i < dirty_count; i++) {
+    rect_t b = dirty_rects[i];
+    // Check overlap
+    if (!(r.x >= b.x + b.w || r.x + r.w <= b.x || r.y >= b.y + b.h ||
+          r.y + r.h <= b.y)) {
+      rect_union(r, b, &dirty_rects[i]);
+      return;
+    }
+  }
+
   if (dirty_count >= MAX_DIRTY_RECTS) {
     dirty_count = 1;
     dirty_rects[0].x = 0;
@@ -488,9 +564,11 @@ void compositor_invalidate_rect(int x, int y, int w, int h) {
   dirty_rects[dirty_count++] = r;
 }
 
-int compositor_needs_render(void) {
-  return compositor_is_dirty();
+void compositor_invalidate_rect(int x, int y, int w, int h) {
+  compositor_invalidate_rect_internal(x, y, w, h);
 }
+
+int compositor_needs_render(void) { return compositor_is_dirty(); }
 
 void compositor_invalidate_window(window_t *win) {
   // Invalidate final bounds
@@ -499,10 +577,9 @@ void compositor_invalidate_window(window_t *win) {
 
   // Invalidate animating bounds to clear cracked trails
   if (win->is_animating) {
-    compositor_invalidate_rect((int)win->anim_x.current_val - 20,
-                               (int)win->anim_y.current_val - 20,
-                               (int)win->anim_w.current_val + 40,
-                               (int)win->anim_h.current_val + 40);
+    compositor_invalidate_rect(
+        (int)win->anim_x.current_val - 20, (int)win->anim_y.current_val - 20,
+        (int)win->anim_w.current_val + 40, (int)win->anim_h.current_val + 40);
   }
 }
 
@@ -513,30 +590,55 @@ int compositor_is_dirty() {
 }
 
 static void present_rect(rect_t r) {
-  uint32_t *dest = bga_get_render_buffer();
-  if (!dest)
+  uint32_t *dest = gfx_device_get_render_buffer();
+  if (!dest || !backbuffer)
     return;
 
-  for (int y = 0; y < r.h; y++) {
-    int offset = (r.y + y) * screen_width + r.x;
-    memcpy(&dest[offset], &backbuffer[offset], r.w * 4);
+  // Bounds check: clamp rect to screen to prevent OOB writes
+  if (r.x < 0) {
+    r.w += r.x;
+    r.x = 0;
+  }
+  if (r.y < 0) {
+    r.h += r.y;
+    r.y = 0;
+  }
+  if (r.x + r.w > screen_width)
+    r.w = screen_width - r.x;
+  if (r.y + r.h > screen_height)
+    r.h = screen_height - r.y;
+  if (r.w <= 0 || r.h <= 0)
+    return;
+
+  if (r.w == screen_width) {
+    // Fast path: contiguous block copy prevents tearing during animations
+    memcpy(&dest[r.y * screen_width], &backbuffer[r.y * screen_width],
+           r.w * r.h * 4);
+  } else {
+    // Slow path: line-by-line copy for partial updates
+    for (int y = 0; y < r.h; y++) {
+      int offset = (r.y + y) * screen_width + r.x;
+      memcpy(&dest[offset], &backbuffer[offset], r.w * 4);
+    }
   }
 }
 
 void compositor_clear_vram() {
+  extern int bga_triple_buffering_enabled;
   uint32_t *page0 = real_lfb;
-  uint32_t *page1 =
-      (uint32_t *)((uint8_t *)real_lfb + (screen_width * screen_height * 4));
-  uint32_t *page2 =
-      (uint32_t *)((uint8_t *)real_lfb + (screen_width * screen_height * 8));
 
   if (backbuffer) {
     if (page0)
       memcpy(page0, backbuffer, screen_width * screen_height * 4);
-    if (page1)
+
+    if (bga_triple_buffering_enabled) {
+      uint32_t *page1 = (uint32_t *)((uint8_t *)real_lfb +
+                                     (screen_width * screen_height * 4));
+      uint32_t *page2 = (uint32_t *)((uint8_t *)real_lfb +
+                                     (screen_width * screen_height * 8));
       memcpy(page1, backbuffer, screen_width * screen_height * 4);
-    if (page2)
       memcpy(page2, backbuffer, screen_width * screen_height * 4);
+    }
   }
 }
 
@@ -546,7 +648,7 @@ static void compositor_render_rect(rect_t clip) {
   extern uint32_t *backbuffer;
   extern uint32_t *desktop_buffer;
 
-  if (!backbuffer)
+  if (!backbuffer || screen_width <= 0 || screen_height <= 0)
     return;
 
   extern window_t windows[];
@@ -564,7 +666,8 @@ static void compositor_render_rect(rect_t clip) {
   // 1. Desktop/Clear Pass
   extern int lockscreen_active;
   if (lockscreen_active) {
-    return; // Do not render anything if lockscreen is active; it handles its own display
+    return; // Do not render anything if lockscreen is active; it handles its
+            // own display
   }
 
   int skip_desktop = 0;
@@ -579,26 +682,43 @@ static void compositor_render_rect(rect_t clip) {
 
   if (!skip_desktop) {
     if (desktop_buffer) {
-      // Use exact clip rendering without padding. Padded rendering was overwriting the global 
-      // backbuffer outside the clip bounds, causing sysmenu flickering and torn UI artifacts.
+      // Use exact clip rendering without padding. Padded rendering was
+      // overwriting the global backbuffer outside the clip bounds, causing
+      // sysmenu flickering and torn UI artifacts.
       int r = 0;
       rect_t padded = {clip.x - r, clip.y - r, clip.w + r * 2, clip.h + r * 2};
-      
+
       // Clamp padded rect to screen bounds with strict positive checks
-      if (padded.x < 0) { padded.w += padded.x; padded.x = 0; }
-      if (padded.y < 0) { padded.h += padded.y; padded.y = 0; }
-      if (padded.x + padded.w > screen_width) padded.w = screen_width - padded.x;
-      if (padded.y + padded.h > screen_height) padded.h = screen_height - padded.y;
+      if (padded.x < 0) {
+        padded.w += padded.x;
+        padded.x = 0;
+      }
+      if (padded.y < 0) {
+        padded.h += padded.y;
+        padded.y = 0;
+      }
+      if (padded.x + padded.w > screen_width)
+        padded.w = screen_width - padded.x;
+      if (padded.y + padded.h > screen_height)
+        padded.h = screen_height - padded.y;
 
       if (padded.w > 0 && padded.h > 0) {
-        // 1. Fill from wallpaper
         uint32_t *dst = &backbuffer[padded.y * screen_width + padded.x];
-        uint32_t *src = &desktop_buffer[padded.y * screen_width + padded.x];
-        gfx_blit_rect(dst, src, padded.w, padded.h, screen_width, screen_width);
-        
-        // 2. Render icons and widgets into the padded area
-        desktop_render_icons(backbuffer, padded);
-        desktop_render_widgets(backbuffer, padded);
+        if (current_should_blur && blurred_desktop_buffer) {
+          // Fast path: Just blit the pre-blurred background (which already has
+          // icons and tint)
+          uint32_t *src =
+              &blurred_desktop_buffer[padded.y * screen_width + padded.x];
+          gfx_blit_rect(dst, src, padded.w, padded.h, screen_width,
+                        screen_width);
+        } else {
+          // Normal unblurred path
+          uint32_t *src = &desktop_buffer[padded.y * screen_width + padded.x];
+          gfx_blit_rect(dst, src, padded.w, padded.h, screen_width,
+                        screen_width);
+          desktop_render_icons(backbuffer, padded);
+          desktop_render_widgets(backbuffer, padded);
+        }
       }
     } else {
       // Fallback: Fill with solid black
@@ -608,31 +728,14 @@ static void compositor_render_rect(rect_t clip) {
         simd_fill_32(dst, 0xFF000000, clip.w);
       }
     }
-
-    // Apply Premium Background Blur when apps are open or Start Menu is active
-    if (current_should_blur) {
-      // Optimized single-pass blur for better performance during window movement
-      compositor_blur_rect(clip.x, clip.y, clip.w, clip.h, 8);
-
-      // Add a subtle dark tint to increase focus on windows
-      for (int y = 0; y < clip.h; y++) {
-        uint32_t *row = &backbuffer[(clip.y + y) * screen_width + clip.x];
-        for (int x = 0; x < clip.w; x++) {
-          uint32_t c = row[x];
-          uint32_t r = ((c >> 16) & 0xFF) * 220 >> 8;
-          uint32_t g = ((c >> 8) & 0xFF) * 220 >> 8;
-          uint32_t b = (c & 0xFF) * 220 >> 8;
-          row[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
-        }
-      }
-    }
   }
 
   // 2. Window Pass (3-layered)
   for (int pass = 0; pass < 3; pass++) {
     for (int w_idx = 0; w_idx < window_count; w_idx++) {
       int win_idx = window_z_order[w_idx];
-      if (win_idx < 0) continue;
+      if (win_idx < 0)
+        continue;
       window_t *win = &windows[win_idx];
       if (win->id == 0 || (win->is_minimized && !win->is_animating))
         continue;
@@ -652,9 +755,18 @@ static void compositor_render_rect(rect_t clip) {
       }
 
       rect_t win_r = {win->x, win->y, win->width, win->height};
+      if (win->is_animating) {
+        // The warp mesh bends far outside the logical bounds.
+        // Skip occlusion and bounds checks for animating windows.
+        win_r.x = 0;
+        win_r.y = 0;
+        win_r.w = screen_width;
+        win_r.h = screen_height;
+      }
+
       rect_t overlap;
       int intersects = rect_intersect(clip, win_r, &overlap);
-      if (!intersects && !win->is_animating)
+      if (!intersects)
         continue;
 
       // Occlusion culling (Standard pass only)
@@ -662,13 +774,19 @@ static void compositor_render_rect(rect_t clip) {
       if (pass == 1 && intersects && !win->is_animating) {
         for (int hi = w_idx + 1; hi < window_count; hi++) {
           int upper_idx = window_z_order[hi];
-          if (upper_idx < 0) continue;
+          if (upper_idx < 0)
+            continue;
           window_t *upper = &windows[upper_idx];
           if (upper->id == 0 || upper->is_minimized || upper->is_animating ||
               upper->opacity < 255 || upper->scale != 1.0f)
             continue;
           rect_t ur = {upper->x, upper->y, upper->width, upper->height};
-          if (rect_contains(ur, overlap)) {
+          rect_t test_overlap = overlap;
+          test_overlap.x += 1;
+          test_overlap.y += 1;
+          test_overlap.w -= 2;
+          test_overlap.h -= 2;
+          if (rect_contains(ur, test_overlap)) {
             occluded = 1;
             break;
           }
@@ -678,8 +796,8 @@ static void compositor_render_rect(rect_t clip) {
         continue;
 
       if (win->needs_redraw) {
-        winmgr_render_window(win);
         win->needs_redraw = 0;
+        winmgr_render_window(win);
       }
 
       // Guard: surface might be NULL if app's draw callback caused OOM
@@ -705,6 +823,16 @@ static void compositor_render_rect(rect_t clip) {
       int surf_off_x = overlap.x - win->x;
       int surf_off_y = overlap.y - win->y;
 
+      if (!win->surface || win->surface_w <= 0 || win->surface_h <= 0) {
+        continue;
+      }
+
+      if (surf_off_x < 0 || surf_off_y < 0 ||
+          surf_off_x + overlap.w > win->surface_w ||
+          surf_off_y + overlap.h > win->surface_h) {
+        continue;
+      }
+
       uint32_t *src_start =
           &win->surface[surf_off_y * win->surface_w + surf_off_x];
       uint32_t *dst_start = &backbuffer[overlap.y * screen_width + overlap.x];
@@ -717,11 +845,12 @@ static void compositor_render_rect(rect_t clip) {
   }
 
   // 3. UI Overlays
-  int is_fullscreen = (active_window && active_window->id != 0 && active_window->is_maximized);
+  int is_fullscreen =
+      (active_window && active_window->id != 0 && active_window->is_maximized);
   if (!is_fullscreen) {
     menubar_draw(backbuffer, clip);
-    sysmenu_draw(backbuffer, clip);
   }
+  sysmenu_draw(backbuffer, clip);
   taskbar_draw(backbuffer, clip);
   startmenu_draw(backbuffer, clip);
   extern void desktop_render_search(uint32_t *target, rect_t clip);
@@ -730,9 +859,6 @@ static void compositor_render_rect(rect_t clip) {
   // 4. Context Menu (if visible)
   extern void ctxmenu_draw_target(int mx, int my, uint32_t *target);
   ctxmenu_draw_target(mouse_x, mouse_y, backbuffer);
-
-  // 5. Present to VRAM
-  present_rect(clip);
 }
 
 void compositor_draw_magnifier(uint32_t *target, int mx, int my) {
@@ -787,32 +913,69 @@ void compositor_draw_magnifier(uint32_t *target, int mx, int my) {
   }
 }
 
+static int max_dirty_age = 0;
+static volatile int g_in_compositor_render = 0;
+
 void compositor_render() {
+  if (__sync_lock_test_and_set(&g_in_compositor_render, 1)) {
+    return;
+  }
+
+  if (!backbuffer || screen_width <= 0 || screen_height <= 0) {
+    dirty_count = 0;
+    __sync_lock_release(&g_in_compositor_render);
+    return;
+  }
+
   uint64_t comp_start = rdtsc();
+
+  if (dirty_count > 0) {
+    max_dirty_age = 5;
+  } else if (max_dirty_age > 0) {
+    max_dirty_age--;
+  } else {
+    if (prev_dirty_count > 0 || prev_2_dirty_count > 0) {
+      compositor_reset_history();
+    }
+  }
 
   // 1. Determine Global Blur State
   current_should_blur = (start_menu_open) ? 1 : 0;
   if (!current_should_blur) {
     for (int i = 0; i < MAX_WINDOWS; i++) {
       window_t *w = &windows[i];
-      // Check if the window is an active, visible application (not a widget or closing)
-      if (w->id != 0 && w->exists && !w->is_minimized && 
-          w->fading_mode != 2 && !(w->flags & WINDOW_FLAG_WIDGET)) {
+      // Check if the window is an active, visible application (not a widget or
+      // closing)
+      if (w->id != 0 && w->exists && !w->is_minimized && w->fading_mode != 2 &&
+          !(w->flags & WINDOW_FLAG_WIDGET)) {
         current_should_blur = 1;
         break;
       }
     }
   }
 
-  // Detect state change and force a full-screen redraw to cover all buffers (triple buffering)
+  // Detect state change and force a full-screen redraw to cover all buffers
+  // (triple buffering)
   if (current_should_blur != last_bg_blurred) {
     last_bg_blurred = current_should_blur;
     force_full_redraw = 3; // Redraw next 3 frames completely
   }
 
+  // Ensure sysmenu area is always redrawn while active (prevents ghosting
+  // across triple-buffered pages)
+  extern int sysmenu_is_active(void);
+  extern void sysmenu_get_rect(int *x, int *y, int *w, int *h);
+  if (sysmenu_is_active()) {
+    int sx, sy, sw, sh;
+    sysmenu_get_rect(&sx, &sy, &sw, &sh);
+    compositor_invalidate_rect_internal(sx, sy, sw, sh);
+  }
+
   if (dirty_count == 0 && prev_dirty_count == 0 && prev_2_dirty_count == 0 &&
-      force_full_redraw <= 0)
+      force_full_redraw <= 0) {
+    __sync_lock_release(&g_in_compositor_render);
     return;
+  }
 
   extern int mouse_x, mouse_y;
   extern int mission_control_active;
@@ -825,8 +988,8 @@ void compositor_render() {
   for (int i = 0; i < prev_dirty_count && combined_count < MAX_DIRTY_RECTS * 3;
        i++)
     combined_rects[combined_count++] = prev_dirty_rects[i];
-  for (int i = 0; i < prev_2_dirty_count && combined_count < MAX_DIRTY_RECTS * 3;
-       i++)
+  for (int i = 0;
+       i < prev_2_dirty_count && combined_count < MAX_DIRTY_RECTS * 3; i++)
     combined_rects[combined_count++] = prev_2_dirty_rects[i];
 
   // OPTIMIZATION: Simple rect merging to reduce draw calls
@@ -849,303 +1012,561 @@ void compositor_render() {
   }
 
   // Full screen special cases
-  if (mission_control_active || final_count > 16 || force_full_redraw > 0) {
-    if (force_full_redraw > 0)
-      force_full_redraw--;
-
-    rect_t screen = {0, 0, screen_width, screen_height};
-    compositor_render_rect(screen);
-
-    if (mission_control_active) {
-      int total = screen_width * screen_height;
-      uint32_t *p = backbuffer;
-      for (int i = 0; i < total; i++) {
-        uint32_t src = p[i];
-        uint32_t rb = (src & 0x00FF00FF) * 80;
-        uint32_t g = (src & 0x0000FF00) * 80;
-        p[i] = 0xFF000000 | ((rb >> 8) & 0x00FF00FF) | ((g >> 8) & 0x0000FF00);
+  // Also force full-screen during any window animation to prevent stale content
+  // across triple-buffered pages (the 3-frame dirty history may not cover the
+  // entire sweep of a multi-frame genie animation).
+  extern int window_z_order[];
+  extern int window_count;
+  int any_window_animating = 0;
+  for (int i = 0; i < window_count; i++) {
+    int idx = window_z_order[i];
+    if (idx >= 0) {
+      window_t *w = &windows[idx];
+      if (w->is_animating || w->fading_mode != 0 || w->vel_x != 0 ||
+          w->vel_y != 0 || w->anim_scale.active) {
+        any_window_animating = 1;
+        break;
       }
+    }
+  }
 
-      extern int window_z_order[];
-      extern int window_count;
-      extern window_t windows[];
-      int open_count = 0;
-      int open_indices[32];
-      for (int i = 0; i < window_count && open_count < 32; i++) {
-        window_t *win = &windows[window_z_order[i]];
-        if (win->id != 0)
-          open_indices[open_count++] = window_z_order[i];
-      }
+  extern int startmenu_is_animating();
+  if (startmenu_is_animating())
+    any_window_animating = 1;
 
-      if (open_count > 0) {
-        int cols = (open_count > 6) ? 4 : (open_count > 2 ? 3 : 2);
-        int rows = (open_count + cols - 1) / cols;
-        int pad = 24;
-        int top_margin = 50;
-        int thumb_w = (screen_width - pad * (cols + 1)) / cols;
-        int thumb_h =
-            (screen_height - top_margin - pad * (rows + 1) - 60) / rows;
-        if (thumb_h > 300)
-          thumb_h = 300;
+  extern int taskbar_is_animating(void);
+  if (taskbar_is_animating())
+    any_window_animating = 1;
 
-        vga_draw_string_lfb(screen_width / 2 - 60, 20, "Mission Control",
-                            0xFFFFFFFF, backbuffer);
+  extern int sysmenu_is_animating(void);
+  if (sysmenu_is_animating())
+    any_window_animating = 1;
+  extern graphics_device_t *current_gfx_device;
+  int has_buffer =
+      (current_gfx_device && current_gfx_device->has_triple_buffer);
+  int force_full = mission_control_active ||
+                   final_count >= MAX_DIRTY_RECTS - 1 || force_full_redraw > 0;
+  if (has_buffer && any_window_animating) {
+    force_full = 1;
+  }
+  if (force_full) {
+      if (force_full_redraw > 0)
+        force_full_redraw--;
 
-        for (int i = 0; i < open_count; i++) {
-          int col = i % cols;
-          int row = i / cols;
-          int tx = pad + col * (thumb_w + pad);
-          int ty = top_margin + pad + row * (thumb_h + pad + 20);
-          window_t *win = &windows[open_indices[i]];
-          extern window_t *active_window;
-          int is_active_win = (win == active_window);
+      rect_t screen = {0, 0, screen_width, screen_height};
+      compositor_render_rect(screen);
 
-          uint32_t card_col = is_active_win ? 0xFF2A4A6A : 0xFF2A2A38;
-          for (int cy = 0; cy < thumb_h + 20; cy++) {
-            for (int cx = 0; cx < thumb_w; cx++) {
-              int gx = tx + cx, gy = ty + cy;
-              if (gx < 0 || gx >= screen_width || gy < 0 || gy >= screen_height)
-                continue;
-              int r = 8, draw = 1;
-              if (cx < r && cy < r) {
-                int ddx = r - cx - 1, ddy = r - cy - 1;
-                if (ddx * ddx + ddy * ddy >= r * r) draw = 0;
-              } else if (cx >= thumb_w - r && cy < r) {
-                int ddx = cx - (thumb_w - r), ddy = r - cy - 1;
-                if (ddx * ddx + ddy * ddy >= r * r) draw = 0;
-              } else if (cx < r && cy >= thumb_h + 20 - r) {
-                int ddx = r - cx - 1, ddy = cy - (thumb_h + 20 - r);
-                if (ddx * ddx + ddy * ddy >= r * r) draw = 0;
-              } else if (cx >= thumb_w - r && cy >= thumb_h + 20 - r) {
-                int ddx = cx - (thumb_w - r), ddy = cy - (thumb_h + 20 - r);
-                if (ddx * ddx + ddy * ddy >= r * r) draw = 0;
+      if (mission_control_active) {
+        int total = screen_width * screen_height;
+        uint32_t *p = backbuffer;
+        for (int i = 0; i < total; i++) {
+          uint32_t src = p[i];
+          uint32_t rb = (src & 0x00FF00FF) * 80;
+          uint32_t g = (src & 0x0000FF00) * 80;
+          p[i] =
+              0xFF000000 | ((rb >> 8) & 0x00FF00FF) | ((g >> 8) & 0x0000FF00);
+        }
+
+        extern int window_z_order[];
+        extern int window_count;
+        extern window_t windows[];
+        int open_count = 0;
+        int open_indices[32];
+        for (int i = 0; i < window_count && open_count < 32; i++) {
+          window_t *win = &windows[window_z_order[i]];
+          if (win->id != 0)
+            open_indices[open_count++] = window_z_order[i];
+        }
+
+        if (open_count > 0) {
+          int cols = (open_count > 6) ? 4 : (open_count > 2 ? 3 : 2);
+          int rows = (open_count + cols - 1) / cols;
+          int pad = 24;
+          int top_margin = 50;
+          int thumb_w = (screen_width - pad * (cols + 1)) / cols;
+          int thumb_h =
+              (screen_height - top_margin - pad * (rows + 1) - 60) / rows;
+          if (thumb_h > 300)
+            thumb_h = 300;
+
+          vga_draw_string_lfb(screen_width / 2 - 60, 20, "Mission Control",
+                              0xFFFFFFFF, backbuffer);
+
+          for (int i = 0; i < open_count; i++) {
+            int col = i % cols;
+            int row = i / cols;
+            int tx = pad + col * (thumb_w + pad);
+            int ty = top_margin + pad + row * (thumb_h + pad + 20);
+            window_t *win = &windows[open_indices[i]];
+            extern window_t *active_window;
+            int is_active_win = (win == active_window);
+
+            uint32_t card_col = is_active_win ? 0xFF2A4A6A : 0xFF2A2A38;
+            for (int cy = 0; cy < thumb_h + 20; cy++) {
+              for (int cx = 0; cx < thumb_w; cx++) {
+                int gx = tx + cx, gy = ty + cy;
+                if (gx < 0 || gx >= screen_width || gy < 0 ||
+                    gy >= screen_height)
+                  continue;
+                int r = 8, draw = 1;
+                if (cx < r && cy < r) {
+                  int ddx = r - cx - 1, ddy = r - cy - 1;
+                  if (ddx * ddx + ddy * ddy >= r * r)
+                    draw = 0;
+                } else if (cx >= thumb_w - r && cy < r) {
+                  int ddx = cx - (thumb_w - r), ddy = r - cy - 1;
+                  if (ddx * ddx + ddy * ddy >= r * r)
+                    draw = 0;
+                } else if (cx < r && cy >= thumb_h + 20 - r) {
+                  int ddx = r - cx - 1, ddy = cy - (thumb_h + 20 - r);
+                  if (ddx * ddx + ddy * ddy >= r * r)
+                    draw = 0;
+                } else if (cx >= thumb_w - r && cy >= thumb_h + 20 - r) {
+                  int ddx = cx - (thumb_w - r), ddy = cy - (thumb_h + 20 - r);
+                  if (ddx * ddx + ddy * ddy >= r * r)
+                    draw = 0;
+                }
+                if (draw)
+                  backbuffer[gy * screen_width + gx] = card_col;
               }
-              if (draw)
-                backbuffer[gy * screen_width + gx] = card_col;
             }
-          }
 
-          if (is_active_win) {
-            for (int bx = 0; bx < thumb_w; bx++) {
-              backbuffer[ty * screen_width + tx + bx] = 0xFF4488CC;
-              backbuffer[(ty + thumb_h + 19) * screen_width + tx + bx] =
-                  0xFF4488CC;
+            if (is_active_win) {
+              for (int bx = 0; bx < thumb_w; bx++) {
+                backbuffer[ty * screen_width + tx + bx] = 0xFF4488CC;
+                backbuffer[(ty + thumb_h + 19) * screen_width + tx + bx] =
+                    0xFF4488CC;
+              }
+              for (int by = 0; by < thumb_h + 20; by++) {
+                backbuffer[(ty + by) * screen_width + tx] = 0xFF4488CC;
+                backbuffer[(ty + by) * screen_width + tx + thumb_w - 1] =
+                    0xFF4488CC;
+              }
             }
-            for (int by = 0; by < thumb_h + 20; by++) {
-              backbuffer[(ty + by) * screen_width + tx] = 0xFF4488CC;
-              backbuffer[(ty + by) * screen_width + tx + thumb_w - 1] =
-                  0xFF4488CC;
-            }
-          }
 
-          if (win->surface && win->surface_w > 0 && win->surface_h > 0) {
-            for (int dy = 0; dy < thumb_h; dy++) {
-              int gy = ty + 18 + dy;
-              if (gy < 0 || gy >= screen_height) continue;
-              int src_y = (dy * win->surface_h) / thumb_h;
-              uint32_t *src_row = &win->surface[src_y * win->surface_w];
-              uint32_t *dst_row = &backbuffer[gy * screen_width];
-              for (int dx = 0; dx < thumb_w - 8; dx++) {
-                int gx = tx + 4 + dx;
-                if (gx < 0 || gx >= screen_width) continue;
-                int src_x = (dx * win->surface_w) / (thumb_w - 8);
-                dst_row[gx] = src_row[src_x];
+            if (win->surface && win->surface_w > 0 && win->surface_h > 0) {
+              for (int dy = 0; dy < thumb_h; dy++) {
+                int gy = ty + 18 + dy;
+                if (gy < 0 || gy >= screen_height)
+                  continue;
+                int src_y = (dy * win->surface_h) / thumb_h;
+                uint32_t *src_row = &win->surface[src_y * win->surface_w];
+                uint32_t *dst_row = &backbuffer[gy * screen_width];
+                for (int dx = 0; dx < thumb_w - 8; dx++) {
+                  int gx = tx + 4 + dx;
+                  if (gx < 0 || gx >= screen_width)
+                    continue;
+                  int src_x = (dx * win->surface_w) / (thumb_w - 8);
+                  dst_row[gx] = src_row[src_x];
+                }
               }
             }
           }
         }
       }
+    } else {
+      for (int i = 0; i < final_count; i++) {
+        compositor_render_rect(combined_rects[i]);
+      }
     }
-  } else {
-    for (int i = 0; i < final_count; i++) {
-      compositor_render_rect(combined_rects[i]);
+
+    if (debug_mode) {
+      for (int i = 0; i < final_count; i++) {
+        rect_t r = combined_rects[i];
+        for (int x = r.x; x < r.x + r.w; x++) {
+          if (x >= 0 && x < screen_width) {
+            if (r.y >= 0 && r.y < screen_height)
+              backbuffer[r.y * screen_width + x] = 0xFFFF0000;
+            if (r.y + r.h - 1 >= 0 && r.y + r.h - 1 < screen_height)
+              backbuffer[(r.y + r.h - 1) * screen_width + x] = 0xFFFF0000;
+          }
+        }
+        for (int y = r.y; y < r.y + r.h; y++) {
+          if (y >= 0 && y < screen_height) {
+            if (r.x >= 0 && r.x < screen_width)
+              backbuffer[y * screen_width + r.x] = 0xFFFF0000;
+            if (r.x + r.w - 1 >= 0 && r.x + r.w - 1 < screen_width)
+              backbuffer[y * screen_width + r.x + r.w - 1] = 0xFFFF0000;
+          }
+        }
+      }
+    }
+
+    // Safety net: ensure sysmenu is drawn to backbuffer before mouse/present
+    {
+      extern int sysmenu_is_active(void);
+      extern void sysmenu_get_rect(int *x, int *y, int *w, int *h);
+      extern void sysmenu_draw(uint32_t *buffer, rect_t clip);
+      if (sysmenu_is_active()) {
+        int sx, sy, sw, sh;
+        sysmenu_get_rect(&sx, &sy, &sw, &sh);
+        rect_t sys_clip = {sx, sy, sw, sh};
+        sysmenu_draw(backbuffer, sys_clip);
+      }
+    }
+
+    uint32_t *vram = gfx_device_get_render_buffer();
+    if (vram) {
+      // Save background from backbuffer
+      uint32_t saved_mouse_bg[32 * 32];
+      for (int y = 0; y < 32; y++) {
+        for (int x = 0; x < 32; x++) {
+          int px = mouse_x + x - 10;
+          int py = mouse_y + y - 10;
+          if (px >= 0 && px < screen_width && py >= 0 && py < screen_height) {
+            saved_mouse_bg[y * 32 + x] = backbuffer[py * screen_width + px];
+          }
+        }
+      }
+
+      if (magnifier_enabled) {
+        compositor_draw_magnifier(backbuffer, mouse_x, mouse_y);
+      }
+      extern void kernel_draw_mouse_to_buffer(uint32_t *target, int mx, int my);
+      kernel_draw_mouse_to_buffer(backbuffer, mouse_x, mouse_y);
+
+      // Present all changes to VRAM atomically
+      extern graphics_device_t *current_gfx_device;
+      extern void bga_wait_vsync(void);
+      int has_buffer =
+          (current_gfx_device && current_gfx_device->has_triple_buffer);
+
+      // A trail of mouse events can easily generate 30+ dirty rects across 3 frames.
+      // We should almost NEVER fallback to an 8MB full-screen redraw unless we absolutely have to,
+      // because an 8MB PCI transfer in single buffering causes massive horizontal tearing.
+      int force_full = mission_control_active ||
+                       final_count >= MAX_DIRTY_RECTS - 1 || force_full_redraw > 0;
+
+      // Only force full screen for animations if we are double/triple buffering.
+      // In single buffering (!has_buffer), we can just use dirty rects to avoid huge 8MB PCI transfers!
+      if (has_buffer && any_window_animating) {
+        force_full = 1;
+      }
+
+      if (force_full) {
+        if (!has_buffer)
+          bga_wait_vsync();
+        rect_t screen = {0, 0, screen_width, screen_height};
+        present_rect(screen);
+      } else {
+        if (!has_buffer)
+          bga_wait_vsync();
+        for (int i = 0; i < final_count; i++) {
+          present_rect(combined_rects[i]);
+        }
+        rect_t mouse_r = {mouse_x - 10, mouse_y - 10, 32, 32};
+        present_rect(mouse_r);
+      }
+
+      // Safety net: always re-present sysmenu area if active, to guarantee all
+      // triple-buffered VRAM pages carry the sysmenu content after every frame.
+      {
+        extern int sysmenu_is_active(void);
+        extern void sysmenu_get_rect(int *x, int *y, int *w, int *h);
+        if (sysmenu_is_active()) {
+          int sx, sy, sw, sh;
+          sysmenu_get_rect(&sx, &sy, &sw, &sh);
+          rect_t sys_r = {sx, sy, sw, sh};
+          present_rect(sys_r);
+        }
+      }
+
+      // Restore backbuffer
+      for (int y = 0; y < 32; y++) {
+        for (int x = 0; x < 32; x++) {
+          int px = mouse_x + x - 10;
+          int py = mouse_y + y - 10;
+          if (px >= 0 && px < screen_width && py >= 0 && py < screen_height) {
+            backbuffer[py * screen_width + px] = saved_mouse_bg[y * 32 + x];
+          }
+        }
+      }
+
+      gfx_device_flip();
+    }
+
+    prev_2_dirty_count = prev_dirty_count;
+    for (int i = 0; i < prev_dirty_count; i++)
+      prev_2_dirty_rects[i] = prev_dirty_rects[i];
+
+    prev_dirty_count = dirty_count;
+    for (int i = 0; i < dirty_count; i++)
+      prev_dirty_rects[i] = dirty_rects[i];
+
+    dirty_count = 0;
+
+    uint64_t comp_end = rdtsc();
+    __sync_lock_release(&g_in_compositor_render);
+    compositor_cycles = comp_end - comp_start;
+
+    extern uint32_t get_timer_ticks(void);
+    uint32_t now = get_timer_ticks();
+    if (now - last_fps_tick >= 1000) {
+      current_fps = frames_this_second;
+      frames_this_second = 0;
+      last_fps_tick = now;
+      compositor_invalidate_rect_internal(210, 0, 320, 24);
+    }
+    frames_this_second++;
+
+    if (compositor_cycles > 1000000) {
+      // Log: "Slow compositor frame: %llu cycles, %d rects"
     }
   }
 
-  uint32_t *vram = bga_get_render_buffer();
-  if (vram) {
-    if (magnifier_enabled) {
-      compositor_draw_magnifier(vram, mouse_x, mouse_y);
+  void compositor_set_overlay(int x, int y, int w, int h, int enabled) {
+    if (!enabled) {
+      if (overlay_active) {
+        compositor_invalidate_rect(overlay_rect.x, overlay_rect.y,
+                                   overlay_rect.w, overlay_rect.h);
+        overlay_active = 0;
+      }
+      return;
     }
-    extern void kernel_draw_mouse_to_buffer(uint32_t *target, int mx, int my);
-    kernel_draw_mouse_to_buffer(vram, mouse_x, mouse_y);
-    bga_flip();
-  }
-
-  prev_2_dirty_count = prev_dirty_count;
-  for (int i = 0; i < prev_dirty_count; i++)
-    prev_2_dirty_rects[i] = prev_dirty_rects[i];
-
-  prev_dirty_count = dirty_count;
-  for (int i = 0; i < dirty_count; i++)
-    prev_dirty_rects[i] = dirty_rects[i];
-
-  dirty_count = 0;
-
-  uint64_t comp_end = rdtsc();
-  compositor_cycles = comp_end - comp_start;
-
-  extern uint32_t get_timer_ticks(void);
-  uint32_t now = get_timer_ticks();
-  if (now - last_fps_tick >= 1000) {
-    current_fps = frames_this_second;
-    frames_this_second = 0;
-    last_fps_tick = now;
-    compositor_invalidate_rect(210, 0, 320, 24);
-  }
-  frames_this_second++;
-}
-
-void compositor_set_overlay(int x, int y, int w, int h, int enabled) {
-  if (!enabled) {
-    if (overlay_active) {
+    if (!overlay_active) {
+      overlay_active = 1;
+      overlay_rect.x = x;
+      overlay_rect.y = y;
+      overlay_rect.w = w;
+      overlay_rect.h = h;
+      compositor_invalidate_rect(x, y, w, h);
+    } else if (x != overlay_rect.x || y != overlay_rect.y ||
+               w != overlay_rect.w || h != overlay_rect.h) {
       compositor_invalidate_rect(overlay_rect.x, overlay_rect.y, overlay_rect.w,
                                  overlay_rect.h);
-      overlay_active = 0;
-    }
-    return;
-  }
-  if (!overlay_active) {
-    overlay_active = 1;
-    overlay_rect.x = x;
-    overlay_rect.y = y;
-    overlay_rect.w = w;
-    overlay_rect.h = h;
-    compositor_invalidate_rect(x, y, w, h);
-  } else if (x != overlay_rect.x || y != overlay_rect.y ||
-             w != overlay_rect.w || h != overlay_rect.h) {
-    compositor_invalidate_rect(overlay_rect.x, overlay_rect.y, overlay_rect.w,
-                               overlay_rect.h);
-    overlay_rect.x = x;
-    overlay_rect.y = y;
-    overlay_rect.w = w;
-    overlay_rect.h = h;
-    compositor_invalidate_rect(x, y, w, h);
-  }
-}
-
-void compositor_blur_rect(int x, int y, int w, int h, int radius) {
-  if (!backbuffer || w <= 0 || h <= 0 || radius <= 0)
-    return;
-
-  // Clamp rect to screen bounds
-  int x1 = (x < 0) ? 0 : x;
-  int y1 = (y < 0) ? 0 : y;
-  int x2 = (x + w > screen_width) ? screen_width : x + w;
-  int y2 = (y + h > screen_height) ? screen_height : y + h;
-
-  int bw = x2 - x1;
-  int bh = y2 - y1;
-  if (bw <= 0 || bh <= 0)
-    return;
-
-  // Cap radius for performance and stability
-  // Cap radius for performance and stability
-  // Cap radius for performance and stability
-  if (radius > 20) radius = 20;
-  if (radius < 2) radius = 2;
-  
-  const int r = radius;
-  const int div = (2 * r + 1);
-  const uint32_t inv_div = (1 << 16) / div; // Fast division multiplier
-  const int32_t max_sum = 255 * div;
-  
-  // Use a slightly larger local buffer for safety, but cap it
-  static uint32_t line_buf[4096];
-  if (bw > 4096) bw = 4096;
-  if (bh > 4096) bh = 4096;
-
-  // Horizontal pass - Robust sliding window
-  for (int j = y1; j < y2; j++) {
-    int32_t r_sum = 0, g_sum = 0, b_sum = 0; // Use signed to detect drift/underflow
-    uint32_t *row = &backbuffer[j * screen_width];
-
-    // Initial sum for the first window [x1-r, x1+r]
-    for (int i = -r; i <= r; i++) {
-      int sx = x1 + i;
-      if (sx < 0) sx = 0;
-      if (sx >= screen_width) sx = screen_width - 1;
-      uint32_t p = row[sx];
-      r_sum += (p >> 16) & 0xFF;
-      g_sum += (p >> 8) & 0xFF;
-      b_sum += p & 0xFF;
-    }
-
-    for (int i = 0; i < bw; i++) {
-      // Store current average using fast multiplicative division
-      line_buf[i] = 0xFF000000 | 
-                    ((((r_sum * inv_div) >> 16) & 0xFF) << 16) | 
-                    ((((g_sum * inv_div) >> 16) & 0xFF) << 8) | 
-                    (((b_sum * inv_div) >> 16) & 0xFF);
-      
-      // Slide window: remove left, add right
-      int out_x = x1 + i - r;
-      int in_x = x1 + i + r + 1;
-      
-      if (out_x < 0) out_x = 0;
-      if (out_x >= screen_width) out_x = screen_width - 1;
-      if (in_x < 0) in_x = 0;
-      if (in_x >= screen_width) in_x = screen_width - 1;
-
-      uint32_t p_out = row[out_x];
-      uint32_t p_in = row[in_x];
-      
-      r_sum += (int32_t)((p_in >> 16) & 0xFF) - (int32_t)((p_out >> 16) & 0xFF);
-      g_sum += (int32_t)((p_in >> 8) & 0xFF) - (int32_t)((p_out >> 8) & 0xFF);
-      b_sum += (int32_t)(p_in & 0xFF) - (int32_t)(p_out & 0xFF);
-
-      // Safety clamp to prevent neon color glitches from drift
-      if (r_sum < 0) r_sum = 0; else if (r_sum > max_sum) r_sum = max_sum;
-      if (g_sum < 0) g_sum = 0; else if (g_sum > max_sum) g_sum = max_sum;
-      if (b_sum < 0) b_sum = 0; else if (b_sum > max_sum) b_sum = max_sum;
-    }
-    memcpy(&row[x1], line_buf, bw * 4);
-  }
-
-  // Vertical pass - Robust sliding window
-  for (int i = x1; i < x2; i++) {
-    int32_t r_sum = 0, g_sum = 0, b_sum = 0;
-    
-    // Initial sum for the first window [y1-r, y1+r]
-    for (int j = -r; j <= r; j++) {
-      int sy = y1 + j;
-      if (sy < 0) sy = 0;
-      if (sy >= screen_height) sy = screen_height - 1;
-      uint32_t p = backbuffer[sy * screen_width + i];
-      r_sum += (p >> 16) & 0xFF;
-      g_sum += (p >> 8) & 0xFF;
-      b_sum += p & 0xFF;
-    }
-
-    for (int j = 0; j < bh; j++) {
-      // Fast multiplicative division
-      line_buf[j] = 0xFF000000 | 
-                    ((((r_sum * inv_div) >> 16) & 0xFF) << 16) |
-                    ((((g_sum * inv_div) >> 16) & 0xFF) << 8) | 
-                    (((b_sum * inv_div) >> 16) & 0xFF);
-      
-      int out_y = y1 + j - r;
-      int in_y = y1 + j + r + 1;
-      
-      if (out_y < 0) out_y = 0;
-      if (out_y >= screen_height) out_y = screen_height - 1;
-      if (in_y < 0) in_y = 0;
-      if (in_y >= screen_height) in_y = screen_height - 1;
-
-      uint32_t p_out = backbuffer[out_y * screen_width + i];
-      uint32_t p_in = backbuffer[in_y * screen_width + i];
-      
-      r_sum += (int32_t)((p_in >> 16) & 0xFF) - (int32_t)((p_out >> 16) & 0xFF);
-      g_sum += (int32_t)((p_in >> 8) & 0xFF) - (int32_t)((p_out >> 8) & 0xFF);
-      b_sum += (int32_t)(p_in & 0xFF) - (int32_t)(p_out & 0xFF);
-
-      if (r_sum < 0) r_sum = 0; else if (r_sum > max_sum) r_sum = max_sum;
-      if (g_sum < 0) g_sum = 0; else if (g_sum > max_sum) g_sum = max_sum;
-      if (b_sum < 0) b_sum = 0; else if (b_sum > max_sum) b_sum = max_sum;
-    }
-    
-    for (int j = 0; j < bh; j++) {
-      backbuffer[(y1 + j) * screen_width + i] = line_buf[j];
+      overlay_rect.x = x;
+      overlay_rect.y = y;
+      overlay_rect.w = w;
+      overlay_rect.h = h;
+      compositor_invalidate_rect(x, y, w, h);
     }
   }
-}
+
+  void compositor_blur_rect(uint32_t *buffer, int x, int y, int w, int h,
+                            int radius) {
+    if (x < 0) {
+      w += x;
+      x = 0;
+    }
+    if (y < 0) {
+      h += y;
+      y = 0;
+    }
+    if (x + w > screen_width)
+      w = screen_width - x;
+    if (y + h > screen_height)
+      h = screen_height - y;
+    if (w <= 0 || h <= 0)
+      return;
+
+    if (!buffer || radius <= 0)
+      return;
+
+    // Clamp rect to screen bounds
+    int x1 = (x < 0) ? 0 : x;
+    int y1 = (y < 0) ? 0 : y;
+    int x2 = (x + w > screen_width) ? screen_width : x + w;
+    int y2 = (y + h > screen_height) ? screen_height : y + h;
+
+    int bw = x2 - x1;
+    int bh = y2 - y1;
+    if (bw <= 0 || bh <= 0)
+      return;
+
+    // Cap radius for performance and stability
+    if (radius > 20)
+      radius = 20;
+    if (radius < 2)
+      radius = 2;
+
+    const int r = radius;
+    const int div = (2 * r + 1);
+    const uint32_t inv_div = (1 << 16) / div; // Fast division multiplier
+    const int32_t max_sum = 255 * div;
+
+    // Static line buffer sized for up to ~8K width displays
+    static uint32_t line_buf[8192];
+    if (bw > 8192 || bh > 8192) {
+      return;
+    }
+
+    // Horizontal pass - Robust sliding window
+    for (int j = y1; j < y2; j++) {
+      int32_t r_sum = 0, g_sum = 0,
+              b_sum = 0; // Use signed to detect drift/underflow
+      uint32_t *row = &buffer[j * screen_width];
+
+      // Initial sum for the first window [x1-r, x1+r]
+      for (int i = -r; i <= r; i++) {
+        int sx = x1 + i;
+        if (sx < 0)
+          sx = 0;
+        if (sx >= screen_width)
+          sx = screen_width - 1;
+        uint32_t p = row[sx];
+        r_sum += (p >> 16) & 0xFF;
+        g_sum += (p >> 8) & 0xFF;
+        b_sum += p & 0xFF;
+      }
+
+      for (int i = 0; i < bw; i++) {
+        // Store current average using fast multiplicative division
+        line_buf[i] = 0xFF000000 | ((((r_sum * inv_div) >> 16) & 0xFF) << 16) |
+                      ((((g_sum * inv_div) >> 16) & 0xFF) << 8) |
+                      (((b_sum * inv_div) >> 16) & 0xFF);
+
+        // Slide window: remove left, add right
+        int out_x = x1 + i - r;
+        int in_x = x1 + i + r + 1;
+
+        if (out_x < 0)
+          out_x = 0;
+        if (out_x >= screen_width)
+          out_x = screen_width - 1;
+        if (in_x < 0)
+          in_x = 0;
+        if (in_x >= screen_width)
+          in_x = screen_width - 1;
+
+        uint32_t p_out = row[out_x];
+        uint32_t p_in = row[in_x];
+
+        r_sum +=
+            (int32_t)((p_in >> 16) & 0xFF) - (int32_t)((p_out >> 16) & 0xFF);
+        g_sum += (int32_t)((p_in >> 8) & 0xFF) - (int32_t)((p_out >> 8) & 0xFF);
+        b_sum += (int32_t)(p_in & 0xFF) - (int32_t)(p_out & 0xFF);
+
+        // Safety clamp to prevent neon color glitches from drift
+        if (r_sum < 0)
+          r_sum = 0;
+        else if (r_sum > max_sum)
+          r_sum = max_sum;
+        if (g_sum < 0)
+          g_sum = 0;
+        else if (g_sum > max_sum)
+          g_sum = max_sum;
+        if (b_sum < 0)
+          b_sum = 0;
+        else if (b_sum > max_sum)
+          b_sum = max_sum;
+      }
+      memcpy(&row[x1], line_buf, bw * 4);
+    }
+
+    // Vertical pass - Robust sliding window
+    for (int i = x1; i < x2; i++) {
+      int32_t r_sum = 0, g_sum = 0, b_sum = 0;
+
+      // Initial sum for the first window [y1-r, y1+r]
+      for (int j = -r; j <= r; j++) {
+        int sy = y1 + j;
+        if (sy < 0)
+          sy = 0;
+        if (sy >= screen_height)
+          sy = screen_height - 1;
+        uint32_t p = buffer[sy * screen_width + i];
+        r_sum += (p >> 16) & 0xFF;
+        g_sum += (p >> 8) & 0xFF;
+        b_sum += p & 0xFF;
+      }
+
+      for (int j = 0; j < bh; j++) {
+        // Fast multiplicative division
+        line_buf[j] = 0xFF000000 | ((((r_sum * inv_div) >> 16) & 0xFF) << 16) |
+                      ((((g_sum * inv_div) >> 16) & 0xFF) << 8) |
+                      (((b_sum * inv_div) >> 16) & 0xFF);
+
+        int out_y = y1 + j - r;
+        int in_y = y1 + j + r + 1;
+
+        if (out_y < 0)
+          out_y = 0;
+        if (out_y >= screen_height)
+          out_y = screen_height - 1;
+        if (in_y < 0)
+          in_y = 0;
+        if (in_y >= screen_height)
+          in_y = screen_height - 1;
+
+        uint32_t p_out = buffer[out_y * screen_width + i];
+        uint32_t p_in = buffer[in_y * screen_width + i];
+
+        r_sum +=
+            (int32_t)((p_in >> 16) & 0xFF) - (int32_t)((p_out >> 16) & 0xFF);
+        g_sum += (int32_t)((p_in >> 8) & 0xFF) - (int32_t)((p_out >> 8) & 0xFF);
+        b_sum += (int32_t)(p_in & 0xFF) - (int32_t)(p_out & 0xFF);
+
+        if (r_sum < 0)
+          r_sum = 0;
+        else if (r_sum > max_sum)
+          r_sum = max_sum;
+        if (g_sum < 0)
+          g_sum = 0;
+        else if (g_sum > max_sum)
+          g_sum = max_sum;
+        if (b_sum < 0)
+          b_sum = 0;
+        else if (b_sum > max_sum)
+          b_sum = max_sum;
+      }
+
+      for (int j = 0; j < bh; j++) {
+        buffer[(y1 + j) * screen_width + i] = line_buf[j];
+      }
+    }
+  }
+
+  static volatile int blur_update_in_progress = 0;
+
+  void compositor_update_blurred_bg(void) {
+    if (blur_update_in_progress)
+      return;
+    blur_update_in_progress = 1;
+
+    extern uint32_t *desktop_buffer;
+    extern int screen_width, screen_height;
+    static int blurred_last_w = 0, blurred_last_h = 0;
+
+    if (!desktop_buffer || screen_width <= 0 || screen_height <= 0) {
+      blur_update_in_progress = 0;
+      return;
+    }
+
+    if (blurred_desktop_buffer &&
+        (blurred_last_w != screen_width || blurred_last_h != screen_height)) {
+      kfree(blurred_desktop_buffer);
+      blurred_desktop_buffer = 0;
+    }
+
+    if (!blurred_desktop_buffer) {
+      blurred_desktop_buffer =
+          (uint32_t *)kmalloc(screen_width * screen_height * 4);
+      blurred_last_w = screen_width;
+      blurred_last_h = screen_height;
+    }
+    if (!blurred_desktop_buffer) {
+      blur_update_in_progress = 0;
+      return;
+    }
+    // 1. Copy the raw wallpaper
+    memcpy(blurred_desktop_buffer, desktop_buffer,
+           screen_width * screen_height * 4);
+    // 2. Draw the icons/widgets on it so they get blurred
+    rect_t full_screen = {0, 0, screen_width, screen_height};
+    desktop_render_icons(blurred_desktop_buffer, full_screen);
+    desktop_render_widgets(blurred_desktop_buffer, full_screen);
+    // 3. Apply the blur to the entire blurred_desktop_buffer
+    compositor_blur_rect(blurred_desktop_buffer, 0, 0, screen_width,
+                         screen_height, 8);
+    // 4. Apply the subtle dark tint (same as the old 220/256 loop)
+    int total_pixels = screen_width * screen_height;
+    for (int i = 0; i < total_pixels; i++) {
+      uint32_t c = blurred_desktop_buffer[i];
+      uint32_t r = (((c >> 16) & 0xFF) * 220) >> 8;
+      uint32_t g = (((c >> 8) & 0xFF) * 220) >> 8;
+      uint32_t b = ((c & 0xFF) * 220) >> 8;
+      blurred_desktop_buffer[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
+    }
+
+    blur_update_in_progress = 0;
+  }

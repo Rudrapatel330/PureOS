@@ -59,6 +59,11 @@ static char compose_to[MAX_EMAIL_ADDR] = "";
 static char compose_subject[MAX_SUBJECT] = "";
 static char compose_body[2048] = "";
 
+static animation_t msg_hover_anims[32];
+static animation_t row_swipe_x[32];
+static int mail_drag_start_mx = 0;
+static int mail_drag_idx = -1;
+
 void mail_app_refresh_accounts() {
   account_count = 0;
   FileInfo files[16];
@@ -370,10 +375,49 @@ void mail_app_draw(window_t *win) {
                 mail_mouse_x < list_x + MAIL_LIST_WIDTH - 8 &&
                 mail_mouse_y >= cy && mail_mouse_y < cy + card_h);
 
-    uint32_t card_bg = (i == selected_msg_idx)
-                           ? MAIL_C_ACCENT
-                           : (mhov ? MAIL_C_CARD_HOVER : MAIL_C_CARD_BG);
-    winmgr_fill_rect(win, list_x + 8, cy, card_w, card_h, card_bg);
+    // Tick the animation for this card
+    if (!msg_hover_anims[i].active && msg_hover_anims[i].current_val != (mhov ? 1.0f : 0.0f)) {
+        anim_start(&msg_hover_anims[i], msg_hover_anims[i].current_val, mhov ? 1.0f : 0.0f, 0.2f, EASE_LINEAR);
+    }
+    anim_tick(&msg_hover_anims[i], 0.04f);
+    if (msg_hover_anims[i].active) {
+        win->needs_redraw = 1;
+        extern int ui_dirty;
+        ui_dirty = 1;
+    }
+    
+    float p = msg_hover_anims[i].current_val;
+    if (p < 0.0f) p = 0.0f;
+    if (p > 1.0f) p = 1.0f;
+    
+    uint32_t card_bg;
+    if (i == selected_msg_idx) {
+        card_bg = MAIL_C_ACCENT;
+    } else {
+        uint32_t c1 = MAIL_C_CARD_BG;
+        uint32_t c2 = MAIL_C_CARD_HOVER;
+        int r = ((c1 >> 16) & 0xFF) + (int)((((c2 >> 16) & 0xFF) - ((c1 >> 16) & 0xFF)) * p);
+        int g = ((c1 >> 8) & 0xFF) + (int)((((c2 >> 8) & 0xFF) - ((c1 >> 8) & 0xFF)) * p);
+        int b = (c1 & 0xFF) + (int)(((c2 & 0xFF) - (c1 & 0xFF)) * p);
+        card_bg = 0xFF000000 | (r << 16) | (g << 8) | b;
+    }
+    
+    anim_tick(&row_swipe_x[i], 0.04f);
+    if (row_swipe_x[i].active) {
+        win->needs_redraw = 1;
+        extern int ui_dirty;
+        ui_dirty = 1;
+    }
+    
+    int swipe_offset = (int)row_swipe_x[i].current_val;
+    
+    // Draw red delete background underneath
+    if (swipe_offset < 0) {
+        winmgr_fill_rect(win, list_x + 8 + card_w + swipe_offset, cy, -swipe_offset, card_h, 0xFFE53935);
+        winmgr_draw_text(win, list_x + 8 + card_w - 60, cy + card_h/2 - 8, "Delete", 0xFFFFFFFF);
+    }
+    
+    winmgr_fill_rect(win, list_x + 8 + swipe_offset, cy, card_w, card_h, card_bg);
 
     uint32_t tcol = (i == selected_msg_idx) ? 0xFFFFFFFF : MAIL_C_TEXT;
     uint32_t scol = (i == selected_msg_idx) ? 0xFFDDDDFF : MAIL_C_TEXT_DIM;
@@ -382,7 +426,7 @@ void mail_app_draw(window_t *win) {
     char sender[48];
     strncpy(sender, msg_headers[i].from, max_sender_ch);
     sender[max_sender_ch] = 0;
-    winmgr_draw_text(win, list_x + 16, cy + 8, sender, tcol);
+    winmgr_draw_text(win, list_x + 16 + swipe_offset, cy + 8, sender, tcol);
 
     // Date (dynamic, right-aligned)
     char date_str[16];
@@ -412,14 +456,14 @@ void mail_app_draw(window_t *win) {
     }
 
     // Draw further left to avoid clipping
-    winmgr_draw_text(win, list_x + MAIL_LIST_WIDTH - 100, cy + 8, date_str,
+    winmgr_draw_text(win, list_x + MAIL_LIST_WIDTH - 100 + swipe_offset, cy + 8, date_str,
                      scol);
 
     // Subject (bold line)
     char subj[54];
     strncpy(subj, msg_headers[i].subject, max_subj_ch);
     subj[max_subj_ch] = 0;
-    winmgr_draw_text(win, list_x + 16, cy + 26, subj, tcol);
+    winmgr_draw_text(win, list_x + 16 + swipe_offset, cy + 26, subj, tcol);
 
     // Preview text
     char preview[54];
@@ -445,7 +489,7 @@ void mail_app_draw(window_t *win) {
       preview[plen - 2] = '.';
       preview[plen - 1] = '.';
     }
-    winmgr_draw_text(win, list_x + 16, cy + 44, preview, scol);
+    winmgr_draw_text(win, list_x + 16 + swipe_offset, cy + 44, preview, scol);
   }
 
   // === 4. MESSAGE VIEW ===
@@ -503,8 +547,33 @@ void mail_app_on_mouse(window_t *win, int mx, int my, int buttons) {
     win->needs_redraw = 1;
   }
 
-  if (!(buttons & 1))
+  if (!(buttons & 1)) {
+    if (mail_drag_idx != -1) {
+        float current = row_swipe_x[mail_drag_idx].current_val;
+        if (current < -40.0f) {
+            anim_start_spring(&row_swipe_x[mail_drag_idx], current, -80.0f, 400.0f, 30.0f);
+        } else {
+            anim_start_spring(&row_swipe_x[mail_drag_idx], current, 0.0f, 400.0f, 30.0f);
+            // If barely moved, count as click
+            if (current > -5.0f && current < 5.0f) {
+                mail_app_load_message(mail_drag_idx);
+            }
+        }
+        mail_drag_idx = -1;
+        win->needs_redraw = 1;
+    }
     return;
+  }
+  
+  if (mail_drag_idx != -1) {
+      int delta = mx - mail_drag_start_mx;
+      if (delta > 0) delta = 0;
+      if (delta < -120) delta = -120;
+      row_swipe_x[mail_drag_idx].current_val = (float)delta;
+      row_swipe_x[mail_drag_idx].active = 0;
+      win->needs_redraw = 1;
+      return;
+  }
 
   print_serial("MAIL: Mouse down at ");
   debug_print_int(mx);
@@ -578,8 +647,8 @@ void mail_app_on_mouse(window_t *win, int mx, int my, int buttons) {
 
         print_serial("MAIL: Beginning SMTP Transmission...\n");
         // User MUST change this string to a real 16 character App Password!
-        const char *user = "your mail";
-        const char *pass = "your app auth key is here ";
+        const char *user = "rudraptl2611@gmail.com";
+        const char *pass = "google app password here";
 
         int res = smtp_send_email("smtp.gmail.com", 465, user, pass, compose_to,
                                   compose_subject, compose_body);
@@ -633,11 +702,19 @@ void mail_app_on_mouse(window_t *win, int mx, int my, int buttons) {
       my < win->height) {
     int idx = (my - msg_start_y) / (card_h + 8);
     if (idx >= 0 && idx < msg_count) {
-      print_serial("MAIL: Message selected index ");
-      debug_print_int(idx);
-      print_serial("\n");
-      mail_app_load_message(idx);
-      win->needs_redraw = 1;
+      // Check if delete button clicked
+      if (row_swipe_x[idx].current_val <= -70.0f && mx > list_x + MAIL_LIST_WIDTH - 80) {
+          // Delete clicked! (Placeholder for actual delete logic)
+          print_serial("MAIL: Delete clicked\n");
+          anim_start_spring(&row_swipe_x[idx], row_swipe_x[idx].current_val, 0.0f, 400.0f, 30.0f);
+          win->needs_redraw = 1;
+          return;
+      }
+      
+      if (mail_drag_idx == -1) {
+          mail_drag_idx = idx;
+          mail_drag_start_mx = mx;
+      }
     }
     return;
   }
@@ -697,6 +774,11 @@ void mail_app_init() {
   mail_win = winmgr_create_window(-1, -1, 1000, 750, "MAIL");
   if (!mail_win)
     return;
+    
+  for (int i = 0; i < 32; i++) {
+      anim_init(&msg_hover_anims[i]);
+      anim_init_val(&row_swipe_x[i], 0.0f);
+  }
 
   mail_win->draw = (void (*)(void *))mail_app_draw;
   mail_win->on_mouse = (void (*)(void *, int, int, int))mail_app_on_mouse;

@@ -1122,6 +1122,22 @@ void winmgr_draw_text(window_t *win, int x, int y, const char *text,
   if (!win || !text)
     return;
 
+  extern int ttf_get_default_font(void);
+  extern void ttf_draw_text(void *win_ptr, int font_slot, int x, int y, const char *text, uint32_t color);
+  
+  int default_font = ttf_get_default_font();
+  if (default_font >= 0) {
+      ttf_draw_text((void*)win, default_font, x, y, text, color);
+      
+      extern int ttf_measure_text(const char *text, int font_size);
+      extern int ttf_font_height(int font_slot);
+      int w = ttf_measure_text(text, 14); // Default size used for now
+      int h = ttf_font_height(default_font);
+      if (h <= 0) h = 16;
+      winmgr_invalidate_rect(win, x, y, w, h);
+      return;
+  }
+
   extern int ui_get_font_scale(void);
   int scale = ui_get_font_scale();
 
@@ -1142,6 +1158,22 @@ void winmgr_draw_text(window_t *win, int x, int y, const char *text,
   winmgr_invalidate_rect(win, start_x, y, (x - start_x), scale);
 }
 
+int winmgr_measure_text(const char *text) {
+  if (!text) return 0;
+  extern int ttf_get_default_font(void);
+  extern int ttf_measure_text(const char *text, int font_size);
+  int default_font = ttf_get_default_font();
+  if (default_font >= 0) {
+      return ttf_measure_text(text, 14);
+  }
+  
+  extern int ui_get_font_scale(void);
+  int scale = ui_get_font_scale();
+  int len = 0;
+  while(text[len]) len++;
+  return len * 8 * scale;
+}
+
 void winmgr_draw_button(window_t *win, int x, int y, int w, int h,
                         const char *label) {
   // Button Body
@@ -1153,15 +1185,36 @@ void winmgr_draw_button(window_t *win, int x, int y, int w, int h,
   winmgr_fill_rect(win, x + w - 1, y, 1, h, 0xFF424242); // Right
 
   // Label
-  int len = str_len(label);
-  int txt_x = x + (w - (len * 8)) / 2; // 8 pixels per char
-  int txt_y = y + (h - 8) / 2;
+  int txt_w = winmgr_measure_text(label);
+  int txt_x = x + (w - txt_w) / 2;
+  int txt_y = y + (h - 14) / 2; // Assuming ~14px height for default text
   winmgr_draw_text(win, txt_x, txt_y, label, 0x0000); // Black
 }
 
 void winmgr_draw_circle_solid(window_t *win, int cx, int cy, int radius, uint32_t color) {
   for (int i = 0; i < 4; i++) {
     winmgr_draw_arc_solid(win, cx, cy, radius, i, color);
+  }
+}
+
+void winmgr_draw_circle_filled_alpha(window_t *win, int cx, int cy, int radius, uint32_t color, uint8_t alpha) {
+  int r2 = radius * radius;
+  for (int y = -radius; y <= radius; y++) {
+    for (int x = -radius; x <= radius; x++) {
+      if (x * x + y * y <= r2) {
+        int px = cx + x;
+        int py = cy + y;
+        if (px >= 0 && px < win->surface_w && py >= 0 && py < win->surface_h) {
+          uint32_t *dst = &win->surface[py * win->surface_w + px];
+          uint32_t bg = *dst;
+          uint32_t inv_alpha = 255 - alpha;
+          uint32_t r = (((bg >> 16) & 0xFF) * inv_alpha + ((color >> 16) & 0xFF) * alpha) >> 8;
+          uint32_t g = (((bg >> 8) & 0xFF) * inv_alpha + ((color >> 8) & 0xFF) * alpha) >> 8;
+          uint32_t b = ((bg & 0xFF) * inv_alpha + (color & 0xFF) * alpha) >> 8;
+          *dst = 0xFF000000 | (r << 16) | (g << 8) | b;
+        }
+      }
+    }
   }
 }
 
@@ -1219,32 +1272,8 @@ void winmgr_render_window(window_t *win) {
   uint32_t glass_edge = theme->border;
   int radius = 8;
 
-  // 1. Fill base frame and title bar area (Full width to fix misalignment)
+  // 1. Fill base frame (background beneath content area)
   winmgr_fill_rect(win, 0, 0, win->width, win->height, theme->bg);
-
-  // Title bar colors (Forced Dark for Terminal)
-  uint32_t title_col;
-  if (win->app_type == 0) {
-    title_col = (win == active_window) ? 0xFF181825 : 0xFF313244;
-  } else {
-    title_col = (win == active_window) ? theme->titlebar : theme->titlebar_inactive;
-  }
-  winmgr_fill_rect(win, 0, 0, win->width, 32, title_col);
-
-  // 2. Draw border lines (Solid, only for straight sections)
-  // Shorten them by 2px more to ensure they don't even touch the curves
-  winmgr_draw_line(win, radius + 2, 0, win->width - 1 - radius - 2, 0,
-                   glass_edge); // Top
-  winmgr_draw_line(win, radius + 2, win->height - 1,
-                   win->width - 1 - radius - 2, win->height - 1,
-                   glass_edge); // Bottom
-  winmgr_draw_line(win, 0, radius + 2, 0, win->height - 1 - radius - 2,
-                   glass_edge); // Left
-  winmgr_draw_line(win, win->width - 1, radius + 2, win->width - 1,
-                   win->height - 1 - radius - 2, glass_edge); // Right
-
-  // REMOVED winmgr_draw_arc_solid calls - they are redundant and cause
-  // artifacts!
 
   // === Content Area (Fully Opaque) ===
   // CRITICAL: Always use fully-opaque colors (0xFF prefix) to prevent
@@ -1261,6 +1290,37 @@ void winmgr_render_window(window_t *win) {
   }
 
   win->blur_strength = 0; // Disable blur globally
+
+  // === App Draw Callback (may overwrite anything, including title bar) ===
+  if (win->draw) {
+    print_serial("WINMGR: calling draw cb (full)\n");
+    win->draw(win);
+    print_serial("WINMGR: draw cb returned (full)\n");
+  } else {
+    print_serial("WINMGR: draw cb NULL (full) - window will be blank!\n");
+  }
+
+  // === Window Frame Overlay (drawn AFTER app to always be on top) ===
+  // Title bar colors (Forced Dark for Terminal)
+  uint32_t title_col;
+  if (win->app_type == 0) {
+    title_col = (win == active_window) ? 0xFF181825 : 0xFF313244;
+  } else {
+    title_col = (win == active_window) ? theme->titlebar : theme->titlebar_inactive;
+  }
+  winmgr_fill_rect(win, 0, 0, win->width, 32, title_col);
+
+  // Draw border lines (Solid, only for straight sections)
+  // Shorten them by 2px more to ensure they don't even touch the curves
+  winmgr_draw_line(win, radius + 2, 0, win->width - 1 - radius - 2, 0,
+                   glass_edge); // Top
+  winmgr_draw_line(win, radius + 2, win->height - 1,
+                   win->width - 1 - radius - 2, win->height - 1,
+                   glass_edge); // Bottom
+  winmgr_draw_line(win, 0, radius + 2, 0, win->height - 1 - radius - 2,
+                   glass_edge); // Left
+  winmgr_draw_line(win, win->width - 1, radius + 2, win->width - 1,
+                   win->height - 1 - radius - 2, glass_edge); // Right
 
   // === Window Buttons (macOS Traffic Light Style on Left) ===
   int btn_y = 10; // Centered in 32px title bar
@@ -1292,54 +1352,9 @@ void winmgr_render_window(window_t *win) {
       winmgr_draw_text(win, start_x + (btn_sz + btn_spacing)*2 + 3, btn_y + 1, "+", 0x80000000);
   }
 
-  // === Custom Draw ===
-  if (win->draw) {
-    print_serial("WINMGR: calling draw cb (full)\n");
-    win->draw(win);
-    print_serial("WINMGR: draw cb returned (full)\n");
-  } else {
-    print_serial("WINMGR: draw cb NULL (full) - window will be blank!\n");
-  }
-
-  // === Perfectionist SDF Corner Masking (3x3 Supersampled) ===
-  for (int y = 0; y < radius; y++) {
-    for (int x = 0; x < radius; x++) {
-      uint8_t mask = get_corner_alpha_int(x, y, radius);
-
-      // Coordinates for 4 corners
-      int tx = x, ty = y;
-      int trx = win->width - 1 - x, try_ = y;
-      int blx = x, bly = win->height - 1 - y;
-      int brx = win->width - 1 - x, bry = win->height - 1 - y;
-
-      // Apply mask safely
-      if (tx < win->surface_w && ty < win->surface_h)
-        win->surface[ty * win->surface_w + tx] =
-            (mask << 24) |
-            (win->surface[ty * win->surface_w + tx] & 0x00FFFFFF);
-
-      if (trx >= 0 && trx < win->surface_w && try_ >= 0 &&
-          try_ < win->surface_h)
-        win->surface[try_ * win->surface_w + trx] =
-            (mask << 24) |
-            (win->surface[try_ * win->surface_w + trx] & 0x00FFFFFF);
-
-      if (blx < win->surface_w && bly >= 0 && bly < win->surface_h)
-        win->surface[bly * win->surface_w + blx] =
-            (mask << 24) |
-            (win->surface[bly * win->surface_w + blx] & 0x00FFFFFF);
-
-      if (brx >= 0 && brx < win->surface_w && bry >= 0 && bry < win->surface_h)
-        win->surface[bry * win->surface_w + brx] =
-            (mask << 24) |
-            (win->surface[bry * win->surface_w + brx] & 0x00FFFFFF);
-    }
-  }
-
   // === Title Text (with shadow, centered) ===
-  int title_len = 0;
-  while(win->title[title_len]) title_len++;
-  int title_x = (win->width - (title_len * 10)) / 2;
+  int title_w = winmgr_measure_text(win->title);
+  int title_x = (win->width - title_w) / 2;
   if (title_x < 75) title_x = 75; // Don't overlap traffic lights
 
   winmgr_draw_text(win, title_x + 1, 9, win->title, 0x80101010); // Subtle dark shadow
@@ -1378,6 +1393,41 @@ void winmgr_render_window(window_t *win) {
       for (int j = 10 - i; j < 10; j++) {
         winmgr_put_pixel(win, gx + j, gy + i, 0xFF808080);
       }
+    }
+  }
+
+  // === Perfectionist SDF Corner Masking (3x3 Supersampled) ===
+  for (int y = 0; y < radius; y++) {
+    for (int x = 0; x < radius; x++) {
+      uint8_t mask = get_corner_alpha_int(x, y, radius);
+
+      // Coordinates for 4 corners
+      int tx = x, ty = y;
+      int trx = win->width - 1 - x, try_ = y;
+      int blx = x, bly = win->height - 1 - y;
+      int brx = win->width - 1 - x, bry = win->height - 1 - y;
+
+      // Apply mask safely
+      if (tx < win->surface_w && ty < win->surface_h)
+        win->surface[ty * win->surface_w + tx] =
+            (mask << 24) |
+            (win->surface[ty * win->surface_w + tx] & 0x00FFFFFF);
+
+      if (trx >= 0 && trx < win->surface_w && try_ >= 0 &&
+          try_ < win->surface_h)
+        win->surface[try_ * win->surface_w + trx] =
+            (mask << 24) |
+            (win->surface[try_ * win->surface_w + trx] & 0x00FFFFFF);
+
+      if (blx < win->surface_w && bly >= 0 && bly < win->surface_h)
+        win->surface[bly * win->surface_w + blx] =
+            (mask << 24) |
+            (win->surface[bly * win->surface_w + blx] & 0x00FFFFFF);
+
+      if (brx >= 0 && brx < win->surface_w && bry >= 0 && bry < win->surface_h)
+        win->surface[bry * win->surface_w + brx] =
+            (mask << 24) |
+            (win->surface[bry * win->surface_w + brx] & 0x00FFFFFF);
     }
   }
 }
@@ -1466,6 +1516,50 @@ void winmgr_update_genie_mesh(window_t *win) {
     win->mesh_lx[i] = base_rx + bend_factor;
     win->mesh_rx[i] = win->mesh_lx[i] + (float)rw;
   }
+}
+
+void winmgr_invalidate_genie_bounds(window_t *win) {
+  if (win->anim_mode != 1 && win->anim_mode != 2) return;
+  winmgr_update_genie_mesh(win);
+  int cur_w = (int)win->anim_w.current_val;
+  float progress = 0.0f;
+  if (win->width > 0)
+    progress = 1.0f - (float)(cur_w) / (float)win->width;
+  if (progress < 0) progress = 0;
+  if (progress > 1) progress = 1;
+  float p2 = progress * progress;
+  float p5 = p2 * p2 * progress;
+  float inv_p = 1.0f - progress;
+  float inv_p2 = inv_p * inv_p;
+  float inv_p5 = inv_p2 * inv_p2 * inv_p;
+  float prog_top, prog_bot;
+  if (win->pinch_top) {
+      prog_top = 1.0f - inv_p5;
+      prog_bot = p5;
+  } else {
+      prog_top = p5;
+      prog_bot = 1.0f - inv_p5;
+  }
+  extern int screen_height;
+  int ty_target = (win->launch_y >= 0) ? win->launch_y : win->taskbar_y;
+  if (ty_target < 0) ty_target = screen_height;
+  int tx_target = (win->launch_x >= 0) ? win->launch_x : win->taskbar_x;
+  int start_y = win->y;
+  int start_bottom = win->y + win->height;
+  int target_y = ty_target - 16;
+  int target_bottom = ty_target + 16;
+  int cur_y = start_y + (int)((target_y - start_y) * prog_top);
+  int cur_bottom = start_bottom + (int)((target_bottom - start_bottom) * prog_bot);
+  int cur_h = cur_bottom - cur_y;
+  int cur_x_left = (int)win->mesh_lx[0];
+  int cur_x_right = (int)win->mesh_rx[0];
+  for(int m=1; m<64; m++) {
+      if (win->mesh_lx[m] < cur_x_left) cur_x_left = (int)win->mesh_lx[m];
+      if (win->mesh_rx[m] > cur_x_right) cur_x_right = (int)win->mesh_rx[m];
+  }
+  extern void compositor_invalidate_rect(int x, int y, int w, int h);
+  compositor_invalidate_rect(cur_x_left - 8, cur_y - 8, (cur_x_right - cur_x_left) + 16, cur_h + 16);
+  compositor_invalidate_rect(tx_target - 24, ty_target - 24, 48, 48);
 }
 
 void winmgr_tick_animations(float dt) {
@@ -1577,6 +1671,7 @@ void winmgr_tick_animations(float dt) {
       continue;
 
     any_active = 1;
+
 
     // --- Opacity Animation ---
     if (win->fading_mode != 0) {
@@ -1724,9 +1819,8 @@ void winmgr_tick_animations(float dt) {
     // Tick spatial properties if the window is marked as animating.
     // The completion block below will clear win->is_animating when all properties finish.
     if (win->is_animating) {
-      if (win->anim_mode == 1 || win->anim_mode == 2) {
-        winmgr_update_genie_mesh(win);
-      }
+      // Invalidate OLD mesh area
+      winmgr_invalidate_genie_bounds(win);
 
       // Invalidate OLD ghost area
       int ox = (int)win->anim_x.current_val;
@@ -1741,56 +1835,8 @@ void winmgr_tick_animations(float dt) {
       anim_tick(&win->anim_w, dt);
       anim_tick(&win->anim_h, dt);
 
-      // Calculate the ACTUAL rendered bounds (matching compositor_warp_blend's p^5 logic)
-      float progress = 0.0f;
-      if (win->width > 0)
-        progress = 1.0f - (float)(ow) / (float)win->width;
-      if (progress < 0) progress = 0;
-      if (progress > 1) progress = 1;
-
-      float p2 = progress * progress;
-      float p5 = p2 * p2 * progress;
-      float inv_p = 1.0f - progress;
-      float inv_p2 = inv_p * inv_p;
-      float inv_p5 = inv_p2 * inv_p2 * inv_p;
-
-      float prog_top, prog_bot;
-      if (win->pinch_top) {
-          prog_top = 1.0f - inv_p5;
-          prog_bot = p5;
-      } else {
-          prog_top = p5;
-          prog_bot = 1.0f - inv_p5;
-      }
-
-      int ty_target = (win->launch_y >= 0) ? win->launch_y : win->taskbar_y;
-      if (ty_target < 0) ty_target = screen_height;
-      int tx_target = (win->launch_x >= 0) ? win->launch_x : win->taskbar_x;
-
-      int start_y = win->y;
-      int start_bottom = win->y + win->height;
-      int target_y = ty_target - 16;
-      int target_bottom = ty_target + 16;
-
-      // Actual rendered Y bounds
-      int cur_y = start_y + (int)((target_y - start_y) * prog_top);
-      int cur_bottom = start_bottom + (int)((target_bottom - start_bottom) * prog_bot);
-      int cur_h = cur_bottom - cur_y;
-
-      // Horizontal bounds: Mesh logic (lx/rx)
-      // At progress=0, bounds are [win->x, win->x + win->width]
-      // At progress=1, bounds are [tx_target-16, tx_target+16]
-      int cur_x_left = (int)win->mesh_lx[0];
-      int cur_x_right = (int)win->mesh_rx[0];
-      for(int m=1; m<64; m++) {
-          if (win->mesh_lx[m] < cur_x_left) cur_x_left = (int)win->mesh_lx[m];
-          if (win->mesh_rx[m] > cur_x_right) cur_x_right = (int)win->mesh_rx[m];
-      }
-
-      compositor_invalidate_rect(cur_x_left - 8, cur_y - 8, (cur_x_right - cur_x_left) + 16, cur_h + 16);
-      
-      // Also invalidate the icon area to ensure the neck connects smoothly
-      compositor_invalidate_rect(tx_target - 24, ty_target - 24, 48, 48);
+      // Invalidate NEW mesh area
+      winmgr_invalidate_genie_bounds(win);
 
       // Watchdog: If spatial animations take too long (e.g. 120 frames), force complete.
       // This prevents the "Big Black Box" warp mode from getting stuck forever.
@@ -1818,6 +1864,12 @@ void winmgr_tick_animations(float dt) {
 
         win->is_animating = 0;
         win->watchdog = 0;
+        // CRITICAL: Reset scale, opacity, and anim_mode to prevent compositor
+        // from using scaled blend or stale anim positions after animation ends.
+        win->scale = 1.0f;
+        win->opacity = 255;
+        win->anim_scale.active = 0;
+        win->anim_scale.current_val = win->anim_scale.end_val;
 
         // Explicit mode check
         if (win->anim_mode == 2 && win->fading_mode != 2) {
@@ -1852,6 +1904,7 @@ void winmgr_tick_animations(float dt) {
           extern int ui_dirty;
           ui_dirty = 1;
         }
+        win->anim_mode = 0; // Reset mode so compositor uses win->x/y not anim_x/y.current_val
       } else {
         // Ongoing...
         // Invalidate new ghost area handled above
@@ -2111,6 +2164,12 @@ static int get_resize_edge(window_t *win, int mx, int my) {
 int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
   // 0. Skip inactive or minimized windows
   if (win->id == 0 || win->is_minimized)
+    return 0;
+
+  // 1. Skip animating windows completely. Processing hover states and redrawing the 
+  // UI surface while a window is flying across the screen causes severe framerate drops,
+  // leading to vsync phase shifts and horizontal tearing.
+  if (win->is_animating || win->fading_mode != 0 || win->anim_scale.active)
     return 0;
 
   // If dragging or resizing, we capture mouse even if outside
@@ -2497,6 +2556,10 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
 
 // Global handler to iterate windows
 int winmgr_handle_mouse_global(int mx, int my, int buttons) {
+  static int prev_global_btn = 0;
+  int is_click = (buttons & 1) && !(prev_global_btn & 1);
+  prev_global_btn = buttons;
+
   // -3. Check Context Menu (highest priority global UI)
   extern int ctxmenu_click(int mx, int my);
   if (buttons != 0) {
@@ -2601,7 +2664,9 @@ int winmgr_handle_mouse_global(int mx, int my, int buttons) {
     window_t *win = &windows[window_z_order[i]];
     if (win->id != 0 && win->fading_mode != 2 && !win->is_minimized &&
         (win->is_dragging || win->is_resizing)) {
-      return window_handle_mouse(win, mx, my, buttons);
+      int ret = window_handle_mouse(win, mx, my, buttons);
+
+      return ret;
     }
   }
 
@@ -2609,7 +2674,9 @@ int winmgr_handle_mouse_global(int mx, int my, int buttons) {
   for (int i = window_count - 1; i >= 0; i--) {
     window_t *win = &windows[window_z_order[i]];
     if (win->id != 0 && win->fading_mode != 2 && !win->is_minimized) {
-      if (window_handle_mouse(win, mx, my, buttons)) {
+      int ret = window_handle_mouse(win, mx, my, buttons);
+      if (ret) {
+
         return 1;
       }
     }

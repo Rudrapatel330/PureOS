@@ -307,7 +307,9 @@ typedef enum {
   APP_MAIL = 13,
   APP_RECORDER = 14,
   APP_CHAT = 15,
-  APP_PHONE = 16
+  APP_PHONE = 16,
+  APP_MUSIC = 17,
+  APP_SYSMENU = 18
 } app_type_t;
 
 icon_t icons[MAX_ICONS];
@@ -332,7 +334,9 @@ static const char *app_icon_paths[] = {
     [APP_MAIL] = "/MAIL.PNG",
     [APP_RECORDER] = "/RECORD.PNG",
     [APP_CHAT] = "/CHAT.PNG",
-    [APP_PHONE] = "/MOBILE.PNG"
+    [APP_PHONE] = "/MOBILE.PNG",
+    [APP_MUSIC] = "/MUSIC.PNG",
+    [APP_SYSMENU] = "/PEGION.PNG"
 };
 static uint32_t *app_icon_cache[32] = {0};
 #include "../fs/fs.h"
@@ -358,11 +362,31 @@ static int draw_icon_png(int x, int y, int draw_w, int draw_h, int type, uint32_
             if (cached) {
               uint32_t *p32 = (uint32_t *)pixels;
               for (int py = 0; py < 64; py++) {
-                int sy = (py * ih) / 64;
+                int sy_start = (py * ih) / 64;
+                int sy_end = ((py + 1) * ih) / 64;
+                if (sy_end == sy_start) sy_end++;
+                if (sy_end > ih) sy_end = ih;
+                
                 for (int px = 0; px < 64; px++) {
-                  int sx = (px * iw) / 64;
-                  uint32_t p = p32[sy * iw + sx];
-                  uint8_t r = p & 0xFF, g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF, a = (p >> 24) & 0xFF;
+                  int sx_start = (px * iw) / 64;
+                  int sx_end = ((px + 1) * iw) / 64;
+                  if (sx_end == sx_start) sx_end++;
+                  if (sx_end > iw) sx_end = iw;
+                  
+                  int r=0, g=0, b=0, a=0, count=0;
+                  for (int sy = sy_start; sy < sy_end; sy++) {
+                    for (int sx = sx_start; sx < sx_end; sx++) {
+                       uint32_t p = p32[sy * iw + sx];
+                       a += (p >> 24) & 0xFF;
+                       r += p & 0xFF;
+                       g += (p >> 8) & 0xFF;
+                       b += (p >> 16) & 0xFF;
+                       count++;
+                    }
+                  }
+                  if (count > 0) {
+                      a /= count; r /= count; g /= count; b /= count;
+                  }
                   cached[py * 64 + px] = (a << 24) | (r << 16) | (g << 8) | b;
                 }
               }
@@ -887,8 +911,8 @@ void desktop_draw() {
         valid = 1;
         for (int sy = 0; sy < screen_height; sy++) {
           for (int sx = 0; sx < screen_width; sx++) {
-            int gx = (sx * bw << 8) / screen_width;
-            int gy = (sy * bh << 8) / screen_height;
+            int gx = (int)(((uint64_t)sx * (uint64_t)bw << 8) / screen_width);
+            int gy = (int)(((uint64_t)sy * (uint64_t)bh << 8) / screen_height);
 
             int bx = gx >> 8;
             int by = gy >> 8;
@@ -949,8 +973,8 @@ void desktop_draw() {
 
           for (int sy = 0; sy < screen_height; sy++) {
             for (int sx = 0; sx < screen_width; sx++) {
-              int gx = (sx * bw << 8) / screen_width;
-              int gy = (sy * bh << 8) / screen_height;
+              int gx = (int)(((uint64_t)sx * (uint64_t)bw << 8) / screen_width);
+              int gy = (int)(((uint64_t)sy * (uint64_t)bh << 8) / screen_height);
 
               int bx = gx >> 8;
               int by = bh - 1 - (gy >> 8);
@@ -1012,6 +1036,8 @@ void desktop_draw() {
       }
     }
     cache_valid = 1;
+    extern void compositor_update_blurred_bg(void);
+    compositor_update_blurred_bg();
   }
 
   if (desktop_buffer && cache_valid) {

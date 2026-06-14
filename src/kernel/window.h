@@ -161,6 +161,8 @@ typedef struct {
   int sub_dirty_active;
   rect_t sub_dirty;
 
+
+
   // Virtual workspace support
   int workspace; // 0-3: which workspace this window belongs to
   int ws_hidden; // 1 = hidden because on a different workspace
@@ -206,6 +208,7 @@ void winmgr_draw_arc_aa(window_t *win, int x, int y, int radius, int quadrant,
 void winmgr_put_pixel(window_t *win, int x, int y, uint32_t color);
 void winmgr_draw_text(window_t *win, int x, int y, const char *text,
                       uint32_t color);
+int winmgr_measure_text(const char *text);
 void winmgr_render_all();
 void winmgr_render_text_all();
 void winmgr_render_window(window_t *win);

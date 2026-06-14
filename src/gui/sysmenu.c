@@ -72,7 +72,7 @@ static void sysmenu_close_done(void *data) {
   sysmenu_closing = 0;
   extern int ui_dirty;
   ui_dirty = 1;
-  compositor_invalidate_rect(0, 0, screen_width, screen_height);
+  compositor_invalidate_rect(panel_x, 28, PANEL_W, PANEL_H);
 }
 
 void sysmenu_toggle(void) {
@@ -106,11 +106,24 @@ void sysmenu_toggle(void) {
   }
 
   ui_dirty = 1;
-  compositor_invalidate_rect(0, 0, screen_width, screen_height);
+  // Let compositor_render handle sysmenu_rect invalidation internally
 }
 
 int sysmenu_is_active(void) { return sysmenu_active || sysmenu_closing; }
 int sysmenu_is_animating(void) { return anim_y.active; }
+
+void sysmenu_get_rect(int *x, int *y, int *w, int *h) {
+  if (x) *x = panel_x;
+  if (y) *y = (int)anim_y.current_val;
+  if (w) *w = PANEL_W;
+  if (h) *h = PANEL_H;
+}
+
+void sysmenu_invalidate_rect(void) {
+  if (!sysmenu_is_active()) return;
+  int cy = (int)anim_y.current_val;
+  compositor_invalidate_rect(panel_x, cy, PANEL_W, PANEL_H);
+}
 
 void sysmenu_tick_animation(float dt) {
   if (anim_y.active) {
@@ -491,8 +504,10 @@ int sysmenu_handle_mouse(int mx, int my, int buttons) {
     return 0;
   }
 
-  if (!down_edge)
+  if (!down_edge) {
+    sysmenu_invalidate_rect();
     return 1; // Absorb mouse inside panel without click
+  }
 
   // Local coordinates
   int lx = mx - panel_x;

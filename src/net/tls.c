@@ -317,39 +317,15 @@ int tls_connect(tls_conn_t *conn, uint32_t ip, uint16_t port,
       size_t len;
       unsigned char *buf = br_ssl_engine_recvrec_buf(&sc->eng, &len);
 
-      // Poll NIC for incoming data
       kernel_poll_events();
-      if (conn->tcp.rx_len == 0) {
-        // If no data buffered, do a small poll
-        static uint8_t poll_pkt[1600];
-        uint16_t plen;
-        int ret = pcnet_poll(poll_pkt, &plen);
-        if (ret > 0) {
-          net_receive(poll_pkt, plen);
-        }
+      int n = tcp_recv(&conn->tcp, buf, (int)len);
+      
+      if (n < 0) {
+        print_serial("TLS: Recv error during handshake\n");
+        return -1004;
       }
-
-      // Read directly from TCP buffer
-      int n = 0;
-      if (conn->tcp.rx_len > 0) {
-        n = conn->tcp.rx_len;
-        if (n > (int)len)
-          n = (int)len;
-        memcpy(buf, conn->tcp.rx_buf, n);
-        if (n < conn->tcp.rx_len) {
-          int remaining = conn->tcp.rx_len - n;
-          memmove(conn->tcp.rx_buf, conn->tcp.rx_buf + n, remaining);
-          conn->tcp.rx_len = remaining;
-        } else {
-          conn->tcp.rx_len = 0;
-          conn->tcp.rx_ready = 0;
-        }
-      }
-
-      if (n <= 0) {
-        // No data yet, yield briefly
-        for (volatile int i = 0; i < 5000; i++)
-          ;
+      if (n == 0) {
+        // No data yet
         continue;
       }
       br_ssl_engine_recvrec_ack(&sc->eng, (size_t)n);
@@ -362,12 +338,6 @@ int tls_connect(tls_conn_t *conn, uint32_t ip, uint16_t port,
     // Poll NIC during idle
     if (idle_count % 10 == 0) {
       kernel_poll_events();
-      uint8_t poll_pkt[1600];
-      uint16_t plen;
-      int ret = pcnet_poll(poll_pkt, &plen);
-      if (ret > 0) {
-        net_receive(poll_pkt, plen);
-      }
     }
 
     if (idle_count > 50000) { // Keep an "inner" stuck check but make it larger

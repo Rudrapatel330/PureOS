@@ -79,6 +79,7 @@ task_t *create_task(void (*entry)(), char *name) {
   t->id = next_pid++;
   strcpy(t->name, name);
   t->state = TASK_READY;
+  memset(t->files, 0, sizeof(t->files));
 
   // Allocate 512KB stack
   uint32_t stack_size = 512 * 1024;
@@ -334,6 +335,7 @@ task_t *create_user_process(const char *name, void *entry) {
   strcpy(t->name, (char *)name);
   t->state = TASK_READY;
   t->is_user = 1;
+  memset(t->files, 0, sizeof(t->files));
 
   // 1. Create Address Space
   t->pagedir = paging_create_user_address_space();
@@ -411,6 +413,9 @@ int task_fork(registers_t *regs) {
   child->cpu_ticks = 0;
   child->cpu_usage_percent = 0;
 
+  extern void vfs_dup_fd_table(void **parent_files, void **child_files);
+  vfs_dup_fd_table(parent->files, child->files);
+
   // 3. Duplicate Kernel Stack
   uint32_t kstack_size = 64 * 1024;
   uint64_t kstack_phys = (uint64_t)kmalloc(kstack_size + 16);
@@ -458,6 +463,8 @@ void task_set_priority(int pid, int priority) {
 void exit(int exit_code) {
   __asm__ volatile("cli");
   if (current_task) {
+    extern void vfs_close_all_fds(void **files);
+    vfs_close_all_fds(current_task->files);
     current_task->state = TASK_ZOMBIE;
     print_serial(" [TASK EXIT: ");
     print_serial(current_task->name);
@@ -487,6 +494,8 @@ void task_kill(int pid) {
         exit(0);
         return;
       }
+      extern void vfs_close_all_fds(void **files);
+      vfs_close_all_fds(t->files);
       t->state = TASK_STOPPED;
       print_serial(" [TASK KILLED: ");
       print_serial(t->name);

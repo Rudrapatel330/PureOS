@@ -50,6 +50,7 @@ static void* litehtml_engine = 0;
 static char page_content[PAGE_MAX];
 static int page_len = 0;
 static int scroll_y = 0;
+static animation_t scroll_anim;
 int layout_dirty = 1;        // 1 = need to recalculate layout (non-static for JS bridge)
 static int cached_layout_width = 0; // last width used for layout
 static uint32_t *content_backing_store = NULL;
@@ -464,6 +465,112 @@ static void browser_submit_form(dom_node_t *node) {
   browser_navigate(new_url);
 }
 
+static char fetch_url_global[256];
+
+static void browser_fetch_thread(void) {
+  int redirects = 0;
+  char fetch_url[256];
+  strncpy(fetch_url, fetch_url_global, 255);
+  fetch_url[255] = 0;
+
+  while (redirects < 5) {
+    int result;
+    if (strncmp(fetch_url, "https://", 8) == 0) {
+      result = https_get(fetch_url, page_content, PAGE_MAX - 1);
+    } else if (strncmp(fetch_url, "file://", 7) == 0) {
+      extern int vfs_open(const char *path, int flags);
+      extern int vfs_read(int fd, uint8_t *buf, uint32_t size);
+      extern void vfs_close(int fd);
+      
+      const char *raw_path = fetch_url + 7;
+      char vfs_path[256];
+      if (strncmp(raw_path, "/disk/", 6) == 0) {
+          strncpy(vfs_path, raw_path, 255);
+      } else {
+          strcpy(vfs_path, "/disk/");
+          if (raw_path[0] == '/') raw_path++;
+          strncat(vfs_path, raw_path, 249);
+      }
+      vfs_path[255] = 0;
+      
+      int fd = vfs_open(vfs_path, 0); // O_RDONLY
+      if (fd >= 0) {
+          result = vfs_read(fd, (uint8_t*)page_content, PAGE_MAX - 1);
+          if (result >= 0) page_content[result] = 0;
+          vfs_close(fd);
+      } else {
+          result = -404;
+      }
+    } else {
+      result = http_get(fetch_url, page_content, PAGE_MAX - 1);
+    }
+
+    if (result == -301) {
+      if (strncmp(page_content, "REDIRECT:", 9) == 0) {
+        char *redir_url = page_content + 9;
+        if (redir_url[0] == '/') {
+          char base[256];
+          const char *p = fetch_url;
+          int len = 0;
+          if (strncmp(p, "https://", 8) == 0) len = 8;
+          else if (strncmp(p, "http://", 7) == 0) len = 7;
+          while (p[len] && p[len] != '/') len++;
+          memcpy(base, fetch_url, len);
+          base[len] = 0;
+
+          char full_url[256];
+          strcpy(full_url, base);
+          strncat(full_url, redir_url, 255 - strlen(base));
+          strncpy(fetch_url, full_url, 255);
+        } else {
+          strncpy(fetch_url, redir_url, 255);
+        }
+
+        fetch_url[255] = 0;
+        strncpy(url_bar, fetch_url, 255);
+        url_bar[255] = 0;
+        url_cursor = strlen(url_bar);
+        redirects++;
+        continue;
+      }
+    }
+    if (result > 0) {
+      page_len = result;
+      strcpy(status_text, "Done");
+    } else {
+      strcpy(page_content, "<h1>Error Loading Page (");
+      char res_str[16];
+      k_itoa(result, res_str);
+      strcat(page_content, res_str);
+      strcat(page_content, ")</h1>");
+      page_len = strlen(page_content);
+      strcpy(status_text, "Error");
+    }
+    break;
+  }
+
+  extern volatile int http_download_progress;
+  http_download_progress = 131072;
+  
+  strcpy(status_text, "Rendering...");
+  browser_parse_html();
+
+  is_loading = 0;
+  strcpy(status_text, "Ready");
+
+  __asm__ volatile("cli");
+  browser_updating = 0;
+  __asm__ volatile("sti");
+
+  backing_store_dirty = 1;
+  if (browser_win)
+    browser_win->needs_redraw = 1;
+  ui_dirty = 1;
+
+  extern void exit(int status);
+  exit(0);
+}
+
 // Navigate to a URL or search query
 static void browser_navigate(const char *input) {
   if (is_loading) {
@@ -476,6 +583,15 @@ static void browser_navigate(const char *input) {
 
   if (is_search_query(input)) {
     strcpy(url, "http://www.google.com/search?udm=14&tbs=li:1&q=");
+    int j = strlen(url);
+    for (int i = 0; input[i] && j < 255; i++) {
+        if (input[i] == ' ') {
+            url[j++] = '+';
+        } else {
+            url[j++] = input[i];
+        }
+    }
+    url[j] = '\0';
   } else {
     if (strncmp(input, "about:", 6) == 0 || strncmp(input, "http://", 7) == 0 || strncmp(input, "file://", 7) == 0) {
       strncpy(url, input, 255);
@@ -499,6 +615,11 @@ static void browser_navigate(const char *input) {
     browser_win->needs_redraw = 1;
   ui_dirty = 1;
 
+  extern void winmgr_flush_updates(void);
+  extern void compositor_render(void);
+  winmgr_flush_updates();
+  compositor_render();
+
   __asm__ volatile("cli");
   browser_updating = 1;
   __asm__ volatile("sti");
@@ -513,12 +634,7 @@ static void browser_navigate(const char *input) {
   }
   js_init();
   {
-    static int font_loaded = 0;
-    if (!font_loaded) {
-      ttf_init();
-      ttf_load_browser_font();
-      font_loaded = 1;
-    }
+    // Fonts are now initialized globally in kernel.c
   }
 
   if (history_pos < 0 || strcmp(history[history_pos], url) != 0) {
@@ -545,119 +661,29 @@ static void browser_navigate(const char *input) {
   } else if (strncmp(url, "about:forms", 11) == 0) {
     browser_set_form_test();
   } else {
-    int redirects = 0;
-    char fetch_url[256];
-    strncpy(fetch_url, url, 255);
-    fetch_url[255] = 0;
-
-    while (redirects < 5) {
-      int result;
-      if (strncmp(fetch_url, "https://", 8) == 0) {
-        result = https_get(fetch_url, page_content, PAGE_MAX - 1);
-      } else if (strncmp(fetch_url, "file://", 7) == 0) {
-        extern int vfs_open(const char *path, int flags);
-        extern int vfs_read(int fd, uint8_t *buf, uint32_t size);
-        extern void vfs_close(int fd);
-        
-        const char *raw_path = fetch_url + 7;
-        // Files are on the FAT partition mounted at /disk
-        char vfs_path[256];
-        if (strncmp(raw_path, "/disk/", 6) == 0) {
-            strncpy(vfs_path, raw_path, 255);
-        } else {
-            strcpy(vfs_path, "/disk/");
-            if (raw_path[0] == '/') raw_path++;
-            strncat(vfs_path, raw_path, 249);
-        }
-        vfs_path[255] = 0;
-        
-        print_serial("BROWSER: VFS open path: ");
-        print_serial(vfs_path);
-        print_serial("\n");
-        
-        int fd = vfs_open(vfs_path, 0); // O_RDONLY
-        if (fd >= 0) {
-            result = vfs_read(fd, (uint8_t*)page_content, PAGE_MAX - 1);
-            if (result >= 0) page_content[result] = 0;
-            vfs_close(fd);
-        } else {
-            result = -404;
-        }
-      } else {
-        result = http_get(fetch_url, page_content, PAGE_MAX - 1);
-      }
-
-      if (result == -301) {
-        if (strncmp(page_content, "REDIRECT:", 9) == 0) {
-          char *redir_url = page_content + 9;
-
-          // Handle relative redirects
-          if (redir_url[0] == '/') {
-            char base[256];
-            // Extract protocol and host from current fetch_url
-            const char *p = fetch_url;
-            int len = 0;
-            if (strncmp(p, "https://", 8) == 0) {
-              len = 8;
-            } else if (strncmp(p, "http://", 7) == 0) {
-              len = 7;
-            }
-            while (p[len] && p[len] != '/') {
-              len++;
-            }
-            memcpy(base, fetch_url, len);
-            base[len] = 0;
-
-            char full_url[256];
-            strcpy(full_url, base);
-            strncat(full_url, redir_url, 255 - strlen(base));
-            strncpy(fetch_url, full_url, 255);
-          } else {
-            strncpy(fetch_url, redir_url, 255);
-          }
-
-          fetch_url[255] = 0;
-          strncpy(url_bar, fetch_url, 255);
-          url_bar[255] = 0;
-          url_cursor = strlen(url_bar);
-          redirects++;
-          continue;
-        }
-      }
-      if (result > 0) {
-        page_len = result;
-        strcpy(status_text, "Done");
-        print_serial("BROWSER: Received ");
-        char p_str[16];
-        k_itoa(page_len, p_str);
-        print_serial(p_str);
-        print_serial(" bytes. First 40: ");
-        char head[41];
-        memcpy(head, page_content, 40);
-        head[40] = 0;
-        print_serial(head);
-        print_serial("\n");
-      } else {
-        strcpy(page_content, "<h1>Error Loading Page (");
-        char res_str[16];
-        k_itoa(result, res_str);
-        strcat(page_content, res_str);
-        strcat(page_content, ")</h1>");
-        page_len = strlen(page_content);
-        strcpy(status_text, "Error");
-      }
-      break;
-    }
+    strncpy(fetch_url_global, url, 255);
+    fetch_url_global[255] = 0;
+    extern void* create_task(void (*entry)(), char *name);
+    create_task(browser_fetch_thread, "BrowserFetch");
+    return;
   }
+
+  extern volatile int http_download_progress;
+  http_download_progress = 131072;
+  
+  strcpy(status_text, "Rendering...");
+  browser_parse_html();
 
   is_loading = 0;
   strcpy(status_text, "Ready");
-  browser_parse_html();
 
   __asm__ volatile("cli");
   browser_updating = 0;
   __asm__ volatile("sti");
 
+  backing_store_dirty = 1;
+  if (browser_win)
+    browser_win->needs_redraw = 1;
   ui_dirty = 1;
 }
 
@@ -988,9 +1014,33 @@ static void browser_draw_cb(void *w) {
                    url_editing ? theme->accent : theme->border);
   winmgr_draw_text(win, ux + 4, uy + 7, url_bar, theme->fg);
 
+  if (is_loading) {
+    extern volatile int http_download_progress;
+    int progress_bytes = http_download_progress;
+    
+    int progress_w = (progress_bytes * (URLBAR_W - 2)) / 131072;
+    if (progress_w > URLBAR_W - 2) progress_w = URLBAR_W - 2;
+    if (progress_w < 5 && progress_bytes > 0) progress_w = 5;
+    if (progress_bytes == 0) progress_w = 2;
+
+    winmgr_fill_rect(win, ux + 1, uy + 22 - 3, progress_w, 2, theme->accent);
+
+    win->needs_redraw = 1;
+    ui_dirty = 1;
+  }
+
   int content_top = cy + CONTENT_Y;
   int content_h = win->height - 26 - TOOLBAR_H - 20;
   winmgr_fill_rect(win, cx, content_top, cw, content_h, theme->bg);
+
+  // Smooth scrolling tick
+  anim_tick(&scroll_anim, 0.04f);
+  if (scroll_anim.active) {
+      scroll_y = (int)scroll_anim.current_val;
+      win->needs_redraw = 1;
+      extern int ui_dirty;
+      ui_dirty = 1;
+  }
 
   int draw_y = content_top + 4 - scroll_y;
   int content_x = cx + 6;
@@ -1150,17 +1200,17 @@ static void browser_scroll_cb(void *w, int direction) {
   window_t *win = (window_t *)w;
   int content_h = win->height - CONTENT_Y - 18;
 
-  // Wheel UP (direction > 0) -> scroll viewport UP -> decrease scroll_y
-  scroll_y -= direction * 20;
+  float target = scroll_anim.end_val - direction * 60.0f;
 
-  // Bounds checking
-  if (scroll_y < 0)
-    scroll_y = 0;
   int max_scroll = 2000 - content_h;
   if (max_scroll < 0)
     max_scroll = 0;
-  if (scroll_y > max_scroll)
-    scroll_y = max_scroll;
+  if (target < 0.0f)
+    target = 0.0f;
+  if (target > max_scroll)
+    target = max_scroll;
+
+  anim_start_spring(&scroll_anim, scroll_y, target, 400.0f, 30.0f);
 
   ui_dirty = 1;
   win->needs_redraw = 1;
@@ -1220,6 +1270,7 @@ void browser_init(void) {
   print_serial("BROWSER: Starting init...\n");
   is_loading = 0;
   js_init();
+  anim_init_val(&scroll_anim, 0.0f);
   print_serial("BROWSER: JS init done\n");
   browser_win = winmgr_create_window(-1, -1, 850, 650, "PureBrowser");
   print_serial("BROWSER: Window created\n");

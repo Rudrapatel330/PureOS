@@ -73,6 +73,10 @@ uint64_t syscall_handler(registers_t *regs) {
     vfs_close((int)regs->rbx);
     break;
 
+  case SYS_LSEEK:
+    ret = vfs_lseek((int)regs->rbx, (uint32_t)regs->rcx, (int)regs->rdx);
+    break;
+
   case SYS_GETPID:
     ret = get_current_task()->id;
     break;
@@ -105,15 +109,32 @@ uint64_t syscall_handler(registers_t *regs) {
   }
 
   case SYS_PIPE:
-    // TODO: Implement actual pipe in VFS
-    print_serial("SYSCALL: pipe() not fully implemented\n");
-    ret = 0;
+    extern int pipe(int fds[2]);
+    ret = pipe((int *)regs->rbx);
     break;
 
   case SYS_DUP2:
-    // TODO: Implement dup2 in VFS
-    print_serial("SYSCALL: dup2() not fully implemented\n");
-    ret = regs->rcx;
+    ret = vfs_dup2((int)regs->rbx, (int)regs->rcx);
+    break;
+
+  case SYS_STAT:
+    ret = vfs_stat((const char *)regs->rbx, (vfs_stat_t *)regs->rcx);
+    break;
+
+  case SYS_MKDIR:
+    ret = vfs_mkdir((const char *)regs->rbx);
+    break;
+
+  case SYS_UNLINK:
+    ret = vfs_unlink((const char *)regs->rbx);
+    break;
+
+  case SYS_CHMOD:
+    ret = vfs_chmod((const char *)regs->rbx, (uint32_t)regs->rcx);
+    break;
+
+  case SYS_CHOWN:
+    ret = vfs_chown((const char *)regs->rbx, (uint32_t)regs->rcx, (uint32_t)regs->rdx);
     break;
 
   default:

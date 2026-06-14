@@ -16,6 +16,10 @@ typedef struct {
   char op;
   int new_entry;
   int font_scale;
+  int is_error;
+  animation_t btn_anim[19];
+  animation_t bg_flash_anims[19];
+  animation_t error_shake_anim;
 } calc_app_t;
 
 static inline calc_app_t *get_calc(void *w) {
@@ -33,6 +37,11 @@ static inline calc_app_t *get_calc(void *w) {
 #define MAX_DIGITS 9
 
 static void calc_process_input(calc_app_t *calc, char c) {
+  if (calc->is_error && c != 0) {
+    calc->is_error = 0;
+    strcpy(calc->display, "0");
+    calc->new_entry = 1;
+  }
   if (c >= '0' && c <= '9') {
     int len = 0;
     while (calc->display[len])
@@ -79,10 +88,16 @@ static void calc_process_input(calc_app_t *calc, char c) {
     if (calc->op == '*')
       result = calc->accumulator * val;
     if (calc->op == '/') {
-      if (val != 0)
+      if (val != 0) {
         result = calc->accumulator / val;
-      else
-        result = 0;
+      } else {
+        calc->is_error = 1;
+        anim_start_spring(&calc->error_shake_anim, 20.0f, 0.0f, 150.0f, 8.0f);
+        strcpy(calc->display, "Error");
+        calc->new_entry = 1;
+        calc->op = 0;
+        return;
+      }
     }
 
     // Convert result to string using kernel itoa
@@ -173,6 +188,19 @@ void calculator_draw(window_t *win) {
   // Center text vertically in display area
   int txt_y = 32 + (display_h - (8 * scale)) / 2;
 
+  anim_tick(&calc->error_shake_anim, 0.04f);
+  if (calc->error_shake_anim.active) {
+      win->needs_redraw = 1;
+      extern int ui_dirty;
+      ui_dirty = 1;
+  }
+
+  txt_x += (int)calc->error_shake_anim.current_val;
+  uint32_t text_color = theme->fg;
+  if (calc->is_error || calc->error_shake_anim.current_val > 1.0f || calc->error_shake_anim.current_val < -1.0f) {
+      text_color = 0xFFFF5555; // Soft red
+  }
+
   for (int i = 0; i < len; i++) {
     uint8_t c = (uint8_t)display_str[i];
     for (int py = 0; py < 8; py++) {
@@ -180,7 +208,7 @@ void calculator_draw(window_t *win) {
       for (int px = 0; px < 8; px++) {
         if (row & (1 << (7 - px))) {
           winmgr_fill_rect(win, txt_x + i * char_w + px * scale,
-                           txt_y + py * scale, scale, scale, theme->fg);
+                           txt_y + py * scale, scale, scale, text_color);
         }
       }
     }
@@ -212,15 +240,85 @@ void calculator_draw(window_t *win) {
         c++;
       }
 
-      winmgr_fill_rect(win, bx + 1, by + 1, current_bw - 2, bh - 2,
-                       colors[label_idx]);
+      // Tick animation
+      anim_tick(&calc->btn_anim[label_idx], 0.04f);
+      if (calc->btn_anim[label_idx].active) {
+          win->needs_redraw = 1;
+          extern int ui_dirty;
+          ui_dirty = 1;
+      }
+      
+      // Tick background flash animation
+      anim_tick(&calc->bg_flash_anims[label_idx], 0.04f);
+      if (calc->bg_flash_anims[label_idx].active) {
+          win->needs_redraw = 1;
+          extern int ui_dirty;
+          ui_dirty = 1;
+      }
+      
+      float btn_scale = calc->btn_anim[label_idx].current_val;
+      if (btn_scale == 0.0f) btn_scale = 1.0f; // safety
+      
+      int base_size = (bw < bh ? bw : bh) - 16;
+      if (base_size < 10) base_size = 10;
+      
+      int target_w = (current_bw > bw) ? current_bw - 16 : base_size;
+      int target_h = base_size;
+
+      int dw = (int)(target_w * btn_scale);
+      int dh = (int)(target_h * btn_scale);
+      int dx = bx + (current_bw - dw) / 2;
+      int dy = by + (bh - dh) / 2;
+
+      float flash_val = calc->bg_flash_anims[label_idx].current_val;
+      uint32_t render_color = colors[label_idx];
+      if (flash_val > 0.0f) {
+          // --- GLOW EFFECT ---
+          uint32_t glow_base = theme->accent;
+          uint32_t g_r = (((glow_base >> 16) & 0xFF) + 255) / 2;
+          uint32_t g_g = (((glow_base >> 8) & 0xFF) + 255) / 2;
+          uint32_t g_b = ((glow_base & 0xFF) + 255) / 2;
+
+          int halo_dw = target_w;
+          int halo_dh = target_h;
+          int halo_dx = bx + (current_bw - halo_dw) / 2;
+          int halo_dy = by + (bh - halo_dh) / 2;
+
+          for (int i = 4; i >= 1; i--) {
+              int g_w = halo_dw + i * 4;
+              int g_h = halo_dh + i * 4;
+              int g_x = halo_dx - i * 2;
+              int g_y = halo_dy - i * 2;
+              
+              int glow_alpha = (int)(flash_val * 160 / (i + 1)); 
+              if (glow_alpha > 255) glow_alpha = 255;
+              if (glow_alpha > 0) {
+                  uint32_t glow_color = (glow_alpha << 24) | (g_r << 16) | (g_g << 8) | g_b;
+                  winmgr_draw_rounded_rect_ex(win, g_x, g_y, g_w, g_h, glow_color, 0, 0, g_h / 2);
+              }
+          }
+          // --- END GLOW ---
+
+          uint32_t a = (render_color >> 24) & 0xFF;
+          uint32_t r = (render_color >> 16) & 0xFF;
+          uint32_t g = (render_color >> 8) & 0xFF;
+          uint32_t b = render_color & 0xFF;
+          r = (uint32_t)(r * (1.0f - 0.4f * flash_val));
+          g = (uint32_t)(g * (1.0f - 0.4f * flash_val));
+          b = (uint32_t)(b * (1.0f - 0.4f * flash_val));
+          render_color = (a << 24) | (r << 16) | (g << 8) | b;
+      }
+
+      winmgr_draw_rounded_rect_ex(win, dx, dy, dw, dh, render_color, 0, 0, dh / 2);
 
       uint32_t txt_col = (colors[label_idx] == theme->accent)
                              ? theme->button_text
                              : theme->fg;
       int lbl_len = strlen(labels[label_idx]);
-      winmgr_draw_text(win, bx + (current_bw - lbl_len * 8) / 2,
-                       by + (bh - 8) / 2, labels[label_idx], txt_col);
+      
+      int y_shift = (int)((1.0f - btn_scale) * 10) + (flash_val > 0.1f ? 1 : 0);
+      winmgr_draw_text(win, dx + (dw - lbl_len * 8) / 2,
+                       dy + (dh - 8) / 2 + y_shift, labels[label_idx], txt_col);
 
       label_idx++;
     }
@@ -258,6 +356,12 @@ void calculator_click(window_t *win, int mx, int my, int buttons) {
 
   int idx = r * 4 + c;
   char cmd = btn_chars[idx];
+  
+  // Start spring animation (jump to 0.85 scale, spring back to 1.0)
+  anim_start_spring(&calc->btn_anim[idx], 0.85f, 1.0f, SPRING_BOUNCY_K, SPRING_BOUNCY_D);
+  // Start flash animation
+  anim_start_spring(&calc->bg_flash_anims[idx], 1.0f, 0.0f, 150.0f, 15.0f);
+  
   if (cmd != ' ') {
     calc_process_input(calc, cmd);
     win->needs_redraw = 1;
@@ -315,6 +419,12 @@ void calculator_init() {
   strcpy(calc->display, "0");
   calc->new_entry = 1;
   calc->font_scale = 2;
+  calc->is_error = 0;
+  for (int i = 0; i < 19; i++) {
+      anim_init_val(&calc->btn_anim[i], 1.0f);
+      anim_init_val(&calc->bg_flash_anims[i], 0.0f);
+  }
+  anim_init_val(&calc->error_shake_anim, 0.0f);
 
   win->user_data = calc;
   win->draw = (void (*)(void *))calculator_draw;

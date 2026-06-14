@@ -440,6 +440,7 @@ void browser_engine_load_html(void* engine, const char* html, const char* master
     
     if (!master_css) {
         master_css = "html { display: block; } head { display: none; } body { display: block; margin: 8px; } "
+                     "script, style, noscript, meta, title, link, iframe { display: none !important; } "
                      "h1 { display: block; font-size: 2em; margin-top: 0.67em; margin-bottom: 0.67em; font-weight: bold; } "
                      "h2 { display: block; font-size: 1.5em; margin-top: 0.83em; margin-bottom: 0.83em; font-weight: bold; } "
                      "p, div { display: block; margin-top: 1em; margin-bottom: 1em; } "

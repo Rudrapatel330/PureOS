@@ -10,5 +10,7 @@ int sysmenu_handle_mouse(int mx, int my, int buttons);
 int sysmenu_is_active(void);
 int sysmenu_is_animating(void);
 void sysmenu_tick_animation(float dt);
+void sysmenu_get_rect(int *x, int *y, int *w, int *h);
+void sysmenu_invalidate_rect(void);
 
 #endif

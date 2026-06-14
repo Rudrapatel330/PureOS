@@ -216,15 +216,23 @@ int fat_init() {
   else
     print_serial("FAT: Ready (boot disk)\n");
 
-  // Mount FAT at /disk
-  vfs_node_t *fat_root = (vfs_node_t *)kmalloc(sizeof(vfs_node_t));
-  memset(fat_root, 0, sizeof(vfs_node_t));
-  strcpy(fat_root->name, "disk");
+  // Mount FAT at /
+  vfs_inode_t *fat_inode = (vfs_inode_t *)kmalloc(sizeof(vfs_inode_t));
+  memset(fat_inode, 0, sizeof(vfs_inode_t));
+  fat_inode->mode = VFS_DIRECTORY;
+  fat_inode->inode_no = root_cluster;
+  extern file_operations_t fat_file_ops;
+  extern inode_operations_t fat_inode_ops;
+  fat_inode->i_ops = &fat_inode_ops;
+  fat_inode->f_ops = &fat_file_ops;
+
+  vfs_dentry_t *fat_root = (vfs_dentry_t *)kmalloc(sizeof(vfs_dentry_t));
+  memset(fat_root, 0, sizeof(vfs_dentry_t));
+  strcpy(fat_root->name, "/");
   fat_root->flags = VFS_DIRECTORY;
-  fat_root->inode = root_cluster;
-  extern vfs_driver_t fat_vfs_driver;
-  fat_root->driver = &fat_vfs_driver;
-  vfs_mount("/disk", fat_root);
+  fat_root->inode = fat_inode;
+  vfs_root = fat_root; // Set FAT as global root
+  vfs_mount("/", fat_root);
 
   return 1;
 }
@@ -1039,11 +1047,11 @@ int fat_list_files_gui_dir(uint32_t dir_cluster, FileInfo *buffer,
   return count;
 }
 
-static int fat_vfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
+static int fat_vfs_read(vfs_inode_t *inode, file_handle_t *file, uint32_t offset, uint32_t size,
                         uint8_t *buffer) {
-  if (offset == 0 && size >= node->length) {
-    uint32_t cluster = node->inode;
-    uint32_t bytes_left = node->length;
+  if (offset == 0 && size >= inode->size) {
+    uint32_t cluster = inode->inode_no;
+    uint32_t bytes_left = inode->size;
     uint32_t total_read = 0;
     uint32_t eof = is_fat32 ? 0x0FFFFFF8 : 0xFFF8;
 
@@ -1068,33 +1076,53 @@ static int fat_vfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
   return -1;
 }
 
-static vfs_node_t *fat_get_vfs_node(fat_dir_entry_t *entry) {
-  vfs_node_t *node = (vfs_node_t *)kmalloc(sizeof(vfs_node_t));
-  memset(node, 0, sizeof(vfs_node_t));
+static vfs_dentry_t *fat_get_vfs_node(fat_dir_entry_t *entry) {
+  vfs_dentry_t *dentry = (vfs_dentry_t *)kmalloc(sizeof(vfs_dentry_t));
+  memset(dentry, 0, sizeof(vfs_dentry_t));
+
   int p = 0;
   for (int j = 0; j < 8; j++)
     if (entry->filename[j] != ' ')
-      node->name[p++] = entry->filename[j];
+      dentry->name[p++] = entry->filename[j];
   if (entry->ext[0] != ' ') {
-    node->name[p++] = '.';
+    dentry->name[p++] = '.';
     for (int j = 0; j < 3; j++)
       if (entry->ext[j] != ' ')
-        node->name[p++] = entry->ext[j];
+        dentry->name[p++] = entry->ext[j];
   }
-  node->name[p] = 0;
-  node->length = entry->file_size;
-  node->inode = get_entry_cluster(entry);
-  node->flags =
-      (entry->attributes & FAT_ATTR_DIRECTORY) ? VFS_DIRECTORY : VFS_FILE;
-  extern vfs_driver_t fat_vfs_driver;
-  node->driver = &fat_vfs_driver;
-  return node;
+  dentry->name[p] = 0;
+  
+  uint32_t cluster = get_entry_cluster(entry);
+  extern inode_operations_t fat_inode_ops;
+  extern file_operations_t fat_file_ops;
+  
+  vfs_inode_t *cached_inode = icache_lookup(&fat_inode_ops, cluster);
+  vfs_inode_t *inode = 0;
+  
+  if (cached_inode) {
+    inode = cached_inode;
+    inode->refcount++;
+  } else {
+    inode = (vfs_inode_t *)kmalloc(sizeof(vfs_inode_t));
+    memset(inode, 0, sizeof(vfs_inode_t));
+    inode->size = entry->file_size;
+    inode->inode_no = cluster;
+    inode->mode =
+        (entry->attributes & FAT_ATTR_DIRECTORY) ? VFS_DIRECTORY : VFS_FILE;
+    inode->i_ops = &fat_inode_ops;
+    inode->f_ops = &fat_file_ops;
+    inode->refcount = 1;
+    icache_add(&fat_inode_ops, inode);
+  }
+  
+  dentry->inode = inode;
+  return dentry;
 }
 
-static vfs_node_t *fat_vfs_readdir(vfs_node_t *node, uint32_t index) {
-  if (!(node->flags & VFS_DIRECTORY))
+static vfs_dentry_t *fat_vfs_readdir(vfs_inode_t *inode, uint32_t index) {
+  if (!(inode->mode & VFS_DIRECTORY))
     return 0;
-  uint32_t dir_cluster = node->inode;
+  uint32_t dir_cluster = inode->inode_no;
   uint8_t sbuf[512];
   uint32_t count = 0;
   if (!is_fat32 && dir_cluster == FAT_ROOT_CLUSTER) {
@@ -1137,23 +1165,30 @@ static vfs_node_t *fat_vfs_readdir(vfs_node_t *node, uint32_t index) {
   return 0;
 }
 
-static vfs_node_t *fat_vfs_finddir(vfs_node_t *node, char *name) {
-  if (!(node->flags & VFS_DIRECTORY))
+static vfs_dentry_t *fat_vfs_finddir(vfs_inode_t *dir, const char *name) {
+  if (!(dir->mode & VFS_DIRECTORY))
     return 0;
   fat_dir_entry_t entry;
-  if (raw_find_in_dir(node->inode, name, &entry)) {
+  if (raw_find_in_dir(dir->inode_no, name, &entry)) {
     return fat_get_vfs_node(&entry);
   }
   return 0;
 }
 
-vfs_driver_t fat_vfs_driver = {"fat32_adaptive",
-                               fat_vfs_read,
-                               (void*)fat_write_file, // write
-                               0, // open
-                               0, // close
-                               fat_vfs_readdir,
-                               fat_vfs_finddir};
+file_operations_t fat_file_ops = {
+  fat_vfs_read,
+  0,
+  0,
+  0,
+  fat_vfs_readdir
+};
+
+inode_operations_t fat_inode_ops = {
+  fat_vfs_finddir,
+  0,
+  0,
+  0
+};
 
 int fat_copy_file(const char *src, const char *dst) {
   print_serial("FAT: Copy file src='"); print_serial(src); print_serial("' dst='"); print_serial(dst); print_serial("'\n");

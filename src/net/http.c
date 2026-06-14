@@ -4,6 +4,8 @@
 
 extern void print_serial(const char *);
 
+volatile int http_download_progress = 0;
+
 // Parse URL into host and path
 // format: "http://host/path?query" or "host/path?query"
 static int parse_url(const char *url, char *host, int host_max, char *path,
@@ -139,6 +141,7 @@ static uint32_t ip_string_to_uint32(const char *ip_str) {
 // Perform an HTTP GET request (with proxy support)
 // Returns: number of body bytes placed in response, or -1 on error
 int http_get(const char *url, char *response, int max_len) {
+  http_download_progress = 0;
   static char host[128];
   static char path[256];
   int use_proxy = HTTP_PROXY_ENABLED;
@@ -277,6 +280,7 @@ int http_get(const char *url, char *response, int max_len) {
     if (n == 0)
       break;
     total += n;
+    http_download_progress = total;
   }
   response[total] = 0;
 
@@ -426,6 +430,7 @@ int http_get(const char *url, char *response, int max_len) {
 
 // Perform an HTTPS GET request using TLS
 int https_get(const char *url, char *response, int max_len) {
+  http_download_progress = 0;
   static char host[128];
   static char path[256];
 
@@ -511,6 +516,7 @@ int https_get(const char *url, char *response, int max_len) {
     if (n == 0)
       break;
     total += n;
+    http_download_progress = total;
   }
   response[total] = 0;
 

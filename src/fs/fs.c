@@ -64,74 +64,67 @@ file_entry_t *fs_find(const char *name) {
 }
 
 int fs_list(const char *path, char *buffer, int max_len) {
+  int fd = vfs_open(path, 0);
+  if (fd < 0) return -1;
+  vfs_dentry_t *node;
+  int idx = 0;
   int total = 0;
-  uint32_t cluster = fat_resolve_path(path, fat_get_root_cluster());
-  if (cluster != 0xFFFFFFFF) {
-    total = fat_list_files_str_dir(cluster, buffer, max_len);
-  } else {
-    // Not in FAT. Check if it's root for RamFS
-    if (!(!path || path[0] == 0 || (path[0] == '/' && path[1] == 0))) {
-      return -1; // Path not found
+  buffer[0] = 0;
+  while ((node = vfs_readdir(fd, idx++)) != 0) {
+    int len = 0;
+    while (node->name[len]) {
+      if (total < max_len - 2) buffer[total++] = node->name[len];
+      len++;
     }
+    if (total < max_len - 1) buffer[total++] = '\n';
   }
-
-  // Combine with RamFS for root
-  if (!path || path[0] == 0 || (path[0] == '/' && path[1] == 0)) {
-    if (total < max_len - 1) {
-      // Append RamFS listing
-      total += ramfs_list(buffer + total, max_len - total);
-    }
-  }
+  buffer[total] = 0;
+  vfs_close(fd);
   return total;
 }
 
 int fs_list_files(const char *path, FileInfo *buffer, int max_files) {
+  int fd = vfs_open(path, 0);
+  if (fd < 0) return -1;
+  vfs_dentry_t *node;
   int count = 0;
-  uint32_t cluster = fat_resolve_path(path, fat_get_root_cluster());
-  if (cluster != 0xFFFFFFFF) {
-    count = fat_list_files_gui_dir(cluster, buffer, max_files);
-  } else {
-    // Not in FAT. Check if it's root for RamFS
-    if (!(!path || path[0] == 0 || (path[0] == '/' && path[1] == 0))) {
-      return -1; // Path not found
+  while ((node = vfs_readdir(fd, count)) != 0 && count < max_files) {
+    int j = 0;
+    while (node->name[j] && j < 31) {
+      buffer[count].name[j] = node->name[j];
+      j++;
     }
+    buffer[count].name[j] = 0;
+    buffer[count].size = node->inode ? node->inode->size : 0;
+    buffer[count].is_dir = (node->inode && (node->inode->mode & VFS_DIRECTORY)) ? 1 : 0;
+    count++;
   }
-
-  if (!path || path[0] == 0 || (path[0] == '/' && path[1] == 0)) {
-    if (count < max_files) {
-      count += ramfs_list_files(buffer + count, max_files - count);
-    }
-  }
+  vfs_close(fd);
   return count;
 }
 
 int fs_read(const char *filename, uint8_t *buffer) {
-  int bytes = fat_read_file(filename, buffer);
-  if (bytes > 0) {
-    extern void print_serial(const char *str);
-    print_serial("fs_read: read ");
-    print_serial(filename);
-    print_serial(" OK\n");
-    return bytes;
-  }
-  return ramfs_read(filename, buffer);
+  vfs_stat_t st;
+  if (vfs_stat(filename, &st) < 0) return 0;
+  int fd = vfs_open(filename, 0);
+  if (fd < 0) return 0;
+  int bytes = vfs_read(fd, buffer, st.size);
+  vfs_close(fd);
+  return bytes;
 }
 
 int fs_write(const char *filename, const uint8_t *buffer, uint32_t size) {
-  int ok = fat_write_file(filename, buffer, size);
-  if (ok)
-    return ok;
-  return ramfs_write(filename, buffer, size);
+  if (strncmp(filename, "/ram/", 5) == 0 || strcmp(filename, "/ram") == 0) {
+    const char *name = filename;
+    if (strncmp(filename, "/ram/", 5) == 0) name = filename + 5;
+    return ramfs_write(name, buffer, size);
+  }
+  return fat_write_file(filename, buffer, size);
 }
 
-int fs_delete(const char *filename) {
-  int ok = fat_delete_file(filename);
-  if (ok)
-    return ok;
-  return ramfs_delete(filename);
-}
+int fs_delete(const char *filename) { return vfs_unlink(filename); }
 
-int fs_mkdir(const char *path) { return fat_mkdir(path); }
+int fs_mkdir(const char *path) { return vfs_mkdir(path); }
 
 uint32_t fs_get_total_size() {
   extern uint32_t fat_get_total_size();

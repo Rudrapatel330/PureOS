@@ -43,6 +43,9 @@ typedef struct {
   int tab_count;
   char current_line[LINE_LEN];
   int current_lp;
+  animation_t scroll_anim;
+  animation_t pulse_scale;
+  animation_t pulse_opacity;
 } term_app_t;
 
 // Track the most recently focused terminal window
@@ -86,6 +89,11 @@ void term_print_line_to(window_t *win, const char *text) {
     }
     t->lines[MAX_LINES - 1][i] = 0;
   }
+  
+  // Start slide up animation
+  int fs = ui_get_font_scale();
+  anim_start_spring(&t->scroll_anim, (float)(fs + 2), 0.0f, 400.0f, 30.0f);
+  
   term_render_win(win);
 }
 
@@ -109,6 +117,10 @@ void terminal_handle_key_win(window_t *win, char c) {
   t->tab_count = 0;
 
   if (c == '\n') {
+    // Start pulse animation at cursor
+    anim_start_spring(&t->pulse_scale, 1.0f, 1.4f, 150.0f, 15.0f);
+    anim_start_spring(&t->pulse_opacity, 0.2f, 0.0f, 100.0f, 20.0f);
+
     t->input_buf[t->input_pos] = 0;
     term_print_line_to(win, t->input_buf);
 
@@ -302,7 +314,14 @@ void terminal_draw(window_t *win) {
   if (start < 0)
     start = 0;
 
-  int cy = 36;
+  anim_tick(&t->scroll_anim, 0.04f);
+  if (t->scroll_anim.active) {
+      win->needs_redraw = 1;
+      extern int ui_dirty;
+      ui_dirty = 1;
+  }
+
+  int cy = 36 + (int)t->scroll_anim.current_val;
   for (int i = start; i < end && i < MAX_LINES; i++) {
     winmgr_draw_text(win, 6, cy, t->lines[i], 0xFFFFFFFF); // Fixed white text
     cy += line_h;
@@ -314,6 +333,36 @@ void terminal_draw(window_t *win) {
     prompt[p++] = t->input_buf[i];
   prompt[p] = 0;
   winmgr_draw_text(win, 6, cy, prompt, 0xFFFFFFFF); // Fixed white prompt
+
+  // Fading Cursor
+  extern uint32_t get_timer_ticks(void);
+  uint32_t ticks = get_timer_ticks();
+  int cycle = ticks % 40; // Approx 2 seconds if 20 ticks/sec
+  int val = (cycle < 20) ? (cycle * 255 / 20) : ((40 - cycle) * 255 / 20);
+  uint32_t cursor_color = 0xFF000000 | (val << 16) | (val << 8) | val;
+  winmgr_draw_text(win, 6 + p * 8, cy, "_", cursor_color);
+  
+  anim_tick(&t->pulse_scale, 0.04f);
+  anim_tick(&t->pulse_opacity, 0.04f);
+  if (t->pulse_scale.active || t->pulse_opacity.active) {
+      win->needs_redraw = 1;
+      extern int ui_dirty;
+      ui_dirty = 1;
+  }
+  
+  if (t->pulse_opacity.current_val > 0.01f) {
+      int px = 6 + p * 8; 
+      int py = cy + 4; 
+      int radius = (int)(10.0f * t->pulse_scale.current_val);
+      uint32_t a = (uint32_t)(t->pulse_opacity.current_val * 255.0f);
+      if (a > 255) a = 255;
+      uint32_t color = (a << 24) | 0x00FFFFFF; 
+      winmgr_draw_rounded_rect_ex(win, px - radius, py - radius, radius*2, radius*2, 0, 2, color, radius);
+  }
+
+  win->needs_redraw = 1;
+  extern int ui_dirty;
+  ui_dirty = 1;
 
   if (t->scroll_offset > 0) {
     winmgr_draw_text(win, win->width - 30, 36, "^^", 0xFF89B4FA); // Fixed blue accent
@@ -367,6 +416,9 @@ void terminal_init() {
   last_active_term = win;
   t->current_lp = 0;
   t->current_line[0] = 0;
+  anim_init_val(&t->scroll_anim, 0.0f);
+  anim_init_val(&t->pulse_scale, 1.0f);
+  anim_init_val(&t->pulse_opacity, 0.0f);
   term_print_line_to(win, "PureOS Terminal v2.0");
 }
 

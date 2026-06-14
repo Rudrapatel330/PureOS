@@ -4,9 +4,9 @@
 #include "../drivers/mouse.h"
 #include "../drivers/pci.h"
 #include "../drivers/pcnet.h"
-#include "../drivers/ports.h"
 #include "../drivers/speaker.h"
 #include "../drivers/timer.h"
+#include "../drivers/vmsvga.h"
 #include "../fs/fs.h"
 #include "../net/net.h"
 #include "clipboard.h"
@@ -14,6 +14,7 @@
 #include "config.h"
 #include "desktop.h"
 #include "hal/hal.h"
+#include "hal/gfx_device.h"
 #include "heap.h"
 #include "profiler.h"
 #include "screen.h"
@@ -212,15 +213,18 @@ void screen_set_resolution(int width, int height) {
 
   // 1. Update hardware
   bga_set_video_mode(width, height, 32, 1, 1);
-  bga_write_register(VBE_DISPI_INDEX_VIRT_HEIGHT, height * 3);
-  bga_write_register(VBE_DISPI_INDEX_X_OFFSET, 0);
-  bga_write_register(VBE_DISPI_INDEX_Y_OFFSET, 0);
 
   // 2. Update globals
   screen_width = width;
   screen_height = height;
   bga_width = width;
   bga_height = height;
+
+  if (current_gfx_device) {
+    current_gfx_device->width = width;
+    current_gfx_device->height = height;
+    current_gfx_device->pitch = width;
+  }
 
   // 3. Reallocate backbuffer
   if (backbuffer)
@@ -434,7 +438,6 @@ void desktop_task() {
     }
 
     int any_anim = 0;
-    int any_window_warp = 0;
     {
       extern window_t windows[];
       for (int i = 0; i < MAX_WINDOWS; i++) {
@@ -442,9 +445,6 @@ void desktop_task() {
             windows[i].vel_x != 0 || windows[i].vel_y != 0 ||
             windows[i].anim_scale.active)) {
           any_anim = 1;
-          if (windows[i].is_animating) {
-            any_window_warp = 1;
-          }
         }
       }
       extern int startmenu_is_animating();
@@ -467,14 +467,14 @@ void desktop_task() {
                                    inv_size);
       }
       compositor_invalidate_rect(mouse_x - half_size, mouse_y - half_size,
-                                 inv_size, inv_size);
+                                  inv_size, inv_size);
+
+      // Ensure sysmenu area is always redrawn when mouse moves while active
+      extern void sysmenu_invalidate_rect(void);
+      sysmenu_invalidate_rect();
     }
 
-    // ALWAYS invalidate full screen during window warp animations to prevent 
-    // any small rects (from mouse, widgets, or old bounds) from slicing the mesh
-    if (any_window_warp) {
-      compositor_invalidate_rect(0, 0, screen_width, screen_height);
-    }
+
 
     if (tick_elapsed && (redraw_pending || ui_dirty > 0 || mouse_moved ||
                          any_anim || compositor_is_dirty())) {
@@ -586,7 +586,7 @@ void kernel_draw_mouse(int erase_only) {
   extern int lockscreen_active;
   if (!lockscreen_active)
     return;
-  uint32_t *target = bga_get_render_buffer();
+  uint32_t *target = gfx_device_get_render_buffer();
   if (!target)
     target = real_lfb;
   kernel_draw_mouse_to_buffer(target, mouse_x, mouse_y);
@@ -615,24 +615,11 @@ void kernel_poll_events(void) {
                                    last_mouse_y - half_size, inv_size, inv_size);
       }
       compositor_invalidate_rect(mouse_x - half_size, mouse_y - half_size,
-                                 inv_size, inv_size);
+                                  inv_size, inv_size);
 
-      // Check if any windows are warping
-      int any_window_warp = 0;
-      extern window_t windows[];
-      for (int i = 0; i < 32; i++) {
-        if (windows[i].id != 0 && windows[i].is_animating) {
-          any_window_warp = 1;
-          break;
-        }
-      }
-
-      // During active window warp animation, invalidate full screen to prevent
-      // cracked seam lines from small rect rendering slicing the warp blend
-      if (any_window_warp) {
-        extern int screen_width, screen_height;
-        compositor_invalidate_rect(0, 0, screen_width, screen_height);
-      }
+      // Ensure sysmenu area is always redrawn when mouse moves while active
+      extern void sysmenu_invalidate_rect(void);
+      sysmenu_invalidate_rect();
 
       last_mouse_x = mouse_x;
       last_mouse_y = mouse_y;
@@ -760,6 +747,9 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   camera_init();
   print_serial("[INIT 5] BGA START\n");
   bga_init();
+  
+  print_serial("[INIT 5.5] VMSVGA SCAN\n");
+  // vmsvga_init(); // Disabled to use BGA true page-flipping
 
   if (bga_lfb) {
     real_lfb = bga_lfb;
@@ -795,6 +785,12 @@ void kernel_main(unsigned int magic, unsigned int addr) {
 
   print_serial("Initializing WinMgr...\n");
   winmgr_init();
+
+  print_serial("Initializing Fonts...\n");
+  extern void ttf_init(void);
+  extern int ttf_load_browser_font(void);
+  ttf_init();
+  ttf_load_browser_font();
 
   print_serial("Initializing Clipboard...\n");
   clipboard_init();

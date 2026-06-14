@@ -107,6 +107,9 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/drivers/pcnet.c -o build/pcnet.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
 if %errorlevel% neq 0 exit /b %errorlevel%
 
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/drivers/virtio/virtio_net.c -o build/virtio_net.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/drivers/pci.c -o build/pci.o -Iinclude -Isrc/drivers -Isrc/kernel -Isrc/kernel/hal
 if %errorlevel% neq 0 exit /b %errorlevel%
 
@@ -187,6 +190,16 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 echo Compiling 2D Graphics API...
 if exist build\gfx_2d.o del /Q build\gfx_2d.o
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/kernel/gfx_2d.c -o build/gfx_2d.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling Graphics Device Abstraction...
+if exist build\gfx_device.o del /Q build\gfx_device.o
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/kernel/hal/gfx_device.c -o build/gfx_device.o -Iinclude -Isrc/kernel -Isrc/kernel/hal
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo Compiling VMSVGA...
+if exist build\vmsvga.o del /Q build\vmsvga.o
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/drivers/vmsvga.c -o build/vmsvga.o -Iinclude -Isrc/kernel -Isrc/drivers
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Compiling 2D Graphics Unit Tests...
@@ -291,6 +304,9 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/fs/ext2.c -o build/ext2.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/fs
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/fs/procfs.c -o build/procfs.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/fs
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Compiling Applications...
@@ -413,7 +429,7 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Compiling Network Stack...
-.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/net/net_core.c -o build/net_core.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/net/net_core.c -o build/net_core.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net -Isrc/net/lwip/src/include -Isrc/net/lwip_port
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/net/arp.c -o build/arp.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
@@ -425,10 +441,10 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/net/udp.c -o build/udp.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/net/tcp.c -o build/tcp.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/net/tcp.c -o build/tcp.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net -Isrc/net/lwip/src/include -Isrc/net/lwip_port
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/net/dns.c -o build/dns.o
+.\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/net/dns.c -o build/dns.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net -Isrc/net/lwip/src/include -Isrc/net/lwip_port
 .\tools\bin\x86_64-elf-gcc.exe -ffreestanding -mno-red-zone -mno-mmx -O2 -Wall -Wextra -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -mcmodel=large -c src/net/smtp.c -o build/smtp.o -Iinclude -Isrc/kernel -Isrc/kernel/hal -Isrc/drivers -Isrc/net
 if %errorlevel% neq 0 exit /b %errorlevel%
 
@@ -466,6 +482,12 @@ if not exist build\litehtml.a (
     if errorlevel 1 exit /b 1
 )
 
+echo Compiling lwIP (If needed)...
+if not exist build\lwip.a (
+    powershell -ExecutionPolicy Bypass -File build_lwip.ps1
+    if errorlevel 1 exit /b 1
+)
+
 echo Compiling BearSSL (This may take a moment)...
 powershell -ExecutionPolicy Bypass -File build_bearssl.ps1
 if %errorlevel% neq 0 exit /b %errorlevel%
@@ -484,11 +506,11 @@ echo Assembling Fonts...
 D:\nasm\nasm.exe -f elf64 src/lib/fonts.asm -o build/fonts.o
 
 echo Linking Kernel...
-.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.bin build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/setjmp.o build/kernel.o build/screenshot_core.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/font.o build/font16_aa.o build/ttf_font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/pcnet.o build/pci.o build/ahci.o build/es1370.o build/ac97.o build/camera.o build/uhci.o build/ohci.o build/usb.o build/uvc.o build/wav.o build/mp3.o build/wifi.o build/blitter.o build/hal.o build/string.o build/simd.o build/gfx_2d.o build/gfx_2d_test.o build/profiler.o build/random.o build/base64.o build/math.o build/tinyexpr.o build/stdio_wrapper.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/apps.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/mail_core.o build/mail_storage.o build/mail_app.o build/image.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/devfs.o build/pipe.o build/ext2.o build/terminal.o build/pong.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/song_player.o build/explorer_icons.o build/editor.o build/camera_app.o build/lockscreen.o build/taskmgr.o build/photos.o build/taskbar.o build/startmenu.o build/sysmenu.o build/sysmon.o build/settings.o build/config.o build/theme.o build/workspace.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/browser_container.o build/duktape.o build/js.o build/browser.o build/chat.o build/phone.o build/audio_recv_test.o build/recorder.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/smtp.o build/http.o build/tls.o build/dhcp.o build/test_simple.o build/panic.o build/debug.o build/wallpaper_blobs.o build/mupdf_stubs.o build/pdfreader.o build/fonts.o build/ui_layout.o build/eastl_bridge.o build/allocator_eastl.o build/eastl_assert.o build/eastl_string.o build/numeric_limits.o build/red_black_tree.o build/hashtable.o build/mupdf.a build/bearssl.a build/speexdsp.a build/litehtml.a --oformat binary
+.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.bin build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/setjmp.o build/kernel.o build/screenshot_core.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/vmsvga.o build/font.o build/font16_aa.o build/ttf_font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/pcnet.o build/virtio_net.o build/pci.o build/ahci.o build/es1370.o build/ac97.o build/camera.o build/uhci.o build/ohci.o build/usb.o build/uvc.o build/wav.o build/mp3.o build/wifi.o build/blitter.o build/hal.o build/string.o build/simd.o build/gfx_2d.o build/gfx_device.o build/gfx_2d_test.o build/profiler.o build/random.o build/base64.o build/math.o build/tinyexpr.o build/stdio_wrapper.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/apps.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/mail_core.o build/mail_storage.o build/mail_app.o build/image.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/devfs.o build/pipe.o build/ext2.o build/procfs.o build/terminal.o build/pong.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/song_player.o build/explorer_icons.o build/editor.o build/camera_app.o build/lockscreen.o build/taskmgr.o build/photos.o build/taskbar.o build/startmenu.o build/sysmenu.o build/sysmon.o build/settings.o build/config.o build/theme.o build/workspace.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/browser_container.o build/duktape.o build/js.o build/browser.o build/chat.o build/phone.o build/audio_recv_test.o build/recorder.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/smtp.o build/http.o build/tls.o build/dhcp.o build/test_simple.o build/panic.o build/debug.o build/wallpaper_blobs.o build/mupdf_stubs.o build/pdfreader.o build/fonts.o build/ui_layout.o build/eastl_bridge.o build/allocator_eastl.o build/eastl_assert.o build/eastl_string.o build/numeric_limits.o build/red_black_tree.o build/hashtable.o build/mupdf.a build/lwip.a build/bearssl.a build/speexdsp.a build/litehtml.a --oformat binary
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Linking Kernel (ELF)...
-.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.elf build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/setjmp.o build/kernel.o build/screenshot_core.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/font.o build/font16_aa.o build/ttf_font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/pcnet.o build/pci.o build/ahci.o build/es1370.o build/ac97.o build/camera.o build/uhci.o build/ohci.o build/usb.o build/uvc.o build/wav.o build/mp3.o build/wifi.o build/blitter.o build/hal.o build/string.o build/simd.o build/gfx_2d.o build/gfx_2d_test.o build/profiler.o build/random.o build/base64.o build/math.o build/tinyexpr.o build/stdio_wrapper.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/apps.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/mail_core.o build/mail_storage.o build/mail_app.o build/image.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/devfs.o build/pipe.o build/ext2.o build/terminal.o build/pong.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/song_player.o build/explorer_icons.o build/editor.o build/camera_app.o build/lockscreen.o build/taskmgr.o build/photos.o build/taskbar.o build/startmenu.o build/sysmenu.o build/sysmon.o build/settings.o build/config.o build/theme.o build/workspace.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/browser_container.o build/duktape.o build/js.o build/browser.o build/chat.o build/phone.o build/audio_recv_test.o build/recorder.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/smtp.o build/http.o build/tls.o build/dhcp.o build/test_simple.o build/panic.o build/debug.o build/wallpaper_blobs.o build/mupdf_stubs.o build/pdfreader.o build/fonts.o build/ui_layout.o build/eastl_bridge.o build/allocator_eastl.o build/eastl_assert.o build/eastl_string.o build/numeric_limits.o build/red_black_tree.o build/hashtable.o build/mupdf.a build/bearssl.a build/speexdsp.a build/litehtml.a
+.\tools\bin\x86_64-elf-ld.exe -T linker.ld -o build/kernel.elf build/pure_kernel.o build/isr_stubs.o build/idt_load.o build/gdt_flush.o build/trampoline.o build/setjmp.o build/kernel.o build/screenshot_core.o build/gdt.o build/smp.o build/heap.o build/mem.o build/pic.o build/idt.o build/isr.o build/vga.o build/bga.o build/vmsvga.o build/font.o build/font16_aa.o build/ttf_font.o build/ports.o build/keyboard.o build/mouse.o build/timer.o build/rtc.o build/ata.o build/speaker.o build/pcnet.o build/virtio_net.o build/pci.o build/ahci.o build/es1370.o build/ac97.o build/camera.o build/uhci.o build/ohci.o build/usb.o build/uvc.o build/wav.o build/mp3.o build/wifi.o build/blitter.o build/hal.o build/string.o build/simd.o build/gfx_2d.o build/gfx_device.o build/gfx_2d_test.o build/profiler.o build/random.o build/base64.o build/math.o build/tinyexpr.o build/stdio_wrapper.o build/acpi.o build/apic.o build/window.o build/anim.o build/compositor.o build/desktop.o build/apps.o build/ctxmenu.o build/task.o build/clipboard.o build/syscall.o build/mail_core.o build/mail_storage.o build/mail_app.o build/image.o build/paging.o build/elf.o build/shell.o build/ramfs.o build/fat.o build/fs.o build/vfs.o build/devfs.o build/pipe.o build/ext2.o build/procfs.o build/terminal.o build/pong.o build/autocomplete.o build/calculator.o build/paint.o build/filemgr.o build/explorer.o build/song_player.o build/explorer_icons.o build/editor.o build/camera_app.o build/lockscreen.o build/taskmgr.o build/photos.o build/taskbar.o build/startmenu.o build/sysmenu.o build/sysmon.o build/settings.o build/config.o build/theme.o build/workspace.o build/video_dev.o build/videoplayer.o build/dom.o build/css.o build/layout.o build/browser_container.o build/duktape.o build/js.o build/browser.o build/chat.o build/phone.o build/audio_recv_test.o build/recorder.o build/net_core.o build/arp.o build/ipv4.o build/udp.o build/tcp.o build/dns.o build/smtp.o build/http.o build/tls.o build/dhcp.o build/test_simple.o build/panic.o build/debug.o build/wallpaper_blobs.o build/mupdf_stubs.o build/pdfreader.o build/fonts.o build/ui_layout.o build/eastl_bridge.o build/allocator_eastl.o build/eastl_assert.o build/eastl_string.o build/numeric_limits.o build/red_black_tree.o build/hashtable.o build/mupdf.a build/lwip.a build/bearssl.a build/speexdsp.a build/litehtml.a
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo Creating OS Image...

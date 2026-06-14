@@ -37,6 +37,13 @@ typedef struct {
     
     int hover_idx; // for sidebar
     int hover_btn; // 1=prev, 2=play, 3=next
+    
+    // Animations
+    animation_t progress_anim;
+    animation_t thumb_scale_anim;
+    
+    int show_now_playing;
+    animation_t now_playing_anim;
 } song_app_t;
 
 window_t *song_player_win = 0;
@@ -56,9 +63,13 @@ void song_player_update(window_t *win) {
         win->needs_redraw = 1;
         extern int ui_dirty;
         ui_dirty = 1;
-        int bw = win->width;
-        int by = win->height - 90;
-        winmgr_invalidate_rect(win, 0, by, bw, 90);
+        if (app->now_playing_anim.current_val > 0.001f) {
+            winmgr_invalidate_rect(win, 0, 0, win->width, win->height);
+        } else {
+            int bw = win->width;
+            int by = win->height - 90;
+            winmgr_invalidate_rect(win, 0, by, bw, 90);
+        }
     }
 }
 
@@ -338,23 +349,287 @@ static void draw_bottom_bar(window_t *win, song_app_t *app) {
     
     
     if (dur_ms > 0) {
-        int w = (pos_ms * 400) / dur_ms;
-        if (w > 400) w = 400;
-        if (w < 0) w = 0;
-        winmgr_draw_rounded_rect_ex(win, cx - 200, by + 70, w, 6, COL_SP_TEXT_WHT, 0, 0, 3);
-        winmgr_draw_rounded_rect_ex(win, cx - 200 + w - 6, by + 67, 12, 12, COL_SP_TEXT_WHT, 0, 0, 6); // thumb
+        int target_w = (pos_ms * 400) / dur_ms;
+        if (target_w > 400) target_w = 400;
+        if (target_w < 0) target_w = 0;
+        
+        // Smoothly interpolate the progress bar
+        int diff = target_w - (int)app->progress_anim.current_val;
+        if (diff < 0) diff = -diff;
+        
+        if (!app->progress_anim.active || (int)app->progress_anim.end_val != target_w) {
+            if (diff > 50) {
+                // If it's a huge jump (e.g. song change or scrub), jump instantly
+                anim_init_val(&app->progress_anim, target_w);
+            } else {
+                // Otherwise glide smoothly to the new second
+                anim_start(&app->progress_anim, app->progress_anim.current_val, target_w, 0.5f, EASE_OUT_CUBIC);
+            }
+        }
+        
+        // Tick animation (approx 25fps based on song_player_update frequency)
+        anim_tick(&app->progress_anim, 0.04f); 
+        anim_tick(&app->thumb_scale_anim, 0.04f);
+        if (app->thumb_scale_anim.active) {
+            win->needs_redraw = 1;
+            extern int ui_dirty;
+            ui_dirty = 1;
+        }
+        
+        int w = (int)app->progress_anim.current_val;
+        
+        float pct = (float)w / 400.0f;
+        if (pct < 0.0f) pct = 0.0f;
+        if (pct > 1.0f) pct = 1.0f;
+        
+        // Rapid RGB color cycle for the progress bar
+        static float color_t = 0.0f;
+        if (app->is_playing) {
+            color_t += 0.25f; // Fast RGB color cycling speed
+        }
+        
+        extern double sin(double);
+        // Calculate RGB using sine waves offset by 120 degrees (2pi/3) to create a perfect rainbow
+        int r = (int)((sin(color_t) * 0.5f + 0.5f) * 200 + 55);
+        int g = (int)((sin(color_t + 2.094f) * 0.5f + 0.5f) * 200 + 55); 
+        int b = (int)((sin(color_t + 4.188f) * 0.5f + 0.5f) * 200 + 55); 
+        uint32_t fill_color = 0xFF000000 | (r << 16) | (g << 8) | b;
+        
+        winmgr_draw_rounded_rect_ex(win, cx - 200, by + 70, w, 6, fill_color, 0, 0, 3);
+        
+        // Add wavy sound track effect — separated vertical bars ("boxy waves") forming a smooth curve
+        if (app->is_playing) {
+            static float wave_t = 0.0f;
+            wave_t += 0.08f; // Animation speed
+            
+            extern double sin(double);
+            int base_y = by + 70; // Set exactly on top of the progress bar
+            
+            // Draw separated vertical bars (width 2, gap 2)
+            for (int ix = 4; ix < w - 4; ix += 4) {
+                // Calculate a smooth curvy height (sine wave) instead of erratic jumping
+                float curvy = sin(wave_t * 2.0f + ix * 0.05f) * sin(wave_t * 0.8f + ix * 0.02f);
+                float env = 1.0f + 0.3f * sin(wave_t * 0.5f);
+                
+                int h_bar = (int)(curvy * env * 12.0f); // Amplitude up to 15px
+                if (h_bar < 0) h_bar = -h_bar; // Make it bounce up smoothly
+                if (h_bar < 1) h_bar = 1;      // Minimum height
+                
+                int draw_y = base_y - h_bar;
+                
+                // Draw the separated vertical bar sitting ON TOP of the progress bar
+                winmgr_fill_rect(win, cx - 200 + ix, draw_y, 2, h_bar, 0xFFFFFFFF); 
+            }
+            
+            // Force continuous redraw while playing
+            win->needs_redraw = 1;
+            extern int ui_dirty;
+            ui_dirty = 1;
+        }
+        float thumb_scale = app->thumb_scale_anim.current_val;
+        if (thumb_scale < 0.1f) thumb_scale = 1.0f; // safety
+        
+        int tw = (int)(12 * thumb_scale);
+        int th = (int)(12 * thumb_scale);
+        int tx = cx - 200 + w - (tw / 2);
+        int ty = by + 73 - (th / 2);
+        
+        winmgr_draw_rounded_rect_ex(win, tx, ty, tw, th, COL_SP_TEXT_WHT, 0, 0, tw/2); // thumb
     }
     
     winmgr_draw_text(win, cx + 220, by + 65, dur_str, COL_SP_TEXT_MUTED);
+}
+
+static void draw_now_playing(window_t *win, song_app_t *app) {
+    float t = app->now_playing_anim.current_val; // 0.0 to 1.0
+    if (t <= 0.001f) return;
+    
+    int bw = win->width;
+    int bh = win->height;
+    
+    // Slide up from bottom
+    int offset_y = (int)((1.0f - t) * bh);
+    
+    for (int y = 0; y < bh; y += 5) {
+        if (y + offset_y >= bh) break;
+        int alpha = 255 - (y * 255 / bh);
+        int r = (0x33 * alpha + 0x12 * (255 - alpha)) / 255;
+        int g = (0x22 * alpha + 0x12 * (255 - alpha)) / 255;
+        int b = (0x44 * alpha + 0x12 * (255 - alpha)) / 255;
+        uint32_t c = 0xFF000000 | (r << 16) | (g << 8) | b;
+        winmgr_fill_rect(win, 0, y + offset_y, bw, 5, c);
+    }
+    
+    winmgr_draw_text(win, 30, 30 + offset_y, "v  Back", COL_SP_TEXT_WHT);
+    winmgr_draw_text(win, bw/2 - 50, 30 + offset_y, "NOW PLAYING", COL_SP_TEXT_MUTED);
+    
+    if (app->current_song_idx >= 0 && app->current_song_idx < app->song_count) {
+        song_entry_t *s = &app->songs[app->current_song_idx];
+        
+        int by = bh - 90;
+        
+        // Initial coords
+        int start_cv_size = 60;
+        int start_cv_x = 30;
+        int start_cv_y = by + 15;
+        
+        int start_px = bw/2 - 200;
+        int start_py = by + 70;
+        int start_p_width = 400;
+        
+        int start_cx_btn = bw/2;
+        int start_ctrl_y = by + 25;
+        
+        // Target coords
+        int target_cv_size = 320;
+        int target_cv_x = bw/2 - target_cv_size/2;
+        int target_cv_y = 120;
+        
+        int target_p_width = 460; 
+        int target_px = bw/2 - target_p_width/2;
+        int target_py = target_cv_y + target_cv_size + 110;
+        
+        int target_cx_btn = bw/2;
+        int target_ctrl_y = target_py + 70;
+        
+        // Interpolate
+        int cv_size = start_cv_size + (int)((target_cv_size - start_cv_size) * t);
+        int cv_x = start_cv_x + (int)((target_cv_x - start_cv_x) * t);
+        int cv_y = start_cv_y + (int)((target_cv_y - start_cv_y) * t);
+        
+        int px = start_px + (int)((target_px - start_px) * t);
+        int py = start_py + (int)((target_py - start_py) * t);
+        int p_width = start_p_width + (int)((target_p_width - start_p_width) * t);
+        
+        int cx_btn = start_cx_btn + (int)((target_cx_btn - start_cx_btn) * t);
+        int ctrl_y = start_ctrl_y + (int)((target_ctrl_y - start_ctrl_y) * t);
+        
+        // Shadow (fix transparency bug by using solid dark opaque color)
+        int shadow_size = cv_size;
+        int shadow_offset = (int)(15 * t);
+        if (shadow_offset > 0) {
+            winmgr_fill_rect(win, cv_x + shadow_offset, cv_y + shadow_offset, shadow_size, shadow_size, 0xFF080808); 
+        }
+        
+        if (s->cover_img) {
+            song_stretch_blit(win, cv_x, cv_y, cv_size, cv_size, s->cover_img, s->cover_w, s->cover_h);
+        } else {
+            winmgr_draw_rounded_rect_ex(win, cv_x, cv_y, cv_size, cv_size, 0xFF333333, 0, 0, (int)(16 * t + 4 * (1.0f - t)));
+        }
+        
+        // Text fades and moves
+        int target_tx = target_cv_x;
+        int target_ty = target_cv_y + target_cv_size + 40;
+        int start_tx = 110;
+        int start_ty = by + 25;
+        
+        int tx = start_tx + (int)((target_tx - start_tx) * t);
+        int ty = start_ty + (int)((target_ty - start_ty) * t);
+        
+        winmgr_draw_text(win, tx, ty, s->title, COL_SP_TEXT_WHT);
+        winmgr_draw_text(win, tx, ty + 20 + (int)(5 * t), "PureOS Audio", COL_SP_TEXT_MUTED);
+        
+        // Progress Bar
+        uint32_t pos_ms = 0;
+        uint32_t dur_ms = 0;
+        mp3_get_progress(&pos_ms, &dur_ms);
+        
+        char pos_str[16] = "0:00";
+        char dur_str[16] = "0:00";
+        if (dur_ms > 0) {
+            int pm = (pos_ms / 1000) / 60;
+            int ps = (pos_ms / 1000) % 60;
+            int dm = (dur_ms / 1000) / 60;
+            int ds = (dur_ms / 1000) % 60;
+            pos_str[0] = '0' + (pm % 10); pos_str[1] = ':'; pos_str[2] = '0' + (ps / 10); pos_str[3] = '0' + (ps % 10); pos_str[4] = 0;
+            dur_str[0] = '0' + (dm % 10); dur_str[1] = ':'; dur_str[2] = '0' + (ds / 10); dur_str[3] = '0' + (ds % 10); dur_str[4] = 0;
+        }
+        
+        // Text labels for progress move outward
+        int start_p_tx = start_px - 50;
+        int target_p_tx = target_px;
+        int start_d_tx = start_px + start_p_width + 20;
+        int target_d_tx = target_px + target_p_width - 35;
+        
+        int p_tx = start_p_tx + (int)((target_p_tx - start_p_tx) * t);
+        int p_ty = start_py - 5 + (int)((target_py - 5 - (start_py - 5)) * t);
+        int d_tx = start_d_tx + (int)((target_d_tx - start_d_tx) * t);
+        
+        winmgr_draw_text(win, p_tx, p_ty, pos_str, COL_SP_TEXT_MUTED);
+        winmgr_draw_text(win, d_tx, p_ty, dur_str, COL_SP_TEXT_MUTED);
+        
+        // Base bar
+        int bar_h = 6 + (int)(2 * t);
+        int bar_y = py + (int)(15 * t);
+        
+        winmgr_draw_rounded_rect_ex(win, px, bar_y, p_width, bar_h, 0xFF3E3E3E, 0, 0, bar_h/2);
+        
+        if (dur_ms > 0) {
+            int w = (int)app->progress_anim.current_val; 
+            int cur_w = (w * p_width) / 400; 
+            
+            static float color_t = 0.0f;
+            if (app->is_playing) color_t += 0.25f;
+            extern double sin(double);
+            int r = (int)((sin(color_t) * 0.5f + 0.5f) * 200 + 55);
+            int g = (int)((sin(color_t + 2.094f) * 0.5f + 0.5f) * 200 + 55); 
+            int b = (int)((sin(color_t + 4.188f) * 0.5f + 0.5f) * 200 + 55); 
+            uint32_t fill_color = 0xFF000000 | (r << 16) | (g << 8) | b;
+            
+            winmgr_draw_rounded_rect_ex(win, px, bar_y, cur_w, bar_h, fill_color, 0, 0, bar_h/2);
+            
+            float thumb_scale = app->thumb_scale_anim.current_val;
+            int tw = (int)((12 + 4 * t) * thumb_scale);
+            int th = (int)((12 + 4 * t) * thumb_scale);
+            winmgr_draw_rounded_rect_ex(win, px + cur_w - (tw/2), bar_y + (bar_h/2) - (th/2), tw, th, COL_SP_TEXT_WHT, 0, 0, tw/2);
+        }
+        
+        // Controls
+        int prev_x = (start_cx_btn - 60) + (int)(((target_cx_btn - 80) - (start_cx_btn - 60)) * t);
+        int play_x = cx_btn;
+        int next_x = (start_cx_btn + 50) + (int)(((target_cx_btn + 65) - (start_cx_btn + 50)) * t);
+        
+        int play_size = 36 + (int)(24 * t); // 36 to 60
+        
+        winmgr_draw_text(win, prev_x, ctrl_y, "|<", (app->hover_btn == 1) ? COL_SP_TEXT_WHT : COL_SP_TEXT_MUTED);
+        
+        int play_y_offset = -8 + (int)((-20 - (-8)) * t); 
+        winmgr_draw_rounded_rect_ex(win, play_x - play_size/2, ctrl_y + play_y_offset, play_size, play_size, COL_SP_TEXT_WHT, 0, 0, play_size/2);
+        
+        if (app->is_playing) {
+            int bar_w = 4 + (int)(2 * t);
+            int bar_h2 = 12 + (int)(18 * t);
+            int bar_y_offset = 2 + (int)((-5 - 2) * t);
+            int offset_x1 = -6 - (int)(4*t);
+            int offset_x2 = 2 + (int)(2*t);
+            winmgr_fill_rect(win, play_x + offset_x1, ctrl_y + bar_y_offset, bar_w, bar_h2, COL_SP_SIDEBAR);
+            winmgr_fill_rect(win, play_x + offset_x2, ctrl_y + bar_y_offset, bar_w, bar_h2, COL_SP_SIDEBAR);
+        } else {
+            int text_y_offset = 2 + (int)((0 - 2) * t);
+            winmgr_draw_text(win, play_x - 5, ctrl_y + text_y_offset, ">", COL_SP_SIDEBAR);
+        }
+        winmgr_draw_text(win, next_x, ctrl_y, ">|", (app->hover_btn == 3) ? COL_SP_TEXT_WHT : COL_SP_TEXT_MUTED);
+    }
 }
 
 void song_draw(window_t *win) {
     song_app_t *app = get_app(win);
     if (!app) return;
     
+    anim_tick(&app->now_playing_anim, 0.04f);
+    if (app->now_playing_anim.active) {
+        win->needs_redraw = 1;
+        extern int ui_dirty;
+        ui_dirty = 1;
+    }
+    
     draw_sidebar(win, app);
     draw_main_area(win, app);
     draw_bottom_bar(win, app);
+    
+    if (app->now_playing_anim.current_val > 0.001f) {
+        draw_now_playing(win, app);
+    }
 }
 
 void song_handle_mouse(window_t *win, int mx, int my, int buttons) {
@@ -363,30 +638,94 @@ void song_handle_mouse(window_t *win, int mx, int my, int buttons) {
     int new_hover_idx = -1;
     int new_hover_btn = 0;
     
-    // Sidebar list check
-    if (mx >= 10 && mx <= 240 && my >= 180 && my <= win->height - 90) {
-        new_hover_idx = (my - 180) / 65;
-        if (new_hover_idx >= app->song_count) new_hover_idx = -1;
+    float t = app->now_playing_anim.current_val;
+    
+    if (t > 0.5f) {
+        int bw = win->width;
+        int offset_y = (int)((1.0f - t) * win->height);
+        
+        // Back button
+        if (mx >= 20 && mx <= 80 && my >= 20 + offset_y && my <= 60 + offset_y) {
+            if (buttons & 1) {
+                anim_start_spring(&app->now_playing_anim, t, 0.0f, 400.0f, 35.0f);
+            }
+        }
+        
+        int target_cv_y = 120;
+        int target_cv_size = 320;
+        int target_p_width = 460;
+        int target_py = target_cv_y + target_cv_size + 110;
+        int target_ctrl_y = target_py + 70;
+        
+        int start_py = win->height - 90 + 70;
+        int py = start_py + (int)((target_py - start_py) * t);
+        int start_ctrl_y = win->height - 90 + 25;
+        int ctrl_y = start_ctrl_y + (int)((target_ctrl_y - start_ctrl_y) * t);
+        
+        int cx_btn = bw/2;
+        if (my >= ctrl_y - 30 && my <= ctrl_y + 40) {
+            if (mx >= cx_btn - 100 && mx <= cx_btn - 50) new_hover_btn = 1;
+            else if (mx >= cx_btn - 30 && mx <= cx_btn + 30) new_hover_btn = 2;
+            else if (mx >= cx_btn + 50 && mx <= cx_btn + 100) new_hover_btn = 3;
+        }
+        
+        int start_px = bw/2 - 200;
+        int target_px = bw/2 - target_p_width/2;
+        int px = start_px + (int)((target_px - start_px) * t);
+        int start_p_width = 400;
+        int p_width = start_p_width + (int)((target_p_width - start_p_width) * t);
+        if (my >= py && my <= py + 30 && mx >= px && mx <= px + p_width) {
+            if (!app->thumb_scale_anim.active && app->thumb_scale_anim.current_val != 1.5f) {
+                anim_start_spring(&app->thumb_scale_anim, app->thumb_scale_anim.current_val, 1.5f, 400.0f, 25.0f);
+            }
+        } else {
+            if (!app->thumb_scale_anim.active && app->thumb_scale_anim.current_val != 1.0f) {
+                anim_start_spring(&app->thumb_scale_anim, app->thumb_scale_anim.current_val, 1.0f, 400.0f, 25.0f);
+            }
+        }
+    } else {
+        // Sidebar list check
+        if (mx >= 10 && mx <= 240 && my >= 180 && my <= win->height - 90) {
+            new_hover_idx = (my - 180) / 65;
+            if (new_hover_idx >= app->song_count) new_hover_idx = -1;
+        }
+        
+        // Main Area Card check
+        if (mx >= 280 && mx <= 430 && my >= 360 && my <= 530) {
+            if (app->song_count > 0) new_hover_idx = 0; // The first card
+        }
+        
+        // Bottom bar controls
+        int bw = win->width;
+        int by = win->height - 90;
+        int cx = bw / 2;
+        int cy = by + 25;
+        
+        if (my >= by && my <= by + 60) {
+            if (mx >= cx - 50 && mx <= cx - 20) new_hover_btn = 1; // Prev
+            else if (mx >= cx - 15 && mx <= cx + 15) new_hover_btn = 2; // Play
+            else if (mx >= cx + 20 && mx <= cx + 50) new_hover_btn = 3; // Next
+        }
+        
+        if (my >= by + 60 && my <= by + 80 && mx >= cx - 210 && mx <= cx + 210) {
+            if (!app->thumb_scale_anim.active && app->thumb_scale_anim.current_val != 1.5f) {
+                anim_start_spring(&app->thumb_scale_anim, app->thumb_scale_anim.current_val, 1.5f, 400.0f, 25.0f);
+            }
+        } else {
+            if (!app->thumb_scale_anim.active && app->thumb_scale_anim.current_val != 1.0f) {
+                anim_start_spring(&app->thumb_scale_anim, app->thumb_scale_anim.current_val, 1.0f, 400.0f, 25.0f);
+            }
+        }
+        
+        // Open Now Playing
+        if (mx >= 30 && mx <= 90 && my >= by + 15 && my <= by + 75) {
+            if (buttons & 1 && app->current_song_idx >= 0) {
+                anim_start_spring(&app->now_playing_anim, t, 1.0f, 400.0f, 35.0f);
+            }
+        }
     }
-    
-    // Main Area Card check
-    if (mx >= 280 && mx <= 430 && my >= 360 && my <= 530) {
-        if (app->song_count > 0) new_hover_idx = 0; // The first card
-    }
-    
-    // Bottom bar controls
-    int bw = win->width;
-    int by = win->height - 90;
-    int cx = bw / 2;
-    int cy = by + 25;
-    
-    if (my >= by && my <= by + 60) {
-        if (mx >= cx - 50 && mx <= cx - 20) new_hover_btn = 1; // Prev
-        else if (mx >= cx - 15 && mx <= cx + 15) new_hover_btn = 2; // Play
-        else if (mx >= cx + 20 && mx <= cx + 50) new_hover_btn = 3; // Next
-    }
-    
-    if (new_hover_idx != app->hover_idx || new_hover_btn != app->hover_btn) {
+
+    if (new_hover_idx != app->hover_idx || new_hover_btn != app->hover_btn || app->thumb_scale_anim.active || app->now_playing_anim.active) {
         app->hover_idx = new_hover_idx;
         app->hover_btn = new_hover_btn;
         winmgr_invalidate_rect(win, 0, 0, win->width, win->height);
@@ -455,7 +794,7 @@ static void song_on_close(void *w) {
         }
     }
     kfree(app);
-    winmgr_close_window(win);
+    win->user_data = 0;
 }
 
 void song_app_init() {
@@ -468,8 +807,13 @@ void song_app_init() {
     app->win = win;
     app->current_song_idx = -1;
     app->hover_idx = -1;
+    anim_init(&app->progress_anim);
+    anim_init_val(&app->thumb_scale_anim, 1.0f);
+    anim_init_val(&app->now_playing_anim, 0.0f);
+    app->show_now_playing = 0;
     win->user_data = app;
     win->flags |= WINDOW_FLAG_NO_TITLEBAR;
+    win->app_type = 17; // APP_MUSIC
     song_player_win = win;
     
     win->draw = (void (*)(void *))song_draw;

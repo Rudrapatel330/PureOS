@@ -146,16 +146,18 @@ void paging_init() {
     pd_hi->tables[i] = 0;
   }
 
-  // ==== Framebuffer (4MB, uses get_page since address is dynamic) ====
+  // ==== Framebuffer (32MB for triple buffering at up to 1920x1200x32) ====
+  // At 1600x900x32bpp x 3 pages = ~17MB, so map 32MB for safety margin
   uint32_t *fb_ptr = (uint32_t *)0x6000;
   uint64_t lfb_phys = *fb_ptr;
   if (lfb_phys == 0 || lfb_phys == 0xFFFFFFFF) {
     lfb_phys = 0xE0000000;
   }
-  print_serial("PAGING: Mapping LFB (4MB)...\n");
+  print_serial("PAGING: Mapping LFB (32MB for triple buffering)...\n");
 
-  // Only 1024 pages - negligible cost, keeps get_page() for dynamic LFB address
-  for (uint64_t i = 0; i < 0x400000; i += 0x1000) {
+  // 8192 pages (32MB) - covers triple buffer at high resolutions
+  #define LFB_MAP_SIZE 0x2000000  // 32MB
+  for (uint64_t i = 0; i < LFB_MAP_SIZE; i += 0x1000) {
     page_t *page = get_page(lfb_phys + i, 1, kernel_pml4);
     if (!page) {
       print_serial("PAGING: get_page failed during LFB map!\n");
@@ -168,7 +170,7 @@ void paging_init() {
     page->pat = 1; // PAT=1, PCD=0, PWT=0 selects PAT4 (WC)
     page->frame = (lfb_phys + i) >> 12;
   }
-  print_serial("PAGING: LFB Map complete.\n");
+  print_serial("PAGING: LFB Map complete (32MB mapped).\n");
 
   pat_init();
 

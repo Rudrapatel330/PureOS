@@ -70,6 +70,7 @@ typedef struct task {
   uint32_t gid;          // Security: Group ID
   uint64_t cpu_ticks;    // Total CPU ticks consumed
   int cpu_usage_percent; // Last calculated CPU percentage
+  void *files[64];       // Per-process FD table
   struct task *next;     // Link to next task
 } task_t;
 

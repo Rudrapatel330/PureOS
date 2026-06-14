@@ -1,10 +1,18 @@
 #include "string.h"
 
 void *memcpy(void *dest, const void *src, size_t n) {
-  unsigned char *d = (unsigned char *)dest;
-  const unsigned char *s = (const unsigned char *)src;
-  while (n--) *d++ = *s++;
-  return dest;
+  void *ret = dest;
+  size_t qwords = n / 8;
+  size_t bytes = n % 8;
+  __asm__ volatile (
+      "rep movsq\n\t"
+      "mov %3, %%rcx\n\t"
+      "rep movsb"
+      : "+D"(dest), "+S"(src), "+c"(qwords)
+      : "r"(bytes)
+      : "memory"
+  );
+  return ret;
 }
 
 void *memmove(void *dest, const void *src, size_t n) {

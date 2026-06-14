@@ -4,30 +4,26 @@
 #include "../kernel/string.h"
 #include "../drivers/camera.h"
 
-static vfs_driver_t devfs_driver;
-static vfs_node_t *devfs_root = 0;
-static vfs_node_t *devfs_nodes[4]; // null, zero, random, video0
+static vfs_dentry_t *devfs_root = 0;
+static vfs_dentry_t *devfs_nodes[4]; // null, zero, random, video0
 
-static int devfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
+static int devfs_read(vfs_inode_t *inode, file_handle_t *file, uint32_t offset, uint32_t size,
                       uint8_t *buffer) {
   (void)offset; // Unused for these devices
 
-  if (strcmp(node->name, "null") == 0) {
+  if (inode->impl == 0) { // null
     return 0; // EOF immediately
-  } else if (strcmp(node->name, "zero") == 0) {
+  } else if (inode->impl == 1) { // zero
     memset(buffer, 0, size);
     return size;
-  } else if (strcmp(node->name, "random") == 0) {
+  } else if (inode->impl == 2) { // random
     get_entropy(buffer, size);
     return size;
-  } else if (strcmp(node->name, "video0") == 0) {
+  } else if (inode->impl == 3) { // video0
     camera_ctx_t *ctx = camera_get_ctx();
     if (!ctx || !ctx->is_active) return -1;
     
     uint32_t frame_size = ctx->width * ctx->height * 4;
-    // For video devices, we often treat reads as frame-based or linear.
-    // If offset is greater than frame size, wrap or return EOF.
-    // Here we treat it as a linear "file" of one frame.
     if (offset >= frame_size) return 0;
     
     uint32_t to_read = size;
@@ -39,74 +35,103 @@ static int devfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
   return -1;
 }
 
-static int devfs_write(vfs_node_t *node, uint32_t offset, uint32_t size,
+static int devfs_write(vfs_inode_t *inode, file_handle_t *file, uint32_t offset, uint32_t size,
                        const uint8_t *buffer) {
   (void)offset; // Unused
   (void)buffer; // Unused
 
-  if (strcmp(node->name, "null") == 0) {
+  if (inode->impl == 0) {
     return size; // Discard and say we wrote it all
-  } else if (strcmp(node->name, "zero") == 0) {
+  } else if (inode->impl == 1) {
     return size; // Discard and say we wrote it all
-  } else if (strcmp(node->name, "random") == 0) {
+  } else if (inode->impl == 2) {
     // Technically could mix into entropy pool, but for now just discard
     return size;
   }
   return -1;
 }
 
-static vfs_node_t *devfs_readdir(vfs_node_t *node, uint32_t index) {
-  (void)node; // root
+static vfs_dentry_t *devfs_readdir(vfs_inode_t *inode, uint32_t index) {
+  (void)inode; // root
   if (index < 4) {
     return devfs_nodes[index];
   }
   return 0;
 }
 
-static vfs_node_t *devfs_finddir(vfs_node_t *node, char *name) {
-  (void)node;
+static vfs_dentry_t *devfs_finddir(vfs_inode_t *inode, const char *name) {
+  (void)inode;
   for (int i = 0; i < 4; i++) {
     if (strcmp(devfs_nodes[i]->name, name) == 0) {
-      vfs_node_t *ret = kmalloc(sizeof(vfs_node_t));
-      memcpy(ret, devfs_nodes[i], sizeof(vfs_node_t));
+      vfs_dentry_t *ret = kmalloc(sizeof(vfs_dentry_t));
+      memcpy(ret, devfs_nodes[i], sizeof(vfs_dentry_t));
+      ret->inode->refcount++;
+      ret->refcount = 1;
       return ret;
     }
   }
   return 0;
 }
 
-static vfs_node_t *create_dev_node(const char *name) {
-  vfs_node_t *n = kmalloc(sizeof(vfs_node_t));
-  memset(n, 0, sizeof(vfs_node_t));
-  strcpy(n->name, name);
-  n->flags = VFS_FILE;
-  n->mask = 0666; // Readable/writable by all
-  n->driver = &devfs_driver;
-  return n;
+extern file_operations_t devfs_file_ops;
+extern inode_operations_t devfs_inode_ops;
+
+static vfs_dentry_t *create_dev_node(const char *name, int impl) {
+  vfs_inode_t *inode = kmalloc(sizeof(vfs_inode_t));
+  memset(inode, 0, sizeof(vfs_inode_t));
+  inode->mode = VFS_FILE | 0666;
+  inode->impl = impl;
+  inode->i_ops = &devfs_inode_ops;
+  inode->f_ops = &devfs_file_ops;
+
+  vfs_dentry_t *dentry = kmalloc(sizeof(vfs_dentry_t));
+  memset(dentry, 0, sizeof(vfs_dentry_t));
+  strcpy(dentry->name, name);
+  dentry->inode = inode;
+  return dentry;
 }
 
-void devfs_init(void) {
-  // Setup driver
-  memset(&devfs_driver, 0, sizeof(vfs_driver_t));
-  strcpy(devfs_driver.name, "devfs");
-  devfs_driver.read = devfs_read;
-  devfs_driver.write = devfs_write;
-  devfs_driver.readdir = devfs_readdir;
-  devfs_driver.finddir = devfs_finddir;
+file_operations_t devfs_file_ops = {
+  devfs_read,
+  devfs_write,
+  0,
+  0,
+  devfs_readdir
+};
 
-  // Create root node
-  devfs_root = kmalloc(sizeof(vfs_node_t));
-  memset(devfs_root, 0, sizeof(vfs_node_t));
+inode_operations_t devfs_inode_ops = {
+  devfs_finddir,
+  0,
+  0,
+  0
+};
+
+void devfs_init(void) {
+  // Create root inode
+  vfs_inode_t *root_inode = kmalloc(sizeof(vfs_inode_t));
+  memset(root_inode, 0, sizeof(vfs_inode_t));
+  root_inode->mode = VFS_DIRECTORY | 0755;
+  root_inode->i_ops = &devfs_inode_ops;
+  root_inode->f_ops = &devfs_file_ops;
+
+  // Create root dentry
+  devfs_root = kmalloc(sizeof(vfs_dentry_t));
+  memset(devfs_root, 0, sizeof(vfs_dentry_t));
   strcpy(devfs_root->name, "dev");
-  devfs_root->flags = VFS_DIRECTORY;
-  devfs_root->mask = 0755;
-  devfs_root->driver = &devfs_driver;
+  devfs_root->inode = root_inode;
 
   // Create device nodes
-  devfs_nodes[0] = create_dev_node("null");
-  devfs_nodes[1] = create_dev_node("zero");
-  devfs_nodes[2] = create_dev_node("random");
-  devfs_nodes[3] = create_dev_node("video0");
+  devfs_nodes[0] = create_dev_node("null", 0);
+  devfs_nodes[1] = create_dev_node("zero", 1);
+  devfs_nodes[2] = create_dev_node("random", 2);
+  devfs_nodes[3] = create_dev_node("video0", 3);
+
+  // Register in the character device registry
+  extern int register_chrdev(int major, const char *name, file_operations_t *fops);
+  register_chrdev(1, "null", &devfs_file_ops);
+  register_chrdev(2, "zero", &devfs_file_ops);
+  register_chrdev(3, "random", &devfs_file_ops);
+  register_chrdev(4, "video0", &devfs_file_ops);
 
   // Mount at /dev
   vfs_mount("/dev", devfs_root);

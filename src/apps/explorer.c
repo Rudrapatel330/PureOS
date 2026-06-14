@@ -324,9 +324,10 @@ static void explorer_search_recursive(explorer_app_t *app, const char *path,
     return;
 
   int i = 0;
-  vfs_node_t *node;
+  vfs_dentry_t *node;
   while ((node = vfs_readdir(fd, i++))) {
     if (strcmp(node->name, ".") == 0 || strcmp(node->name, "..") == 0) {
+      if (node->inode && node->inode->refcount > 0) node->inode->refcount--;
       kfree(node);
       continue;
     }
@@ -336,8 +337,8 @@ static void explorer_search_recursive(explorer_app_t *app, const char *path,
       search_result_t *res = &app->search_results[app->search_count++];
       strncpy(res->name, node->name, 31);
       res->name[31] = 0;
-      res->is_dir = (node->flags & 2) ? 1 : 0;
-      res->size = node->length;
+      res->is_dir = (node->inode && (node->inode->mode & VFS_DIRECTORY)) ? 1 : 0;
+      res->size = node->inode ? node->inode->size : 0;
 
       // Build full path
       strcpy(res->full_path, path);
@@ -346,21 +347,24 @@ static void explorer_search_recursive(explorer_app_t *app, const char *path,
       strcat(res->full_path, node->name);
 
       if (app->search_count >= MAX_SEARCH_RESULTS) {
+        if (node->inode && node->inode->refcount > 0) node->inode->refcount--;
         kfree(node);
         break;
       }
     }
 
     // Recurse?
-    if (node->flags & 2) {
+    if (node->inode && (node->inode->mode & VFS_DIRECTORY)) {
       char sub[256];
       strcpy(sub, path);
       if (sub[strlen(sub) - 1] != '/')
         strcat(sub, "/");
       strcat(sub, node->name);
+      if (node->inode && node->inode->refcount > 0) node->inode->refcount--;
       kfree(node);
       explorer_search_recursive(app, sub, query);
     } else {
+      if (node->inode && node->inode->refcount > 0) node->inode->refcount--;
       kfree(node);
     }
 

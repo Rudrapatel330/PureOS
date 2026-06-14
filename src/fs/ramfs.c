@@ -123,11 +123,11 @@ int ramfs_write(const char *name, const uint8_t *content, uint32_t size) {
 }
 
 // VFS Implementations for RAMFS
-static int ramfs_vfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
+static int ramfs_vfs_read(vfs_inode_t *inode, file_handle_t *file, uint32_t offset, uint32_t size,
                           uint8_t *buffer) {
-  if (node->impl >= (uint32_t)ramfs_count)
+  if (inode->impl >= (uint32_t)ramfs_count)
     return -1;
-  file_entry_t *f = &ramfs_files[node->impl];
+  file_entry_t *f = &ramfs_files[inode->impl];
   if (!f->content)
     return 0;
 
@@ -140,32 +140,69 @@ static int ramfs_vfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
   return size;
 }
 
-static vfs_node_t *ramfs_get_vfs_node(int index) {
+static vfs_dentry_t *ramfs_get_vfs_node(int index) {
   if (index < 0 || index >= ramfs_count)
     return 0;
-  vfs_node_t *node = (vfs_node_t *)kmalloc(sizeof(vfs_node_t));
-  memset(node, 0, sizeof(vfs_node_t));
+  vfs_inode_t *inode = (vfs_inode_t *)kmalloc(sizeof(vfs_inode_t));
+  memset(inode, 0, sizeof(vfs_inode_t));
+  vfs_dentry_t *dentry = (vfs_dentry_t *)kmalloc(sizeof(vfs_dentry_t));
+  memset(dentry, 0, sizeof(vfs_dentry_t));
 
   file_entry_t *f = &ramfs_files[index];
-  strcpy(node->name, f->name);
-  node->length = f->size;
-  node->flags = (f->flags == 1) ? VFS_DIRECTORY : VFS_FILE;
-  node->impl = index;
-  extern vfs_driver_t ramfs_vfs_driver;
-  node->driver = &ramfs_vfs_driver;
-  return node;
+  strcpy(dentry->name, f->name);
+  inode->size = f->size;
+  if (f->flags == 2) {
+    // Symlink: content is target path
+    inode->mode = VFS_SYMLINK | 0777;
+    if (f->content) {
+      inode->symlink_target = kmalloc(f->size + 1);
+      memcpy(inode->symlink_target, f->content, f->size);
+      inode->symlink_target[f->size] = 0;
+    }
+  } else {
+    inode->mode = (f->flags == 1) ? VFS_DIRECTORY : VFS_FILE;
+  }
+  inode->impl = index;
+  extern file_operations_t ramfs_file_ops;
+  extern inode_operations_t ramfs_inode_ops;
+  inode->i_ops = &ramfs_inode_ops;
+  inode->f_ops = &ramfs_file_ops;
+  dentry->inode = inode;
+  return dentry;
 }
 
-static vfs_node_t *ramfs_vfs_readdir(vfs_node_t *node, uint32_t index) {
-  if (!(node->flags & VFS_DIRECTORY))
+// Create a symlink in ramfs (flags=2 means symlink, content=target path)
+int ramfs_create_symlink(const char *name, vfs_inode_t *link_inode) {
+  if (ramfs_count >= FS_MAX_FILES) return -1;
+  if (!link_inode || !link_inode->symlink_target) return -1;
+
+  file_entry_t *f = &ramfs_files[ramfs_count++];
+  strncpy(f->name, name, FS_MAX_FILENAME - 1);
+  f->name[FS_MAX_FILENAME - 1] = 0;
+
+  uint32_t tlen = strlen(link_inode->symlink_target);
+  f->content = (const char *)kmalloc(tlen + 1);
+  memcpy((char *)f->content, link_inode->symlink_target, tlen);
+  ((char *)f->content)[tlen] = 0;
+  f->size = tlen;
+  f->flags = 2; // 2 = symlink
+
+  // Free the caller's inode (we stored the data ourselves)
+  kfree(link_inode->symlink_target);
+  kfree(link_inode);
+  return 0;
+}
+
+static vfs_dentry_t *ramfs_vfs_readdir(vfs_inode_t *inode, uint32_t index) {
+  if (!(inode->mode & VFS_DIRECTORY))
     return 0;
   if (index >= (uint32_t)ramfs_count)
     return 0;
   return ramfs_get_vfs_node(index);
 }
 
-static vfs_node_t *ramfs_vfs_finddir(vfs_node_t *node, char *name) {
-  if (!(node->flags & VFS_DIRECTORY))
+static vfs_dentry_t *ramfs_vfs_finddir(vfs_inode_t *dir, const char *name) {
+  if (!(dir->mode & VFS_DIRECTORY))
     return 0;
   for (int i = 0; i < ramfs_count; i++) {
     if (strcmp(ramfs_files[i].name, name) == 0) {
@@ -175,13 +212,20 @@ static vfs_node_t *ramfs_vfs_finddir(vfs_node_t *node, char *name) {
   return 0;
 }
 
-vfs_driver_t ramfs_vfs_driver = {"ramfs",
-                                 ramfs_vfs_read,
-                                 0, // write
-                                 0, // open
-                                 0, // close
-                                 ramfs_vfs_readdir,
-                                 ramfs_vfs_finddir};
+file_operations_t ramfs_file_ops = {
+  ramfs_vfs_read,
+  0,
+  0,
+  0,
+  ramfs_vfs_readdir
+};
+
+inode_operations_t ramfs_inode_ops = {
+  ramfs_vfs_finddir,
+  0,
+  0,
+  0
+};
 
 int ramfs_init() {
   ramfs_count = 0;
@@ -194,12 +238,19 @@ int ramfs_init() {
   ramfs_add_binary_file("WALL.BMP", wallpaper_bmp_data, wallpaper_bmp_size);
   ramfs_add_binary_file("WALL.PNG", wallpaper_png_data, wallpaper_png_size);
 
-  // Create Root Node
-  vfs_root = (vfs_node_t *)kmalloc(sizeof(vfs_node_t));
-  memset(vfs_root, 0, sizeof(vfs_node_t));
-  strcpy(vfs_root->name, "/");
-  vfs_root->flags = VFS_DIRECTORY;
-  vfs_root->driver = &ramfs_vfs_driver;
+  // Create Root Node for ramfs
+  vfs_inode_t *ram_inode = (vfs_inode_t *)kmalloc(sizeof(vfs_inode_t));
+  memset(ram_inode, 0, sizeof(vfs_inode_t));
+  ram_inode->mode = VFS_DIRECTORY;
+  ram_inode->i_ops = &ramfs_inode_ops;
+  ram_inode->f_ops = &ramfs_file_ops;
+
+  vfs_dentry_t *ram_root = (vfs_dentry_t *)kmalloc(sizeof(vfs_dentry_t));
+  memset(ram_root, 0, sizeof(vfs_dentry_t));
+  strcpy(ram_root->name, "ram");
+  ram_root->flags = VFS_DIRECTORY;
+  ram_root->inode = ram_inode;
+  vfs_mount("/ram", ram_root);
 
   return 1;
 }

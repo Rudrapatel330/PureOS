@@ -32,6 +32,58 @@
 #define ATA_SR_DRQ 0x08 // Data Request ready
 #define ATA_SR_ERR 0x01 // Error
 
+// ======================== BUFFER CACHE ========================
+#define BCACHE_SIZE 1024
+typedef struct {
+  uint32_t lba;
+  uint8_t drive; // 0 = primary, 1 = secondary
+  uint8_t valid;
+  uint32_t last_used;
+  uint8_t data[512];
+} bcache_entry_t;
+
+static bcache_entry_t bcache[BCACHE_SIZE];
+static uint32_t bcache_clock = 0;
+
+static bcache_entry_t *bcache_lookup(uint8_t drive, uint32_t lba) {
+  bcache_clock++;
+  for (int i = 0; i < BCACHE_SIZE; i++) {
+    if (bcache[i].valid && bcache[i].drive == drive && bcache[i].lba == lba) {
+      bcache[i].last_used = bcache_clock;
+      return &bcache[i];
+    }
+  }
+  return 0;
+}
+
+static void bcache_add(uint8_t drive, uint32_t lba, const uint8_t *data) {
+  bcache_clock++;
+  bcache_entry_t *entry = bcache_lookup(drive, lba);
+  if (entry) {
+    memcpy(entry->data, data, 512);
+    return;
+  }
+  
+  int lru_idx = 0;
+  uint32_t oldest = 0xFFFFFFFF;
+  for (int i = 0; i < BCACHE_SIZE; i++) {
+    if (!bcache[i].valid) {
+      lru_idx = i;
+      break;
+    }
+    if (bcache[i].last_used < oldest) {
+      oldest = bcache[i].last_used;
+      lru_idx = i;
+    }
+  }
+  
+  bcache[lru_idx].valid = 1;
+  bcache[lru_idx].drive = drive;
+  bcache[lru_idx].lba = lba;
+  bcache[lru_idx].last_used = bcache_clock;
+  memcpy(bcache[lru_idx].data, data, 512);
+}
+
 // ======================== PRIMARY CHANNEL ========================
 
 int ata_wait_bsy() {
@@ -60,6 +112,12 @@ int ata_wait_drq() {
 
 int ata_read_sector(uint32_t lba, uint8_t *buffer) {
   KASSERT(buffer != 0);
+
+  bcache_entry_t *cache = bcache_lookup(0, lba);
+  if (cache) {
+    memcpy(buffer, cache->data, 512);
+    return 1;
+  }
 
   int retries = 3;
 
@@ -97,6 +155,7 @@ int ata_read_sector(uint32_t lba, uint8_t *buffer) {
     if (!ata_wait_drq())
       continue;
     insw(ATA_DATA, buffer, 256);
+    bcache_add(0, lba, buffer);
     return 1;
   }
 
@@ -141,6 +200,7 @@ int ata_write_sector(uint32_t lba, uint8_t *buffer) {
     }
 
     outsw(ATA_DATA, buffer, 256);
+    bcache_add(0, lba, buffer);
 
     // Flush cache
     outb(ATA_COMMAND, 0xE7);
@@ -221,6 +281,12 @@ int ata2_detect() {
 int ata2_read_sector(uint32_t lba, uint8_t *buffer) {
   KASSERT(buffer != 0);
 
+  bcache_entry_t *cache = bcache_lookup(1, lba);
+  if (cache) {
+    memcpy(buffer, cache->data, 512);
+    return 1;
+  }
+
   int retries = 3;
 
   while (retries-- > 0) {
@@ -257,6 +323,7 @@ int ata2_read_sector(uint32_t lba, uint8_t *buffer) {
     if (!ata2_wait_drq())
       continue;
     insw(ATA2_DATA, buffer, 256);
+    bcache_add(1, lba, buffer);
     return 1;
   }
 
@@ -301,6 +368,7 @@ int ata2_write_sector(uint32_t lba, uint8_t *buffer) {
     }
 
     outsw(ATA2_DATA, buffer, 256);
+    bcache_add(1, lba, buffer);
 
     // Flush cache
     outb(ATA2_COMMAND, 0xE7);

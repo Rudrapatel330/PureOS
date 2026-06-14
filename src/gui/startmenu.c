@@ -102,7 +102,7 @@ static int hovered_item = -1;
 
 extern void compositor_invalidate_rect(int x, int y, int w, int h);
 extern int screen_width, screen_height;
-extern void compositor_blur_rect(int x, int y, int w, int h, int radius);
+extern void compositor_blur_rect(uint32_t *buffer, int x, int y, int w, int h, int radius);
 static void startmenu_render_to_cache();
 
 static void menu_close_complete(void *data) {
@@ -111,7 +111,7 @@ static void menu_close_complete(void *data) {
   menu_closing = 0;
   extern int ui_dirty;
   ui_dirty = 1;
-  compositor_invalidate_rect(0, 0, screen_width, screen_height);
+  compositor_invalidate_rect(0, 24, menu_w, menu_h);
 }
 
 void startmenu_show(int x, int y) {
@@ -144,7 +144,7 @@ void startmenu_show(int x, int y) {
   }
 
   ui_dirty = 1;
-  compositor_invalidate_rect(0, 0, screen_width, screen_height);
+  // Let startmenu_tick_animation handle the invalidation bounds
 }
 
 int startmenu_is_active() { return menu_active || menu_closing; }
@@ -218,18 +218,9 @@ static void draw_app_icon(int x, int y, int idx, uint32_t *buffer) {
         if (a == 255) {
           buffer[(y + py) * menu_w + (x + px)] = p;
         } else {
-          // Blend with background
-          uint32_t d = buffer[(y + py) * menu_w + (x + px)];
-          uint32_t sr = (p >> 16) & 0xFF;
-          uint32_t sg = (p >> 8) & 0xFF;
-          uint32_t sb = p & 0xFF;
-          uint32_t dr = (d >> 16) & 0xFF;
-          uint32_t dg = (d >> 8) & 0xFF;
-          uint32_t db = d & 0xFF;
-          uint32_t r = ((sr - dr) * a >> 8) + dr;
-          uint32_t g = ((sg - dg) * a >> 8) + dg;
-          uint32_t b = ((sb - db) * a >> 8) + db;
-          buffer[(y + py) * menu_w + (x + px)] = 0xFF000000 | (r << 16) | (g << 8) | b;
+          // Do not blend with the empty cache buffer here! 
+          // Preserve original un-premultiplied RGB and Alpha so startmenu_draw can blend it correctly.
+          buffer[(y + py) * menu_w + (x + px)] = p;
         }
       }
     }
@@ -542,6 +533,8 @@ int startmenu_handle_mouse(int mx, int my, int buttons) {
       int hy = grid_y + row * CELL_H;
       compositor_invalidate_rect(hx, sy + hy, cell_w, CELL_H);
     }
+    extern int ui_dirty;
+    ui_dirty = 1;
   }
 
   if (down_edge && hovered_item >= 0) {

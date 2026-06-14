@@ -5,6 +5,7 @@
 #include "es1370.h"
 #include "ports.h"
 #include "usb/uhci.h"
+#include "virtio/virtio_net.h"
 
 extern void print_serial(const char *str);
 
@@ -70,6 +71,21 @@ uint16_t pci_config_read_word(uint8_t bus, uint8_t slot, uint8_t func,
   return tmp;
 }
 
+uint8_t pci_config_read_byte(uint8_t bus, uint8_t slot, uint8_t func,
+                             uint8_t offset) {
+  uint32_t address;
+  uint32_t lbus = (uint32_t)bus;
+  uint32_t lslot = (uint32_t)slot;
+  uint32_t lfunc = (uint32_t)func;
+  uint8_t tmp = 0;
+
+  address = (uint32_t)((lbus << 16) | (lslot << 11) | (lfunc << 8) |
+                       (offset & 0xfc) | ((uint32_t)0x80000000));
+  outl(PCI_CONFIG_ADDRESS, address);
+  tmp = (uint8_t)((inl(PCI_CONFIG_DATA) >> ((offset & 3) * 8)) & 0xff);
+  return tmp;
+}
+
 void pci_check_device(uint8_t bus, uint8_t device, uint8_t function) {
   uint16_t vendorID = pci_config_read_word(bus, device, function, 0);
   if (vendorID == 0xFFFF)
@@ -104,6 +120,12 @@ void pci_check_device(uint8_t bus, uint8_t device, uint8_t function) {
     print_serial(" [AHCI Controller DETECTED]");
     uint32_t bar5 = pci_config_read_dword(bus, device, function, 0x24);
     ahci_init(bar5);
+  }
+
+  // Virtio-Net
+  if (vendorID == VIRTIO_VENDOR_ID && deviceID == VIRTIO_NET_DEVICE_ID) {
+    print_serial(" [VirtIO Network DETECTED]");
+    virtio_net_init(bus, device, function);
   }
 
   if (vendorID == 0x1274 && deviceID == 0x5000) {

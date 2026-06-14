@@ -11,7 +11,6 @@ extern void k_itoa_hex(uint32_t, char *);
 static ext2_superblock_t *sb = 0;
 static ext2_bgroup_desc_t *bg_table = 0;
 static uint32_t block_size = 0;
-static vfs_driver_t ext2_vfs_driver;
 static int ext2_drive = -1; // 0 for ATA0_MASTER, 1 for ATA0_SLAVE, etc.
 
 // Read an Ext2 block (can span multiple ATA sectors)
@@ -108,10 +107,10 @@ static uint32_t ext2_get_data_block(ext2_inode_t *inode,
 }
 
 // VFS driver: Read
-static int ext2_vfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
+static int ext2_vfs_read(vfs_inode_t *inode_obj, file_handle_t *file, uint32_t offset, uint32_t size,
                          uint8_t *buffer) {
   ext2_inode_t inode;
-  if (!ext2_read_inode(node->inode, &inode))
+  if (!ext2_read_inode(inode_obj->inode_no, &inode))
     return -1;
 
   if (offset >= inode.size_lower)
@@ -148,10 +147,10 @@ static int ext2_vfs_read(vfs_node_t *node, uint32_t offset, uint32_t size,
 }
 
 // Parse directory to find a name or return entry by index
-static vfs_node_t *ext2_parse_dir(vfs_node_t *dir_node, char *find_name,
+static vfs_dentry_t *ext2_parse_dir(vfs_inode_t *dir_inode, const char *find_name,
                                   uint32_t get_index) {
   ext2_inode_t inode;
-  if (!ext2_read_inode(dir_node->inode, &inode))
+  if (!ext2_read_inode(dir_inode->inode_no, &inode))
     return 0;
 
   if ((inode.type_perm & EXT2_S_IFDIR) == 0)
@@ -162,7 +161,7 @@ static vfs_node_t *ext2_parse_dir(vfs_node_t *dir_node, char *find_name,
   uint32_t logical_block = 0;
   uint32_t current_index = 0;
 
-  vfs_node_t *ret_node = 0;
+  vfs_dentry_t *ret_dentry = 0;
 
   while (offset < inode.size_lower) {
     if (offset % block_size == 0) {
@@ -196,26 +195,46 @@ static vfs_node_t *ext2_parse_dir(vfs_node_t *dir_node, char *find_name,
     }
 
     if (match) {
-      ret_node = kmalloc(sizeof(vfs_node_t));
-      memset(ret_node, 0, sizeof(vfs_node_t));
-      strcpy(ret_node->name, name);
-      ret_node->inode = ent->inode;
+      ret_dentry = kmalloc(sizeof(vfs_dentry_t));
+      memset(ret_dentry, 0, sizeof(vfs_dentry_t));
+      extern inode_operations_t ext2_inode_ops;
+      extern file_operations_t ext2_file_ops;
+      
+      vfs_inode_t *cached_inode = icache_lookup(&ext2_inode_ops, ent->inode);
+      
+      strcpy(ret_dentry->name, name);
 
-      // Need to read the inode to get size and type
-      ext2_inode_t t_inode;
-      ext2_read_inode(ent->inode, &t_inode);
-      ret_node->length = t_inode.size_lower;
-      ret_node->uid = t_inode.uid;
-      ret_node->gid = t_inode.gid;
-      ret_node->mask = t_inode.type_perm & 0xFFF;
-
-      if (t_inode.type_perm & EXT2_S_IFDIR) {
-        ret_node->flags = VFS_DIRECTORY;
+      vfs_inode_t *ret_inode = 0;
+      if (cached_inode) {
+        ret_inode = cached_inode;
+        ret_inode->refcount++;
       } else {
-        ret_node->flags = VFS_FILE;
-      }
+        ret_inode = kmalloc(sizeof(vfs_inode_t));
+        memset(ret_inode, 0, sizeof(vfs_inode_t));
+        ret_inode->inode_no = ent->inode;
 
-      ret_node->driver = &ext2_vfs_driver;
+        // Need to read the inode to get size and type
+        ext2_inode_t t_inode;
+        ext2_read_inode(ent->inode, &t_inode);
+        ret_inode->size = t_inode.size_lower;
+        ret_inode->uid = t_inode.uid;
+        ret_inode->gid = t_inode.gid;
+        ret_inode->mode = t_inode.type_perm & 0xFFF;
+
+        if (t_inode.type_perm & EXT2_S_IFDIR) {
+          ret_inode->mode |= VFS_DIRECTORY;
+        } else {
+          ret_inode->mode |= VFS_FILE;
+        }
+
+        ret_inode->i_ops = &ext2_inode_ops;
+        ret_inode->f_ops = &ext2_file_ops;
+        ret_inode->refcount = 1;
+        
+        icache_add(&ext2_inode_ops, ret_inode);
+      }
+      
+      ret_dentry->inode = ret_inode;
       break;
     }
 
@@ -224,24 +243,34 @@ static vfs_node_t *ext2_parse_dir(vfs_node_t *dir_node, char *find_name,
   }
 
   kfree(dir_buf);
-  return ret_node;
+  return ret_dentry;
 }
 
-static vfs_node_t *ext2_vfs_finddir(vfs_node_t *node, char *name) {
-  return ext2_parse_dir(node, name, 0);
+static vfs_dentry_t *ext2_vfs_finddir(vfs_inode_t *inode, const char *name) {
+  return ext2_parse_dir(inode, name, 0);
 }
 
-static vfs_node_t *ext2_vfs_readdir(vfs_node_t *node, uint32_t index) {
-  return ext2_parse_dir(node, 0, index);
+static vfs_dentry_t *ext2_vfs_readdir(vfs_inode_t *inode, uint32_t index) {
+  return ext2_parse_dir(inode, 0, index);
 }
+
+file_operations_t ext2_file_ops = {
+  ext2_vfs_read,
+  0,
+  0,
+  0,
+  ext2_vfs_readdir
+};
+
+inode_operations_t ext2_inode_ops = {
+  ext2_vfs_finddir,
+  0,
+  0,
+  0
+};
 
 int ext2_init(void) {
   print_serial("EXT2: Initializing read-only driver...\n");
-  memset(&ext2_vfs_driver, 0, sizeof(vfs_driver_t));
-  strcpy(ext2_vfs_driver.name, "ext2");
-  ext2_vfs_driver.read = ext2_vfs_read;
-  ext2_vfs_driver.finddir = ext2_vfs_finddir;
-  ext2_vfs_driver.readdir = ext2_vfs_readdir;
 
   // Check ATA drives for Ext2 signature
   for (int d = 0; d < 2; d++) {
@@ -311,15 +340,20 @@ int ext2_init(void) {
       kfree(bgdt_buf);
 
       // Mount Ext2 root
-      vfs_node_t *root_node = kmalloc(sizeof(vfs_node_t));
-      memset(root_node, 0, sizeof(vfs_node_t));
-      strcpy(root_node->name, "ext2");
-      root_node->inode = 2; // Ext2 root is always inode 2
-      root_node->flags = VFS_DIRECTORY;
-      root_node->mask = 0755;
-      root_node->driver = &ext2_vfs_driver;
+      vfs_inode_t *root_inode = kmalloc(sizeof(vfs_inode_t));
+      memset(root_inode, 0, sizeof(vfs_inode_t));
+      root_inode->inode_no = 2; // Ext2 root is always inode 2
+      root_inode->mode = VFS_DIRECTORY | 0755;
+      root_inode->i_ops = &ext2_inode_ops;
+      root_inode->f_ops = &ext2_file_ops;
 
-      vfs_mount("/ext2", root_node);
+      vfs_dentry_t *root_dentry = kmalloc(sizeof(vfs_dentry_t));
+      memset(root_dentry, 0, sizeof(vfs_dentry_t));
+      strcpy(root_dentry->name, "ext2");
+      root_dentry->flags = VFS_DIRECTORY;
+      root_dentry->inode = root_inode;
+
+      vfs_mount("/ext2", root_dentry);
       return 1;
     }
   }

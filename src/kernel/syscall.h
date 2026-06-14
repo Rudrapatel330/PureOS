@@ -31,6 +31,8 @@
 #define SYS_MUNMAP 25
 #define SYS_PIPE 26
 #define SYS_DUP2 27
+#define SYS_CHMOD 28
+#define SYS_CHOWN 29
 
 void syscall_init();
 uint64_t syscall_handler(registers_t *regs);

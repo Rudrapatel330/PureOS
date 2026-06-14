@@ -53,7 +53,7 @@ isr_common_stub:
     mov rbx, rsp   ; Save original rsp (rbx is callee-saved in SysV)
     sub rsp, 512
     and rsp, ~15   ; Align to 16 bytes for fxsave
-    fxsave [rsp]
+    fxsave64 [rsp]
     
     mov rdi, rbx   ; Pass registers_t pointer as first argument
     call isr_handler
@@ -65,7 +65,7 @@ isr_common_stub:
     mov rbx, rsp
     sub rsp, 512
     and rsp, ~15
-    fxrstor [rsp]
+    fxrstor64 [rsp]
     mov rsp, rbx   ; Restore rsp to point back to registers_t
 
     
@@ -80,7 +80,7 @@ irq_common_stub:
     mov rbx, rsp   ; Save original rsp
     sub rsp, 512
     and rsp, ~15
-    fxsave [rsp]
+    fxsave64 [rsp]
     
     mov rdi, rbx   ; Pass registers_t pointer as first argument
     call irq_handler
@@ -91,7 +91,7 @@ irq_common_stub:
     mov rbx, rsp
     sub rsp, 512
     and rsp, ~15
-    fxrstor [rsp]
+    fxrstor64 [rsp]
     mov rsp, rbx
 
     

@@ -43,6 +43,8 @@ typedef struct {
   int dialog_mode; // 0=None, 1=Save, 2=Open
   char filename[32];
   int cursor_timer;
+  animation_t active_tool_x;
+  animation_t active_tool_y;
 } paint_state_t;
 
 static paint_state_t paint_state;
@@ -359,6 +361,21 @@ void paint_draw_ui() {
   winmgr_fill_rect(w, 0, 62, w->width, ribbon_h, theme->menu_bg);
   winmgr_fill_rect(w, 0, 62 + ribbon_h, w->width, 1, theme->border);
 
+  // Tick active tool capsule
+  anim_tick(&paint_state.active_tool_x, 0.04f);
+  anim_tick(&paint_state.active_tool_y, 0.04f);
+  if (paint_state.active_tool_x.active || paint_state.active_tool_y.active) {
+      w->needs_redraw = 1;
+      extern int ui_dirty;
+      ui_dirty = 1;
+  }
+  
+  if (paint_state.active_tool_x.current_val > 0.0f) {
+      int cx = (int)paint_state.active_tool_x.current_val;
+      int cy = (int)paint_state.active_tool_y.current_val;
+      winmgr_draw_rounded_rect_ex(w, cx, cy, 26, 20, theme->accent, 0, 0, 6);
+  }
+
   int current_x = 10;
   int section_y = 64;
 
@@ -369,9 +386,12 @@ void paint_draw_ui() {
     int row = i / 3;
     int tx = current_x + (col * 30);
     int ty = section_y + (row * 22);
-    uint32_t bg = (paint_state.current_tool == i) ? theme->accent : theme->button;
-    winmgr_fill_rect(w, tx, ty, 26, 20, bg);
-    winmgr_draw_rect(w, tx, ty, 26, 20, theme->border);
+    
+    // Draw transparent tool background if not active
+    if (paint_state.current_tool != i) {
+        winmgr_fill_rect(w, tx, ty, 26, 20, theme->button);
+        winmgr_draw_rect(w, tx, ty, 26, 20, theme->border);
+    }
     
     // Pixel Art Icons!
     int ix = tx + 6;
@@ -406,14 +426,16 @@ void paint_draw_ui() {
   if (current_x + 100 < w->width) {
     winmgr_draw_text(w, current_x + 20, section_y + 44, "Shapes", 0xFFAAAAAA);
     for (int i = 0; i < 6; i++) {
+        int tool_id = SHAPE_LINE + i;
         int col = i % 3;
         int row = i / 3;
         int tx = current_x + (col * 30);
         int ty = section_y + (row * 22);
-        int tool_id = SHAPE_LINE + i;
-        uint32_t bg = (paint_state.current_tool == tool_id) ? 0xFF404040 : 0xFF252526;
-        winmgr_fill_rect(w, tx, ty, 26, 20, bg);
-        winmgr_draw_rect(w, tx, ty, 26, 20, 0xFF111111);
+        
+        if (paint_state.current_tool != tool_id) {
+            winmgr_fill_rect(w, tx, ty, 26, 20, 0xFF252526);
+            winmgr_draw_rect(w, tx, ty, 26, 20, 0xFF111111);
+        }
         
         int ix = tx + 3;
         int iy = ty + 2;
@@ -599,6 +621,22 @@ void paint_draw_ui() {
   }
 }
 
+static void set_tool_with_anim(int tool_id) {
+    if (paint_state.current_tool != tool_id) {
+        paint_state.current_tool = tool_id;
+        float tx, ty;
+        if (tool_id <= 5) {
+            tx = 10.0f + (tool_id % 3) * 30.0f;
+            ty = 64.0f + (tool_id / 3) * 22.0f;
+        } else {
+            tx = 110.0f + ((tool_id - 6) % 3) * 30.0f;
+            ty = 64.0f + ((tool_id - 6) / 3) * 22.0f;
+        }
+        anim_start_spring(&paint_state.active_tool_x, paint_state.active_tool_x.current_val, tx, 200.0f, 18.0f);
+        anim_start_spring(&paint_state.active_tool_y, paint_state.active_tool_y.current_val, ty, 200.0f, 18.0f);
+    }
+}
+
 void paint_handle_mouse(window_t *w, int mx, int my, int buttons) {
   int rel_x = mx;
   int rel_y = my;
@@ -611,10 +649,10 @@ void paint_handle_mouse(window_t *w, int mx, int my, int buttons) {
     for (int i = 0; i < 6; i++) {
       int col = i % 3;
       int row = i / 3;
-      int tx = 20 + (col * 30);
+      int tx = 10 + (col * 30);
       int ty = 64 + (row * 22);
       if (rel_x >= tx && rel_x <= tx + 26 && rel_y >= ty && rel_y <= ty + 20) {
-        paint_state.current_tool = i;
+        set_tool_with_anim(i);
         w->needs_redraw = 1;
         return;
       }
@@ -624,10 +662,10 @@ void paint_handle_mouse(window_t *w, int mx, int my, int buttons) {
     for (int i = 0; i < 6; i++) {
       int col = i % 3;
       int row = i / 3;
-      int tx = 130 + (col * 30);
+      int tx = 110 + (col * 30);
       int ty = 64 + (row * 22);
       if (rel_x >= tx && rel_x <= tx + 26 && rel_y >= ty && rel_y <= ty + 20) {
-        paint_state.current_tool = SHAPE_LINE + i;
+        set_tool_with_anim(SHAPE_LINE + i);
         w->needs_redraw = 1;
         return;
       }
@@ -771,6 +809,9 @@ void paint_init() {
   paint_state.brush_size = 3;
   paint_state.is_drawing = 0;
   paint_state.dialog_mode = 0;
+  
+  anim_init_val(&paint_state.active_tool_x, 10.0f);
+  anim_init_val(&paint_state.active_tool_y, 64.0f);
   
   paint_state.canvas_w = 640;
   paint_state.canvas_h = 360;
