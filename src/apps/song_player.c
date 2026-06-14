@@ -50,6 +50,7 @@ typedef struct {
     int is_searching;
     int search_focused;
     int yt_fetching;
+    int yt_loading_audio;
 } song_app_t;
 
 window_t *song_player_win = 0;
@@ -233,6 +234,13 @@ static void yt_search_thread(void) {
 
 static char yt_fetch_vid[64];
 static void yt_play_thread(void) {
+    if (song_player_win) {
+        song_app_t *app = (song_app_t *)song_player_win->user_data;
+        if (app) app->yt_loading_audio = 1;
+        song_player_win->needs_redraw = 1;
+        extern int ui_dirty; ui_dirty = 1;
+    }
+
     char url[256];
     strcpy(url, "http://10.0.2.2:7862/ytplay?id=");
     strcat(url, yt_fetch_vid);
@@ -246,6 +254,14 @@ static void yt_play_thread(void) {
         }
         kfree(fdata);
     }
+    
+    if (song_player_win) {
+        song_app_t *app = (song_app_t *)song_player_win->user_data;
+        if (app) app->yt_loading_audio = 0;
+        song_player_win->needs_redraw = 1;
+        extern int ui_dirty; ui_dirty = 1;
+    }
+    
     extern void exit(int status);
     exit(0);
 }
@@ -496,8 +512,28 @@ static void draw_bottom_bar(window_t *win, song_app_t *app) {
     winmgr_draw_text(win, cx - 250, by + 65, pos_str, COL_SP_TEXT_MUTED);
     winmgr_draw_rounded_rect_ex(win, cx - 200, by + 70, 400, 6, 0xFF3E3E3E, 0, 0, 3);
     
-    
-    if (dur_ms > 0) {
+    if (app->yt_loading_audio) {
+        // Draw moving gray striped lines on the seek bar
+        unsigned int ticks = get_timer_ticks();
+        int offset = (ticks / 2) % 20;
+        for (int i = -20; i < 400; i += 20) {
+            int draw_x = cx - 200 + i + offset;
+            int draw_w = 10;
+            if (draw_x >= cx + 200) continue;
+            if (draw_x + draw_w > cx + 200) draw_w = (cx + 200) - draw_x;
+            if (draw_x < cx - 200) {
+                int shrink = (cx - 200) - draw_x;
+                if (shrink >= draw_w) continue;
+                draw_w -= shrink;
+                draw_x = cx - 200;
+            }
+            if (draw_w > 0) {
+                winmgr_draw_rounded_rect_ex(win, draw_x, by + 70, draw_w, 6, 0xFFAAAAAA, 0, 0, 0); 
+            }
+        }
+        win->needs_redraw = 1;
+        extern int ui_dirty; ui_dirty = 1;
+    } else if (dur_ms > 0) {
         int target_w = (pos_ms * 400) / dur_ms;
         if (target_w > 400) target_w = 400;
         if (target_w < 0) target_w = 0;
