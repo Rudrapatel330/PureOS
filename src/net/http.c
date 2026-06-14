@@ -142,8 +142,8 @@ static uint32_t ip_string_to_uint32(const char *ip_str) {
 // Returns: number of body bytes placed in response, or -1 on error
 int http_get(const char *url, char *response, int max_len) {
   http_download_progress = 0;
-  static char host[128];
-  static char path[256];
+  char host[128];
+  char path[256];
   int use_proxy = HTTP_PROXY_ENABLED;
   uint32_t proxy_ip = 0;
 
@@ -234,7 +234,7 @@ int http_get(const char *url, char *response, int max_len) {
   }
 
   // Build HTTP request
-  static char request[1024];
+  char request[1024];
   int rlen = 0;
 
   if (use_proxy) {

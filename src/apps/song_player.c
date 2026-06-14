@@ -248,9 +248,18 @@ static void lyrics_fetch_thread(void) {
     char url[512];
     strcpy(url, "http://10.0.2.2:7862/ytlyrics?q=");
     int j = strlen(url);
-    for (int i = 0; lyrics_fetch_title[i] && j < 511; i++) {
-        if (lyrics_fetch_title[i] == ' ') url[j++] = '+';
-        else url[j++] = lyrics_fetch_title[i];
+    for (int i = 0; lyrics_fetch_title[i] && j < 511 - 3; i++) {
+        unsigned char c = lyrics_fetch_title[i];
+        if (c == ' ') {
+            url[j++] = '+';
+        } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            url[j++] = c;
+        } else {
+            const char *hex = "0123456789ABCDEF";
+            url[j++] = '%';
+            url[j++] = hex[c >> 4];
+            url[j++] = hex[c & 15];
+        }
     }
     url[j] = 0;
     
