@@ -1008,6 +1008,24 @@ static void browser_draw_cb(void *w) {
   // Background for the tab bar area
   winmgr_fill_rect(win, 0, 0, cw, TABBAR_H, 0xFFFFFFFF);
 
+  // === Window Buttons (macOS Traffic Light Style on Left) ===
+  int btn_y = 14;
+  int btn_sz = 12;
+  int btn_spacing = 8;
+  int start_x = 12;
+
+  // Red (Close)
+  uint32_t close_col = (win->hover_btn == 3) ? 0xFFFF6666 : 0xFFFF5F57;
+  winmgr_draw_circle_solid(win, start_x + btn_sz/2, btn_y + btn_sz/2, btn_sz/2, close_col);
+  
+  // Yellow (Minimize)
+  uint32_t min_col = (win->hover_btn == 1) ? 0xFFFFFF00 : 0xFFFEBC2E;
+  winmgr_draw_circle_solid(win, start_x + btn_sz + btn_spacing + btn_sz/2, btn_y + btn_sz/2, btn_sz/2, min_col);
+  
+  // Green (Maximize)
+  uint32_t max_col = (win->hover_btn == 2) ? 0xFF00FF00 : 0xFF28C840;
+  winmgr_draw_circle_solid(win, start_x + (btn_sz + btn_spacing)*2 + btn_sz/2, btn_y + btn_sz/2, btn_sz/2, max_col);
+
   // Draw Tabs
   int tab_x = 80;
   // Active Tab
