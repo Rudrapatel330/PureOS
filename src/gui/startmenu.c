@@ -135,11 +135,11 @@ void startmenu_show(int x, int y) {
     startmenu_render_to_cache();
     
     // Animate fade-in matching the closing animation
-    anim_start(&anim_p, 0.0f, 1.0f, 0.15f, EASE_OUT_CUBIC);
+    anim_start(&anim_p, 0.0f, 1.0f, 0.20f, EASE_OUT_CUBIC);
   } else {
     menu_closing = 1;
     float cur_p = anim_p.active ? anim_p.current_val : 1.0f;
-    anim_start(&anim_p, cur_p, 0.0f, 0.15f, EASE_OUT_CUBIC);
+    anim_start(&anim_p, cur_p, 0.0f, 0.20f, EASE_OUT_CUBIC);
     anim_p.on_complete = menu_close_complete;
   }
 
@@ -426,42 +426,17 @@ void startmenu_draw(uint32_t *buffer, rect_t clip) {
 
   // 3. Foreground (Icons) - Sliding Up & Fading In
   uint8_t icon_alpha = (uint8_t)(p * 255.0f);
-  if (icon_alpha == 0) return;
-
-  for (int y = 0; y < menu_h; y++) {
-    int dst_y = start_y_abs + y - menu_y_offset; // Apply slide offset
-    if (dst_y < start_y_abs || dst_y >= start_y_abs + menu_h) continue;
-    if (dst_y < clip.y || dst_y >= clip.y + clip.h) continue;
-
-    uint32_t *src_row = &startmenu_surface[y * menu_w];
-    uint32_t *dst_row = &buffer[dst_y * screen_width];
-
-    for (int x = 0; x < menu_w; x++) {
-      if (x < clip.x || x >= clip.x + clip.w) continue;
-      uint32_t spx = src_row[x];
-      uint32_t sa = (spx >> 24) & 0xFF;
-      if (sa == 0) continue;
-
-      // Combine surface alpha with global fade-in
-      uint32_t final_a = (sa * icon_alpha) >> 8;
-      uint32_t dpx = dst_row[x];
-      uint32_t r = (((spx >> 16) & 0xFF) * final_a + ((dpx >> 16) & 0xFF) * (255 - final_a)) >> 8;
-      uint32_t g = (((spx >> 8) & 0xFF) * final_a + ((dpx >> 8) & 0xFF) * (255 - final_a)) >> 8;
-      uint32_t b = ((spx & 0xFF) * final_a + (dpx & 0xFF) * (255 - final_a)) >> 8;
-      dst_row[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
-    }
-  }
-
-  // Draw hover overlay on hovered item
-  if (hovered_item >= 0) {
+  
+  // Draw hover overlay on hovered item BEFORE icons (so it acts as a background highlight)
+  if (hovered_item >= 0 && icon_alpha > 0) {
     int cell_w_loc = (menu_w - PADDING * 2) / GRID_COLS;
     int grid_y_h = 60 + SEARCH_H + 60;
     int col = hovered_item % GRID_COLS;
     int row = hovered_item / GRID_COLS;
-    int hx = PADDING + col * cell_w_loc;
-    int hy = grid_y_h + row * CELL_H;
-    int hw = cell_w_loc;
-    int hh = CELL_H;
+    int hw = ICON_SIZE + 24;
+    int hh = ICON_SIZE + 42;
+    int hx = PADDING + col * cell_w_loc + (cell_w_loc - hw) / 2;
+    int hy = grid_y_h + row * CELL_H - 10;
 
     for (int oy = 0; oy < hh; oy++) {
       int dst_y = start_y_abs + hy + oy - menu_y_offset;
@@ -474,10 +449,38 @@ void startmenu_draw(uint32_t *buffer, rect_t clip) {
         if (dst_x < clip.x || dst_x >= clip.x + clip.w) continue;
         
         uint32_t dst = dst_row[dst_x];
-        uint32_t r = (((dst >> 16) & 0xFF) * 192 + 255 * 64) >> 8;
-        uint32_t g = (((dst >> 8) & 0xFF) * 192 + 255 * 64) >> 8;
-        uint32_t b = ((dst & 0xFF) * 192 + 255 * 64) >> 8;
-        dst_row[dst_x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+        // Windows-like hover: subtle white overlay (opacity ~12%)
+        uint32_t hover_a = 32; 
+        uint32_t cr = (((255) * hover_a + ((dst >> 16) & 0xFF) * (255 - hover_a)) / 255);
+        uint32_t cg = (((255) * hover_a + ((dst >> 8) & 0xFF) * (255 - hover_a)) / 255);
+        uint32_t cb = (((255) * hover_a + (dst & 0xFF) * (255 - hover_a)) / 255);
+        dst_row[dst_x] = 0xFF000000 | (cr << 16) | (cg << 8) | cb;
+      }
+    }
+  }
+
+  if (icon_alpha > 0) {
+    for (int y = 0; y < menu_h; y++) {
+      int dst_y = start_y_abs + y - menu_y_offset; // Apply slide offset
+      if (dst_y < start_y_abs || dst_y >= start_y_abs + menu_h) continue;
+      if (dst_y < clip.y || dst_y >= clip.y + clip.h) continue;
+
+      uint32_t *src_row = &startmenu_surface[y * menu_w];
+      uint32_t *dst_row = &buffer[dst_y * screen_width];
+
+      for (int x = 0; x < menu_w; x++) {
+        if (x < clip.x || x >= clip.x + clip.w) continue;
+        uint32_t spx = src_row[x];
+        uint32_t sa = (spx >> 24) & 0xFF;
+        if (sa == 0) continue;
+
+        // Combine surface alpha with global fade-in
+        uint32_t final_a = (sa * icon_alpha) / 255;
+        uint32_t dpx = dst_row[x];
+        uint32_t r = (((spx >> 16) & 0xFF) * final_a + ((dpx >> 16) & 0xFF) * (255 - final_a)) / 255;
+        uint32_t g = (((spx >> 8) & 0xFF) * final_a + ((dpx >> 8) & 0xFF) * (255 - final_a)) / 255;
+        uint32_t b = ((spx & 0xFF) * final_a + (dpx & 0xFF) * (255 - final_a)) / 255;
+        dst_row[x] = 0xFF000000 | (r << 16) | (g << 8) | b;
       }
     }
   }
@@ -516,22 +519,25 @@ int startmenu_handle_mouse(int mx, int my, int buttons) {
     int old_hover = hovered_item;
     hovered_item = new_hover;
     
+    int hw = ICON_SIZE + 24;
+    int hh = ICON_SIZE + 42;
+
     // Invalidate old hover area
     if (old_hover >= 0) {
       int col = old_hover % GRID_COLS;
       int row = old_hover / GRID_COLS;
-      int hx = PADDING + col * cell_w;
-      int hy = grid_y + row * CELL_H;
-      compositor_invalidate_rect(hx, sy + hy, cell_w, CELL_H);
+      int hx = PADDING + col * cell_w + (cell_w - hw) / 2;
+      int hy = grid_y + row * CELL_H - 10;
+      compositor_invalidate_rect(hx, sy + hy, hw, hh);
     }
     
     // Invalidate new hover area
     if (new_hover >= 0) {
       int col = new_hover % GRID_COLS;
       int row = new_hover / GRID_COLS;
-      int hx = PADDING + col * cell_w;
-      int hy = grid_y + row * CELL_H;
-      compositor_invalidate_rect(hx, sy + hy, cell_w, CELL_H);
+      int hx = PADDING + col * cell_w + (cell_w - hw) / 2;
+      int hy = grid_y + row * CELL_H - 10;
+      compositor_invalidate_rect(hx, sy + hy, hw, hh);
     }
     extern int ui_dirty;
     ui_dirty = 1;
