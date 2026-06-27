@@ -138,6 +138,42 @@ PureOS features a modern, composited desktop environment with rich visual effect
 | **Custom Wallpaper** | High-resolution PNG wallpaper with optimized rendering |
 | **Keyboard Shortcuts** | `Alt+F4` close, window dragging, resize, and focus management |
 
+### 🧊 3D Desktop Cube & Multi-Workspace
+
+PureOS features a mathematically perfect, hardware-independent **3D Workspace Cube**. Instead of instantly snapping between virtual desktops, grabbing the top edge of the screen and dragging horizontally seamlessly transitions the 2D window manager into a fully 3D convex projection. The active workspaces are mapped to the faces of an outer cube, which rotates in real-time following your mouse movements.
+
+```mermaid
+graph TD
+    subgraph 1. Interaction Layer
+        GESTURE[Mouse Drag<br>Top Edge < 24px] --> MODE[Trigger in_cube_mode]
+    end
+
+    subgraph 2. Buffer Capture
+        MODE --> SNAPSHOT[compositor_create_cube_buffers]
+        SNAPSHOT -->|Hide/Unhide Windows| VIRT[Render All Virtual Workspaces]
+        VIRT -->|Snapshot to RAM| BUF[16x 32-bit ARGB Buffers]
+    end
+
+    subgraph 3. Software 3D Rasterizer
+        BUF --> PROJ[compositor_draw_cube]
+        PROJ -->|Fixed-Point Math| CULL[Back-Face Culling]
+        CULL -->|Affine Texture Mapping| PERS[Perspective Projection]
+        PERS -->|Calculate Focal vs Z-Offset| SCALE[Perfect 1:1 Face Scale]
+    end
+
+    subgraph 4. Presentation
+        SCALE --> ANIM[Spring Physics Rotation]
+        ANIM -->|Mouse Release| SNAP[Snap to Nearest 90°]
+        SNAP --> SWITCH[workspace_switch]
+        SWITCH -->|Exit 3D Mode| DESKTOP[Resume 2D Desktop]
+    end
+```
+
+**Key Engineering Highlights:**
+- **Zero-Dependency 3D Math:** The projection engine does not rely on OpenGL or GPU acceleration. It computes perspective geometry (focal length, camera Z-offset, and trigonometric rotations) entirely in native C. 
+- **Fixed-Point Optimization:** To maintain 60 FPS during software rendering, the inner texture-mapping loop abandons slow floating-point division in favor of integer fixed-point arithmetic (`(screen_height << 16) / col_h`), eliminating millions of CPU cycles per frame.
+- **Dynamic Outer Convexity:** The focal length and camera offset are precisely balanced (`focal = width * 1.0`, `cube_z = width * 1.5`) so that the front face of the convex cube scales perfectly to 1:1, seamlessly matching the standard 2D desktop bounds.
+
 ---
 
 ## 📦 Built-in Applications

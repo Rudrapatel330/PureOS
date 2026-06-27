@@ -13,10 +13,10 @@
 #include "compositor.h"
 #include "config.h"
 #include "desktop.h"
-#include "io.h"
-#include "hal/hal.h"
 #include "hal/gfx_device.h"
+#include "hal/hal.h"
 #include "heap.h"
+#include "io.h"
 #include "ipc.h"
 #include "profiler.h"
 #include "screen.h"
@@ -27,6 +27,7 @@
 #include "window.h"
 #include "workspace.h"
 #include <stdint.h>
+
 
 extern void videoplayer_update();
 extern void camera_init();
@@ -199,7 +200,7 @@ void reboot_system(void) {
   __asm__ volatile("hlt");
 }
 
-#include "config.h" 
+#include "config.h"
 // This includes os_config_t and extern global_config
 
 extern void desktop_invalidate(void);
@@ -261,12 +262,14 @@ void screen_set_resolution(int width, int height) {
   for (int i = 0; i < window_count; i++) {
     if (windows[i].id != 0) {
       if (windows[i].x + windows[i].width > width) {
-          windows[i].x = width - windows[i].width;
-          if (windows[i].x < 0) windows[i].x = 0;
+        windows[i].x = width - windows[i].width;
+        if (windows[i].x < 0)
+          windows[i].x = 0;
       }
       if (windows[i].y + windows[i].height > height) {
-          windows[i].y = height - windows[i].height;
-          if (windows[i].y < 24) windows[i].y = 100; // Below menubar
+        windows[i].y = height - windows[i].height;
+        if (windows[i].y < 24)
+          windows[i].y = 100; // Below menubar
       }
       windows[i].needs_redraw = 1;
     }
@@ -341,10 +344,11 @@ void desktop_process_messages(void) {
       if (mouse_moved) {
         desktop_mouse_move(mouse_x, mouse_y);
       }
-      
+
       static int local_prev_buttons = 0;
-      
-      extern void compositor_handle_cube_drag(int mx, int my, int dx, int dy, int btns);
+
+      extern void compositor_handle_cube_drag(int mx, int my, int dx, int dy,
+                                              int btns);
       if (curr_btns & 1) {
         compositor_handle_cube_drag(mouse_x, mouse_y, dx, -dy, curr_btns);
       } else if (local_prev_buttons & 1) {
@@ -353,7 +357,8 @@ void desktop_process_messages(void) {
 
       int wm_consumed = 0;
       extern int in_cube_mode;
-      if (!in_cube_mode && (curr_btns != local_prev_buttons || dx != 0 || dy != 0)) {
+      if (!in_cube_mode &&
+          (curr_btns != local_prev_buttons || dx != 0 || dy != 0)) {
         wm_consumed = winmgr_handle_mouse_global(mouse_x, mouse_y, curr_btns);
         if (wm_consumed)
           ui_dirty = 1;
@@ -423,7 +428,10 @@ void desktop_task() {
   while (1) {
     // print_serial("Loop start.\n"); // Too spammy, let's just print once
     static int loop_started = 0;
-    if (!loop_started) { print_serial("Main loop first iteration.\n"); loop_started = 1; }
+    if (!loop_started) {
+      print_serial("Main loop first iteration.\n");
+      loop_started = 1;
+    }
 
     desktop_process_messages();
     usb_poll();
@@ -433,13 +441,13 @@ void desktop_task() {
     // one per frame starves phone_update and causes audio packets to never
     // fully arrive in the TCP receive buffer.
     {
-        static uint8_t net_poll_buf[1600];
-        uint16_t net_poll_len;
-        int polls = 0;
-        while (polls < 128 && pcnet_poll(net_poll_buf, &net_poll_len) > 0) {
-            net_receive(net_poll_buf, net_poll_len);
-            polls++;
-        }
+      static uint8_t net_poll_buf[1600];
+      uint16_t net_poll_len;
+      int polls = 0;
+      while (polls < 128 && pcnet_poll(net_poll_buf, &net_poll_len) > 0) {
+        net_receive(net_poll_buf, net_poll_len);
+        polls++;
+      }
     }
 
     static uint64_t last_anim_tick_ms = 0;
@@ -468,9 +476,10 @@ void desktop_task() {
     {
       extern window_t windows[];
       for (int i = 0; i < MAX_WINDOWS; i++) {
-        if (windows[i].id != 0 && (windows[i].is_animating || windows[i].fading_mode != 0 ||
-            windows[i].vel_x != 0 || windows[i].vel_y != 0 ||
-            windows[i].anim_scale.active)) {
+        if (windows[i].id != 0 &&
+            (windows[i].is_animating || windows[i].fading_mode != 0 ||
+             windows[i].vel_x != 0 || windows[i].vel_y != 0 ||
+             windows[i].anim_scale.active)) {
           any_anim = 1;
         }
       }
@@ -494,14 +503,12 @@ void desktop_task() {
                                    inv_size);
       }
       compositor_invalidate_rect(mouse_x - half_size, mouse_y - half_size,
-                                  inv_size, inv_size);
+                                 inv_size, inv_size);
 
       // Ensure sysmenu area is always redrawn when mouse moves while active
       extern void sysmenu_invalidate_rect(void);
       sysmenu_invalidate_rect();
     }
-
-
 
     if (tick_elapsed && (redraw_pending || ui_dirty > 0 || mouse_moved ||
                          any_anim || compositor_is_dirty())) {
@@ -550,17 +557,23 @@ void desktop_task() {
 
     if (tick_elapsed) {
       extern window_t *sysmon_win, *chat_win, *phone_win, *recorder_win;
-      // We will add audio test win here
-      extern window_t *audio_test_win, *pong_win, *song_player_win;
-      extern void sysmon_update(window_t *), chat_update(window_t *), phone_update(window_t *), recorder_update(window_t *);
-      extern void audio_test_update(window_t *), pong_update(window_t *), song_player_update(window_t *);
-      if (sysmon_win) sysmon_update(sysmon_win);
-      if (chat_win) chat_update(chat_win);
-      if (phone_win) phone_update(phone_win);
-      if (recorder_win) recorder_update(recorder_win);
+      extern window_t *audio_test_win, *pong_win, *song_player_win, *hillclimb_win;
+      extern void sysmon_update(window_t *), chat_update(window_t *),
+          phone_update(window_t *), recorder_update(window_t *);
+      extern void audio_test_update(window_t *), pong_update(window_t *),
+          song_player_update(window_t *), hillclimb_update(window_t *);
+      if (sysmon_win)
+        sysmon_update(sysmon_win);
+      if (chat_win)
+        chat_update(chat_win);
+      if (phone_win)
+        phone_update(phone_win);
+      if (recorder_win)
+        recorder_update(recorder_win);
       if (audio_test_win) audio_test_update(audio_test_win);
       if (pong_win) pong_update(pong_win);
       if (song_player_win) song_player_update(song_player_win);
+      if (hillclimb_win) hillclimb_update(hillclimb_win);
     }
 
     videoplayer_update();
@@ -647,10 +660,11 @@ void kernel_poll_events(void) {
       int half_size = inv_size / 2;
       if (last_mouse_x != -1) {
         compositor_invalidate_rect(last_mouse_x - half_size,
-                                   last_mouse_y - half_size, inv_size, inv_size);
+                                   last_mouse_y - half_size, inv_size,
+                                   inv_size);
       }
       compositor_invalidate_rect(mouse_x - half_size, mouse_y - half_size,
-                                  inv_size, inv_size);
+                                 inv_size, inv_size);
 
       // Ensure sysmenu area is always redrawn when mouse moves while active
       extern void sysmenu_invalidate_rect(void);
@@ -793,7 +807,7 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   camera_init();
   print_serial("[INIT 5] BGA START\n");
   bga_init();
-  
+
   print_serial("[INIT 5.5] VMSVGA SCAN\n");
   // vmsvga_init(); // Disabled to use BGA true page-flipping
 
@@ -854,12 +868,14 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   compositor_init();
   print_serial("[INIT 9] GUI OK\n");
 
-  // Force lockscreen state active immediately to block desktop rendering while it loads
+  // Force lockscreen state active immediately to block desktop rendering while
+  // it loads
   extern int lockscreen_active;
   lockscreen_active = 1;
 
   // Clear backbuffer once to ensure no garbage/desktop is shown initially
-  if (backbuffer) memset(backbuffer, 0, screen_width * screen_height * 4);
+  if (backbuffer)
+    memset(backbuffer, 0, screen_width * screen_height * 4);
 
   extern void desktop_task();
   create_task(desktop_task, "desktop");
@@ -901,11 +917,13 @@ void draw_char_32bpp(int x, int y, char c, uint32_t color) {
         continue;
 
       uint8_t alpha = font_get_aa_pixel((unsigned char)c, cx, cy);
-      if (alpha <= 4) continue;
+      if (alpha <= 4)
+        continue;
 
       if (alpha >= 250) {
         // Fully opaque — skip blending
-        backbuffer[py * screen_width + px] = 0xFF000000 | (s_r << 16) | (s_g << 8) | s_b;
+        backbuffer[py * screen_width + px] =
+            0xFF000000 | (s_r << 16) | (s_g << 8) | s_b;
       } else {
         // Alpha-blend with background
         uint32_t dst = backbuffer[py * screen_width + px];
@@ -915,12 +933,12 @@ void draw_char_32bpp(int x, int y, char c, uint32_t color) {
         uint32_t r = d_r + (((int)s_r - (int)d_r) * alpha >> 8);
         uint32_t g = d_g + (((int)s_g - (int)d_g) * alpha >> 8);
         uint32_t b = d_b + (((int)s_b - (int)d_b) * alpha >> 8);
-        backbuffer[py * screen_width + px] = 0xFF000000 | (r << 16) | (g << 8) | b;
+        backbuffer[py * screen_width + px] =
+            0xFF000000 | (r << 16) | (g << 8) | b;
       }
     }
   }
 }
-
 
 void draw_text_32bpp(int x, int y, const char *text, uint32_t color) {
   while (*text) {
@@ -934,7 +952,7 @@ void winmgr_toggle_sysmon(int show) {
   extern window_t *sysmon_win;
   extern window_t *sysmon_create(void);
   extern void winmgr_close_window(window_t *);
-  
+
   if (show) {
     if (!sysmon_win) {
       sysmon_win = sysmon_create();
