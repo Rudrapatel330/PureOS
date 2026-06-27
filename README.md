@@ -171,6 +171,44 @@ PureOS ships with **16+ native desktop applications**, all built directly into t
 | 🎙️ **Voice Recorder** | Audio recording app with AC97 PCM capture, real-time waveform visualization, and high-fidelity playback through the restored AC97 DMA engine |
 | 🎵 **Music Player** | MP3 audio player with real-time UI synchronization, custom `dr_mp3` decoding, and flawless software resampling to native 48kHz stereo |
 | 🏓 **Pong** | Classic arcade game with 3 modes (1P vs Bot, 2P Local, Bot vs Bot), AC97 synthesized sound effects, and smooth keyboard-polled paddle controls |
+| 🏎️ **Hill Climb Racing** | A fully physics-driven 2D racing game clone with rigid body mechanics, procedural terrain generation, and a deterministic coin collection system |
+
+#### 🏎️ Hill Climb Racing Architecture
+The Hill Climb Racing clone is a physics-driven arcade game written entirely from scratch, bypassing traditional game engines to run directly on the PureOS custom graphics pipeline.
+
+```mermaid
+graph TD
+    subgraph Physics Engine
+        RIGID[Rigid Body Solver]
+        TERRAIN[Procedural Terrain Math]
+        GRAV[Gravity & Air Friction]
+        COLLIDE[Tire Collision Detection]
+    end
+
+    subgraph Graphics Pipeline
+        DRAW_ROT[draw_rotated<br>Pixel Math]
+        TEX[Dynamic Texture Mapping<br>Ground & Surface]
+        COINS[Procedural Coin Arcs]
+    end
+
+    subgraph Hardware Input
+        KBD[Keyboard IRQ Handler]
+    end
+
+    KBD -->|"W / D (Gas / Brake)"| RIGID
+    RIGID -->|"Calculate Angle / Velocity"| DRAW_ROT
+    TERRAIN -->|"Sine Waves (Countryside)"| COLLIDE
+    COLLIDE -->|"Apply Upward Normal Force"| RIGID
+    TERRAIN -->|"Tiling Y-Offset"| TEX
+    TEX -->|"Blit to Screen"| DRAW_ROT
+    COINS -->|"Collision Radius"| RIGID
+```
+
+**Key Engineering Highlights:**
+- **Rigid Body Solver:** A custom 2D physics engine calculating angular velocity, momentum, rotational friction, and tangent-based slope gravity to accurately mimic real-world tire traction and backflips (with -π to π normalization).
+- **Procedural Generation:** The game world is infinite. The terrain is dynamically generated using multiple high and low-frequency sine waves (e.g., matching the classic "Countryside" map), allowing for endless, deterministic gameplay.
+- **Dynamic Texture Tiling:** The screen-space renderer intelligently calculates world-to-screen coordinate mappings to tile PNG textures seamlessly across the procedurally generated jagged hills.
+- **Deterministic Spawning:** Coins are spawned slightly ahead of the screen in pre-determined, classic arcade formations (Small Lines, High Arcs, Long Lines, and Triangles). Different denominations (5, 25, 100, 500) are procedurally loaded from disk and spawned into the world.
 
 #### 🎵 Music Player Architecture
 The Music Player is a complete end-to-end MP3 playback system deeply integrated with the OS kernel and audio hardware to provide flawless, skip-free audio and real-time UI updates:

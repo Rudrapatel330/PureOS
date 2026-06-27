@@ -94,5 +94,30 @@ def create_debug_disk():
     except Exception as e:
         print(f"Error uploading songs: {e}")
 
+    # 8. Upload PDFs
+    print("Uploading PDFs...")
+    try:
+        import subprocess
+        if os.path.exists("pdftest.pdf"):
+            subprocess.run(["python", "upload_pdf.py", "pdftest.pdf"], check=False)
+        if os.path.exists("Building OS Networking and Search.pdf"):
+            subprocess.run(["python", "upload_pdf.py", "Building OS Networking and Search.pdf"], check=False)
+    except Exception as e:
+        print(f"Error uploading PDFs: {e}")
+
+    # 9. Upload Hill Climb Assets
+    print("Uploading Hill Climb Assets...")
+    try:
+        if os.path.exists("car.png"): subprocess.run(["python", "upload_pdf.py", "car.png"], check=False)
+        if os.path.exists("tire.png"): subprocess.run(["python", "upload_pdf.py", "tire.png"], check=False)
+        if os.path.exists("ground.png"): subprocess.run(["python", "upload_pdf.py", "ground.png"], check=False)
+        if os.path.exists("surf.png"): subprocess.run(["python", "upload_pdf.py", "surf.png"], check=False)
+        if os.path.exists("coin5.png"): subprocess.run(["python", "upload_pdf.py", "coin5.png"], check=False)
+        if os.path.exists("coin25.png"): subprocess.run(["python", "upload_pdf.py", "coin25.png"], check=False)
+        if os.path.exists("coin100.png"): subprocess.run(["python", "upload_pdf.py", "coin100.png"], check=False)
+        if os.path.exists("coin500.png"): subprocess.run(["python", "upload_pdf.py", "coin500.png"], check=False)
+    except Exception as e:
+        print(f"Error uploading Hill Climb assets: {e}")
+
 if __name__ == '__main__':
     create_debug_disk()
