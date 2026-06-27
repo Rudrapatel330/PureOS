@@ -42,6 +42,12 @@ void taskmgr_draw(window_t *win) {
   for (int i = 0; i < window_count; i++) {
     if (windows[i].id == 0 || &windows[i] == win)
       continue;
+      
+    // Skip windows not on the current workspace (and not sticky)
+    extern int workspace_get_current(void);
+    if (windows[i].workspace != workspace_get_current() && !windows[i].is_sticky)
+      continue;
+      
     if (skipped < tm_scroll_offset) {
       skipped++;
       continue;
@@ -118,9 +124,15 @@ void taskmgr_on_scroll(void *w, int direction) {
 
   int visible_rows = (win->height - 54 - 20) / 24;
   int total_items = 0;
+  extern int workspace_get_current(void);
+  int cur_ws = workspace_get_current();
+  
   for (int i = 0; i < window_count; i++) {
-    if (windows[i].id != 0 && &windows[i] != win)
-      total_items++;
+    if (windows[i].id != 0 && &windows[i] != win) {
+      if (windows[i].workspace == cur_ws || windows[i].is_sticky) {
+        total_items++;
+      }
+    }
   }
   int max_scroll =
       (total_items > visible_rows) ? (total_items - visible_rows) : 0;
@@ -142,9 +154,15 @@ void taskmgr_handle_mouse(window_t *win, int mx, int my, int buttons) {
   int row_h = 24;
   extern int window_count;
   extern window_t windows[];
+  extern int workspace_get_current(void);
+  int cur_ws = workspace_get_current();
 
   for (int i = 0; i < window_count; i++) {
     if (windows[i].id == 0 || &windows[i] == win)
+      continue;
+
+    // Skip windows not on the current workspace
+    if (windows[i].workspace != cur_ws && !windows[i].is_sticky)
       continue;
 
     // End Task Button hit test (matching draw coordinates)

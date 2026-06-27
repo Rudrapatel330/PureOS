@@ -5,6 +5,7 @@
 #include "../kernel/screen.h"
 #include "../kernel/string.h"
 #include "../kernel/window.h"
+#include "../kernel/workspace.h"
 #include "startmenu.h"
 #include "sysmenu.h"
 
@@ -223,16 +224,16 @@ static void taskbar_update_magnification(int mx, int my) {
   int is_vertical = (global_config.taskbar_position == 1 ||
                      global_config.taskbar_position == 2);
 
-  float max_scale = 1.6f;
-  int min_size = 64;
+  float max_scale = 1.8f;
+  int min_size = 72;
 
   if (!is_vertical) {
     // 1. Calculate perfectly continuous fractional index (u)
     float u = -1.0f;
     if (g_taskbar.hovered_index != -1) {
       for (int i = 0; i < g_taskbar.icon_count; i++) {
-        float sw = 64.0f * g_taskbar.icons[i].scale;
-        float left = g_taskbar.icons[i].x - (sw - 64.0f) / 2.0f;
+        float sw = 72.0f * g_taskbar.icons[i].scale;
+        float left = g_taskbar.icons[i].x - (sw - 72.0f) / 2.0f;
         if (mx >= left && mx < left + sw) {
           float offset = (mx - (left + sw / 2.0f)) / sw;
           u = (float)i + offset;
@@ -261,7 +262,7 @@ static void taskbar_update_magnification(int mx, int my) {
       total_w += (int)(min_size * g_taskbar.icons[i].target_scale);
     }
 
-    float start_x = (float)(screen_width - (total_w + 128)) / 2.0f + 16.0f;
+    float start_x = (float)(screen_width - (total_w + 192)) / 2.0f + 80.0f;
     float cur_x = start_x;
     for (int i = 0; i < g_taskbar.icon_count; i++) {
       float sw = (float)min_size * g_taskbar.icons[i].target_scale;
@@ -274,8 +275,8 @@ static void taskbar_update_magnification(int mx, int my) {
     float u = -1.0f;
     if (g_taskbar.hovered_index != -1) {
       for (int i = 0; i < g_taskbar.icon_count; i++) {
-        float sh = 64.0f * g_taskbar.icons[i].scale;
-        float top = g_taskbar.icons[i].y - (sh - 64.0f) / 2.0f;
+        float sh = 72.0f * g_taskbar.icons[i].scale;
+        float top = g_taskbar.icons[i].y - (sh - 72.0f) / 2.0f;
         if (my >= top && my < top + sh) {
           float offset = (my - (top + sh / 2.0f)) / sh;
           u = (float)i + offset;
@@ -351,7 +352,7 @@ void taskbar_tick_animations(float dt) {
   extern os_config_t global_config;
   int is_vertical = (global_config.taskbar_position == 1 ||
                      global_config.taskbar_position == 2);
-  float speed = 30.0f;
+  float speed = 22.0f;
   int animating = 0;
 
   float ddx = g_taskbar.dock_x - g_taskbar.anim_dock_x;
@@ -465,10 +466,11 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
     int is_running = 0;
     window_t *win_ref = (void *)0;
 
-    // Check if running
+    // Check if running (only on current workspace)
+    int cur_ws = workspace_get_current();
     for (int j = 0; j < window_count; j++) {
       window_t *win = &windows[window_z_order[j]];
-      if (win->id != 0 && win->app_type == aid && win->fading_mode != 2) {
+      if (win->id != 0 && win->app_type == aid && win->fading_mode != 2 && win->workspace == cur_ws) {
         is_running = 1;
         win_ref = win;
         break;
@@ -477,10 +479,11 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
     add_to_dock_icons(aid, 1, is_running, win_ref);
   }
 
-  // Add open but unpinned apps
+  // Add open but unpinned apps (only on current workspace)
+  int cur_ws = workspace_get_current();
   for (int i = 0; i < window_count; i++) {
     window_t *win = &windows[window_z_order[i]];
-    if (win->id == 0 || win->fading_mode == 2 || (win->flags & WINDOW_FLAG_WIDGET))
+    if (win->id == 0 || win->fading_mode == 2 || (win->flags & WINDOW_FLAG_WIDGET) || win->workspace != cur_ws)
       continue;
 
     int already_pinned = 0;
@@ -543,13 +546,13 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
       g_taskbar.icons[i].x_offset = 0.0f;
       if (!is_vertical) {
         g_taskbar.icons[i].x =
-            (old_icon_count > 0) ? g_taskbar.icons[old_icon_count - 1].x + 64.0f
+            (old_icon_count > 0) ? g_taskbar.icons[old_icon_count - 1].x + 72.0f
                                  : (screen_width / 2.0f);
         g_taskbar.icons[i].y = 0;
       } else {
         g_taskbar.icons[i].x = 0;
         g_taskbar.icons[i].y =
-            (old_icon_count > 0) ? g_taskbar.icons[old_icon_count - 1].y + 64.0f
+            (old_icon_count > 0) ? g_taskbar.icons[old_icon_count - 1].y + 72.0f
                                  : (screen_height / 2.0f);
       }
     }
@@ -572,16 +575,16 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
   // Calculate dock size
   float total_icon_w = 0.0f;
   for (int i = 0; i < g_taskbar.icon_count; i++)
-    total_icon_w += (64.0f * g_taskbar.icons[i].scale);
+    total_icon_w += (72.0f * g_taskbar.icons[i].scale);
 
   int dock_w, dock_h, dock_x, dock_y;
   if (!is_vertical) {
-    dock_h = 74;
-    dock_w = 128 + (int)total_icon_w;
+    dock_h = 90;
+    dock_w = 192 + (int)total_icon_w; // 128 original + 64 left
     dock_x = (screen_width - dock_w) / 2;
     dock_y = screen_height - dock_h - 10;
   } else {
-    dock_w = 74;
+    dock_w = 90;
     dock_h = 128 + (int)total_icon_w;
     dock_y = (screen_height - dock_h) / 2;
     dock_x =
@@ -645,8 +648,13 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
 
   // 3. SysMenu Icon (FileExplorer PNG) & Separator
   if (!is_vertical) {
-    int sep_x = bd_x + 32 + (int)total_icon_w;
-    int sys_x = bd_x + 48 + (int)total_icon_w;
+    // Multi Desktop Button
+    vga_draw_rect_lfb(bd_x + 10, bd_y + 35, 44, 20, 0xFF444444, buffer);
+    vga_draw_string_lfb(bd_x + 20, bd_y + 40, "+ WS", 0xFFFFFFFF, buffer);
+    vga_draw_rect_lfb(bd_x + 64, bd_y + 10, 1, bd_h - 20, 0x50FFFFFF, buffer);
+
+    int sep_x = bd_x + 96 + (int)total_icon_w; // Shifted by 64
+    int sys_x = bd_x + 112 + (int)total_icon_w; // Shifted by 64
     vga_draw_rect_lfb(sep_x, bd_y + 10, 1, bd_h - 20, 0x50FFFFFF, buffer);
     draw_icon(sys_x, bd_y + 5, 64, 64, 18, buffer); // APP_SYSMENU is 18
   } else {
@@ -664,14 +672,14 @@ void taskbar_draw(uint32_t *buffer, rect_t clip) {
     int y = (int)icon->y;
 
     // Magnified size logic
-    int sq_size = (int)(56.0f * icon->scale);
+    int sq_size = (int)(64.0f * icon->scale);
     int sq_x, sq_y;
     if (!is_vertical) {
-      sq_x = x + (64 - sq_size) / 2;
+      sq_x = x + (72 - sq_size) / 2;
       sq_y = (int)(bd_y + (bd_h - sq_size) / 2.0f + icon->y_offset);
     } else {
       sq_x = (int)(bd_x + (bd_w - sq_size) / 2.0f + icon->x_offset);
-      sq_y = y + (64 - sq_size) / 2;
+      sq_y = y + (72 - sq_size) / 2;
     }
     extern os_config_t global_config;
 
@@ -731,15 +739,15 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
   if (in_dock) {
     for (int i = 0; i < g_taskbar.icon_count; i++) {
       if (!is_vertical) {
-        float sw = 64.0f * g_taskbar.icons[i].scale;
-        float left = g_taskbar.icons[i].x - (sw - 64.0f) / 2.0f;
+        float sw = 72.0f * g_taskbar.icons[i].scale;
+        float left = g_taskbar.icons[i].x - (sw - 72.0f) / 2.0f;
         if (mx >= left && mx < left + sw) {
           hovered = i;
           break;
         }
       } else {
-        float sh = 64.0f * g_taskbar.icons[i].scale;
-        float top = g_taskbar.icons[i].y - (sh - 64.0f) / 2.0f;
+        float sh = 72.0f * g_taskbar.icons[i].scale;
+        float top = g_taskbar.icons[i].y - (sh - 72.0f) / 2.0f;
         if (my >= top && my < top + sh) {
           hovered = i;
           break;
@@ -835,11 +843,18 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
     return 0;
 
   if (!is_vertical) {
+    if (mx >= g_taskbar.dock_x + 10 && mx <= g_taskbar.dock_x + 54 && 
+        my >= g_taskbar.dock_y + 35 && my <= g_taskbar.dock_y + 55) {
+      extern void workspace_add(void);
+      workspace_add();
+      return 1;
+    }
+    
     float total_icon_w = 0.0f;
     for (int i = 0; i < g_taskbar.icon_count; i++)
-      total_icon_w += (64.0f * g_taskbar.icons[i].scale);
+      total_icon_w += (72.0f * g_taskbar.icons[i].scale);
 
-    int sys_x = g_taskbar.dock_x + 48 + (int)total_icon_w;
+    int sys_x = g_taskbar.dock_x + 112 + (int)total_icon_w;
     if (mx >= sys_x && mx < sys_x + 64) {
       startmenu_show(sys_x, g_taskbar.dock_y);
       return 1;
@@ -855,22 +870,29 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
   for (int i = 0; i < g_taskbar.icon_count; i++) {
     int hit = 0;
     if (!is_vertical) {
-      float sw = 64.0f * g_taskbar.icons[i].scale;
-      float left = g_taskbar.icons[i].x - (sw - 64.0f) / 2.0f;
+      float sw = 72.0f * g_taskbar.icons[i].scale;
+      float left = g_taskbar.icons[i].x - (sw - 72.0f) / 2.0f;
       if (mx >= left && mx < left + sw) hit = 1;
     } else {
-      float sh = 64.0f * g_taskbar.icons[i].scale;
-      float top = g_taskbar.icons[i].y - (sh - 64.0f) / 2.0f;
+      float sh = 72.0f * g_taskbar.icons[i].scale;
+      float top = g_taskbar.icons[i].y - (sh - 72.0f) / 2.0f;
       if (my >= top && my < top + sh) hit = 1;
     }
 
     if (hit) {
       if (g_taskbar.icons[i].is_running && g_taskbar.icons[i].win_ref && !ctrl_pressed) {
         window_t *win = g_taskbar.icons[i].win_ref;
+
+        // If the window is on a different workspace, switch to it first
+        if (win->workspace != workspace_get_current()) {
+          workspace_set_focus_on(win->workspace, win);
+          workspace_switch(win->workspace);
+        }
+
         if (win->is_minimized) {
           win->anim_mode = 3; // Restore (Warp)
-          float restore_k = 280.0f;
-          float restore_d = 30.0f;
+          float restore_k = 300.0f;
+          float restore_d = 35.0f;
           anim_start_spring(&win->anim_scale, 0.01f, 1.0f, restore_k, restore_d);
 
           // Set pinch direction based on dock position relative to window
@@ -892,6 +914,12 @@ int taskbar_handle_mouse(int mx, int my, int buttons) {
         }
         winmgr_bring_to_front(win);
       } else {
+        extern uint32_t get_timer_ticks(void);
+        static uint32_t last_launch = 0;
+        uint32_t now = get_timer_ticks();
+        if (now - last_launch < 50) return 1; // Debounce multiple rapid clicks
+        last_launch = now;
+
         extern int next_anim_origin_x;
         extern int next_anim_origin_y;
         if (!is_vertical) {

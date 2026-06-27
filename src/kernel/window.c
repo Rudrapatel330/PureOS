@@ -15,6 +15,7 @@ extern int ui_dirty;
 #include "task.h"
 #include "theme.h"
 #include <stddef.h>
+#include "dragdrop.h"
 
 // Integer-based Supersampled SDF alpha mask helper (4x4)
 static uint8_t get_corner_alpha_int(int x, int y, int r) {
@@ -161,6 +162,9 @@ int winmgr_resize_surface(window_t *win, int new_w, int new_h) {
     new_w = 1;
   if (new_h < 1)
     new_h = 1;
+  if (new_w > 32768 || new_h > 32768 || (uint64_t)new_w * new_h > 0x3FFFFFFF) {
+    return 0;
+  }
 
   // Try to allocate NEW surface first - don't free old one until success!
   int total = new_w * new_h;
@@ -286,8 +290,10 @@ window_t *winmgr_create_window(int x, int y, int w, int h, const char *title) {
   win->on_close = 0;  // CRITICAL: Clear stale on_close from reused slot
   win->user_data = 0; // CRITICAL: Clear stale user_data from reused slot
   win->exists = 1;    // Mark slot as in use
-  win->workspace = 0; // Default to workspace 0
+  extern int workspace_get_current(void);
+  win->workspace = workspace_get_current(); // Open on current workspace
   win->ws_hidden = 0; // Visible by default
+  win->is_sticky = 0; // Not sticky by default
   win->flags = WINDOW_FLAG_NONE; // CRITICAL: Reset flags (No Titlebar, etc.)
   win->always_on_top = 0;
   extern int screen_width;
@@ -401,8 +407,8 @@ window_t *winmgr_create_window(int x, int y, int w, int h, const char *title) {
   }
 
   // Snappy Genie: very fast pull, high-stiffness spring finish
-  float kw = 550.0f;
-  float dw = 48.0f;
+  float kw = 300.0f;
+  float dw = 35.0f;
 
   extern int screen_height;
   win->pinch_top = (win->launch_y >= 0 && win->launch_y < screen_height / 2);
@@ -485,8 +491,9 @@ window_t *winmgr_create_window(int x, int y, int w, int h, const char *title) {
     }
   }
 
-  // Use standard strcpy from string.h
-  strcpy(win->title, title);
+  // Use standard strncpy to prevent overflow
+  strncpy(win->title, title, 31);
+  win->title[31] = 0;
   // print_serial("WINMGR: title set\n");
 
   // Auto-focus new window
@@ -1875,6 +1882,10 @@ void winmgr_tick_animations(float dt) {
         if (win->anim_mode == 2 && win->fading_mode != 2) {
           // Minimize (but not when closing/fading out)
           win->is_minimized = 1;
+          if (win->surface) {
+            kfree(win->surface);
+            win->surface = 0;
+          }
         } else {
           // Open/Restore
           win->is_minimized = 0;
@@ -2281,8 +2292,8 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
           win->pinch_top = (ty < win->y);
 
           // Snappy Genie minimize: fast pull, stiff decelerating spring
-          float min_k = 550.0f;
-          float min_d = 48.0f;
+          float min_k = 300.0f;
+          float min_d = 35.0f;
           win->is_animating = 1;
           anim_start_spring(&win->anim_x, (float)win->x, (float)tx, min_k, min_d);
           anim_start_spring(&win->anim_y, (float)win->y, (float)ty, min_k, min_d);
@@ -2558,7 +2569,17 @@ int window_handle_mouse(window_t *win, int mx, int my, int buttons) {
 int winmgr_handle_mouse_global(int mx, int my, int buttons) {
   static int prev_global_btn = 0;
   int is_click = (buttons & 1) && !(prev_global_btn & 1);
+  int is_release = !(buttons & 1) && (prev_global_btn & 1);
   prev_global_btn = buttons;
+
+  extern int file_drag_is_active(void);
+  extern void file_drag_end(void);
+
+  int is_drag = file_drag_is_active();
+  int eff_btn = buttons;
+  if (is_drag) {
+      eff_btn |= 4; // drag-over routing
+  }
 
   // -3. Check Context Menu (highest priority global UI)
   extern int ctxmenu_click(int mx, int my);
@@ -2647,25 +2668,31 @@ int winmgr_handle_mouse_global(int mx, int my, int buttons) {
 
   // -2. Check System Menu (highest priority if active)
   extern int sysmenu_handle_mouse(int mx, int my, int buttons);
-  if (sysmenu_handle_mouse(mx, my, buttons))
+  if (sysmenu_handle_mouse(mx, my, eff_btn)) {
+    if (is_drag && is_release) file_drag_end();
     return 1;
+  }
 
   // -1. Check Start Menu
-  if (startmenu_handle_mouse(mx, my, buttons))
+  if (startmenu_handle_mouse(mx, my, eff_btn)) {
+    if (is_drag && is_release) file_drag_end();
     return 1;
+  }
 
   // 0. Check Taskbar
   extern int taskbar_handle_mouse(int mx, int my, int buttons);
-  if (taskbar_handle_mouse(mx, my, buttons))
+  if (taskbar_handle_mouse(mx, my, eff_btn)) {
+    if (is_drag && is_release) file_drag_end();
     return 1;
+  }
 
   // 1. Check for Captured Windows (Dragging or Resizing)
   for (int i = 0; i < window_count; i++) {
     window_t *win = &windows[window_z_order[i]];
-    if (win->id != 0 && win->fading_mode != 2 && !win->is_minimized &&
+    if (win->id != 0 && win->fading_mode != 2 && !win->is_minimized && !win->ws_hidden &&
         (win->is_dragging || win->is_resizing)) {
-      int ret = window_handle_mouse(win, mx, my, buttons);
-
+      int ret = window_handle_mouse(win, mx, my, eff_btn);
+      if (ret && is_drag && is_release) file_drag_end();
       return ret;
     }
   }
@@ -2673,13 +2700,22 @@ int winmgr_handle_mouse_global(int mx, int my, int buttons) {
   // 2. Otherwise check top-most (last in array) first
   for (int i = window_count - 1; i >= 0; i--) {
     window_t *win = &windows[window_z_order[i]];
-    if (win->id != 0 && win->fading_mode != 2 && !win->is_minimized) {
-      int ret = window_handle_mouse(win, mx, my, buttons);
+    if (win->id != 0 && win->fading_mode != 2 && !win->is_minimized && !win->ws_hidden) {
+      int ret = window_handle_mouse(win, mx, my, eff_btn);
       if (ret) {
-
+        if (is_drag && is_release) {
+          if (win->on_drop) {
+            win->on_drop(win, g_file_drag.source_path, g_file_drag.filename, g_file_drag.is_dir, g_file_drag.is_cut);
+          }
+          file_drag_end();
+        }
         return 1;
       }
     }
+  }
+
+  if (is_drag && is_release) {
+    file_drag_end();
   }
   return 0;
 }
@@ -2690,7 +2726,7 @@ void winmgr_handle_scroll(int mx, int my, int scroll) {
   // Correct search order: Top-most (last in array) first
   for (int i = window_count - 1; i >= 0; i--) {
     window_t *win = &windows[window_z_order[i]];
-    if (win->id == 0 || win->fading_mode == 2 || win->is_minimized)
+    if (win->id == 0 || win->ws_hidden || win->fading_mode == 2 || win->is_minimized)
       continue;
     if (mx >= win->x && mx < win->x + win->width && my >= win->y &&
         my < win->y + win->height) {
@@ -2758,8 +2794,8 @@ void winmgr_close_window(window_t *win) {
   }
 
   // Snappy Genie close: fast pull, stiff decelerating spring
-  float close_k = 550.0f;
-  float close_d = 48.0f;
+  float close_k = 300.0f;
+  float close_d = 35.0f;
 
   // Opacity fade-out with spring physics
   if (win->anim_opacity.active) {
@@ -2771,13 +2807,16 @@ void winmgr_close_window(window_t *win) {
   // IMMEDIATELY transfer focus if this was the active window
   if (win == active_window) {
     active_window = NULL;
-    // Find next top-most valid window that isn't closing
+    // Find next top-most valid window that isn't closing on this workspace
+    extern int workspace_get_current(void);
+    int cur_ws = workspace_get_current();
     for (int i = window_count - 1; i >= 0; i--) {
       int idx = window_z_order[i];
       if (idx < 0) continue;
       window_t *next_active = &windows[idx];
       if (next_active->id != 0 && next_active != win &&
-          next_active->fading_mode != 2 && !next_active->is_minimized) {
+          next_active->fading_mode != 2 && !next_active->is_minimized &&
+          (next_active->workspace == cur_ws || next_active->is_sticky)) {
         winmgr_bring_to_front(next_active);
         break;
       }
@@ -2839,10 +2878,12 @@ void winmgr_close_active(void) {
   }
 
   // Fallback: search Z-order for top-most regular window
+  extern int workspace_get_current(void);
+  int cur_ws = workspace_get_current();
   for (int i = window_count - 1; i >= 0; i--) {
     window_t *win = &windows[window_z_order[i]];
     if (win->id != 0 && win->fading_mode != 2 &&
-        !win->is_minimized) {
+        !win->is_minimized && win->workspace == cur_ws) {
       winmgr_close_window(win);
       return;
     }
@@ -2884,24 +2925,50 @@ void winmgr_cycle_window(void) {
   if (window_count <= 1)
     return;
 
-  // Move the current top window (index window_count-1) to the bottom (index 0)
-  int top_idx = window_z_order[window_count - 1];
+  extern int workspace_get_current(void);
+  int cur_ws = workspace_get_current();
 
-  // Shift others up
-  for (int i = window_count - 1; i > 0; i--) {
-    window_z_order[i] = window_z_order[i - 1];
+  // Find the top-most window on this workspace
+  int top_idx = -1;
+  int z_pos = -1;
+  for (int i = window_count - 1; i >= 0; i--) {
+      int idx = window_z_order[i];
+      window_t *w = &windows[idx];
+      if (w->id != 0 && (w->workspace == cur_ws || w->is_sticky)) {
+          top_idx = idx;
+          z_pos = i;
+          break;
+      }
+  }
+
+  if (z_pos <= 0) return; // Nothing to cycle
+
+  // Move it to the bottom of the valid workspace windows
+  // Shift other workspace windows up
+  for (int i = z_pos; i > 0; i--) {
+      window_z_order[i] = window_z_order[i - 1];
   }
   window_z_order[0] = top_idx;
 
-  // New top window is at window_count-1
-  int new_top_idx = window_z_order[window_count - 1];
-  window_t *new_top = &windows[new_top_idx];
+  // Find the new top-most window on this workspace
+  int new_top_idx = -1;
+  for (int i = window_count - 1; i >= 0; i--) {
+      int idx = window_z_order[i];
+      window_t *w = &windows[idx];
+      if (w->id != 0 && (w->workspace == cur_ws || w->is_sticky)) {
+          new_top_idx = idx;
+          break;
+      }
+  }
 
-  if (new_top->id != 0 && !new_top->is_minimized &&
-      !(new_top->flags & WINDOW_FLAG_WIDGET)) {
-    active_window = new_top;
-    new_top->is_minimized = 0;
-    winmgr_bring_to_front(new_top);
+  if (new_top_idx >= 0) {
+      window_t *new_top = &windows[new_top_idx];
+      if (new_top->id != 0 && !new_top->is_minimized &&
+          !(new_top->flags & WINDOW_FLAG_WIDGET)) {
+        active_window = new_top;
+        new_top->is_minimized = 0;
+        winmgr_bring_to_front(new_top);
+      }
   }
 }
 

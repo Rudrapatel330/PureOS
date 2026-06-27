@@ -74,6 +74,7 @@ typedef struct {
   void (*on_copy)(void *win);
   void (*on_cut)(void *win);
   void (*on_paste)(void *win, const char *text);
+  void (*on_drop)(void *win, const char *source_path, const char *name, int is_dir, int is_cut);
   void (*on_close)(void *win);
   void *user_data; // Per-window app state (e.g. terminal instance)
   int app_type;    // 0=terminal, 1=calculator, 2=editor, 3=computer, 4=paint,
@@ -166,6 +167,7 @@ typedef struct {
   // Virtual workspace support
   int workspace; // 0-3: which workspace this window belongs to
   int ws_hidden; // 1 = hidden because on a different workspace
+  int is_sticky; // 1 = visible on all workspaces (taskbar, desktop, etc.)
   int exists;    // 1 = window slot is in use
 
   uint32_t flags;
