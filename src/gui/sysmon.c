@@ -8,7 +8,7 @@ extern int screen_width, screen_height;
 // Constants
 #define SYSMON_W 220
 #define SYSMON_H 110
-#define UPDATE_TICKS 15
+#define UPDATE_TICKS 250
 
 static int last_cpu_pct = 0;
 static int last_ram_pct = 0;
@@ -46,9 +46,9 @@ static void sysmon_fill_liquid(window_t *win, int x, int y, int w, int h,
   // Draw vertical lines to fill the liquid and create waves
   for (int lx = 0; lx < w; lx++) {
     // Primary Wave (Very Slow, Larger Amp)
-    int wave1 = (fast_sine(lx * 3 + tick * 1) * 5) / 128; // Speed 1, Amp 5
+    int wave1 = (fast_sine(lx * 3 + tick / 2) * 5) / 128; // Speed 0.5, Amp 5
     // Secondary Wave (Slowest, Larger Amp)
-    int wave2 = (fast_sine(lx * 1 - tick / 2) * 3) / 128; // Speed 0.5, Amp 3
+    int wave2 = (fast_sine(lx * 1 - tick / 4) * 3) / 128; // Speed 0.25, Amp 3
 
     int wave_y = target_y + wave1 + wave2;
     if (wave_y < y)
@@ -178,14 +178,35 @@ void sysmon_update(window_t *win) {
       last_ram_pct = (used * 100) / total;
 
     // CPU Stats
-    task_t *idle = get_task_by_name("kernel");
-    if (idle) {
-      last_cpu_pct = 100 - idle->cpu_usage_percent;
+    extern volatile uint64_t desktop_idle_cycles;
+    static uint64_t last_idle = 0;
+    static uint64_t last_tsc = 0;
+    
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    uint64_t current_tsc = ((uint64_t)hi << 32) | lo;
+    uint64_t current_idle = desktop_idle_cycles;
+
+    if (last_tsc > 0 && current_tsc > last_tsc) {
+      uint64_t diff_idle = current_idle - last_idle;
+      uint64_t diff_tsc = current_tsc - last_tsc;
+      int idle_pct = (diff_idle * 100) / diff_tsc;
+      if (idle_pct > 100) idle_pct = 100;
+      last_cpu_pct = 100 - idle_pct;
     }
+    
+    last_idle = current_idle;
+    last_tsc = current_tsc;
   }
 
-  // Always request redraw for wave animation
-  win->needs_redraw = 1;
+  // Throttle wave animation redraw to ~12fps (every 20 ticks) to save CPU
+  static uint32_t last_wave_tick = 0;
+  if (tick - last_wave_tick >= 20) {
+    last_wave_tick = tick;
+    win->needs_redraw = 1;
+    extern volatile int force_full_redraw;
+    force_full_redraw = 1;
+  }
 }
 
 window_t *sysmon_create() {

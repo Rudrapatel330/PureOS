@@ -58,6 +58,27 @@ isr_common_stub:
     add rsp, 16    ; Clean up error code and ISR number (8 bytes each)
     iretq
 
+; Syscall stub with SMAP support
+global isr128_smap
+isr128_smap:
+    push qword 0
+    push qword 128
+    ; Enable SMAP user access
+    stac
+    PUSHALL
+    
+    mov rdi, rsp
+    call isr_handler
+    
+    ; Restore stack pointer (may have changed due to context switch)
+    mov rsp, rax
+    
+    POPALL
+    add rsp, 16
+    ; Disable SMAP user access before returning to user mode
+    clac
+    iretq
+
 ; Common IRQ stub
 irq_common_stub:
     PUSHALL
@@ -132,5 +153,24 @@ IRQ 13, 45
 IRQ 14, 46
 IRQ 15, 47
 
-; Syscall handler
-ISR_NOERRCODE 128
+; APIC timer handler (SMP scheduling)
+ISR_NOERRCODE 48
+; Software yield handler
+ISR_NOERRCODE 49
+
+; Syscall handler (with SMAP stac/clac wrapping)
+global isr128
+isr128:
+    push qword 0
+    push qword 128
+    ; Enable SMAP access to user pages
+    stac
+    jmp isr_common_stub
+
+; Override the common stub exit to clac before iretq
+; We add the clac in the common stub's POPALL section
+; by replacing the standard isr_common_stub with one that manages SMAP
+;
+; Actually, we add clac in the syscall handler itself (in C code) since
+; isr_common_stub is shared with exceptions
+;

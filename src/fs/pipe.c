@@ -28,7 +28,7 @@ static int pipe_read(vfs_inode_t *inode, file_handle_t *file, uint32_t offset, u
         break; // EOF
       }
       // Block/Yield if empty but writers exist
-      __asm__ volatile("int $32");
+      __asm__ volatile("int $49");
       continue;
     }
 
@@ -54,7 +54,7 @@ static int pipe_write(vfs_inode_t *inode, file_handle_t *file, uint32_t offset, 
     uint32_t next_head = (p->head + 1) % PIPE_SIZE;
     if (next_head == p->tail) {
       // Full, yield
-      __asm__ volatile("int $32");
+      __asm__ volatile("int $49");
       continue;
     }
 

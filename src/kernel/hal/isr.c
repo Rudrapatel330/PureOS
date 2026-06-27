@@ -82,9 +82,17 @@ void isr_install() {
   idt_set_gate(46, (uint64_t)irq14, 0x08, 0x8E);
   idt_set_gate(47, (uint64_t)irq15, 0x08, 0x8E);
 
-  // Syscall (int 0x80, DPL 3)
-  extern void isr128();
-  idt_set_gate(128, (uint64_t)isr128, 0x08, 0xEE);
+  // LAPIC timer (SMP scheduling)
+  extern void isr48();
+  idt_set_gate(48, (uint64_t)isr48, 0x08, 0x8E);
+
+  // Software Yield (SMP scheduling)
+  extern void isr49();
+  idt_set_gate(49, (uint64_t)isr49, 0x08, 0x8E);
+
+  // Syscall (int 0x80, DPL 3) - use SMAP-aware stub
+  extern void isr128_smap();
+  idt_set_gate(128, (uint64_t)isr128_smap, 0x08, 0xEE);
 }
 
 #include "paging.h"
@@ -178,11 +186,18 @@ uint64_t irq_handler(registers_t *regs) {
     ret_esp = handler(regs);
   }
 
-  // Send EOI to PICs
-  if (regs->int_no >= 40) {
-    outb(0xA0, 0x20); // Slave
+  // Send EOI
+  extern uint32_t io_apic_phys_addr;
+  if (io_apic_phys_addr) {
+    extern void lapic_eoi(void);
+    lapic_eoi();
+  } else {
+    // Send EOI to PICs
+    if (regs->int_no >= 40) {
+      outb(0xA0, 0x20); // Slave
+    }
+    outb(0x20, 0x20); // Master
   }
-  outb(0x20, 0x20); // Master
 
   return ret_esp;
 }

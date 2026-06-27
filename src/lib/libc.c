@@ -36,14 +36,14 @@ int open(const char *pathname, int flags) {
 
 int close(int fd) { return (int)_syscall(SYS_CLOSE, (uint64_t)fd, 0, 0, 0, 0); }
 
-size_t read(int fd, void *buf, size_t count) {
-  return (size_t)_syscall(SYS_READ, (uint64_t)fd, (uint64_t)buf,
-                          (uint64_t)count, 0, 0);
+ssize_t read(int fd, void *buf, size_t count) {
+  return (ssize_t)_syscall(SYS_READ, (uint64_t)fd, (uint64_t)buf,
+                           (uint64_t)count, 0, 0);
 }
 
-size_t write(int fd, const void *buf, size_t count) {
-  return (size_t)_syscall(SYS_WRITE, (uint64_t)fd, (uint64_t)buf,
-                          (uint64_t)count, 0, 0);
+ssize_t write(int fd, const void *buf, size_t count) {
+  return (ssize_t)_syscall(SYS_WRITE, (uint64_t)fd, (uint64_t)buf,
+                           (uint64_t)count, 0, 0);
 }
 
 void *malloc(size_t size) {
@@ -78,6 +78,17 @@ dirent_t *readdir(int fd, int index) {
   }
   free(d);
   return NULL;
+}
+
+int strcmp(const char *a, const char *b) {
+  while (*a && *a == *b) { a++; b++; }
+  return (unsigned char)*a - (unsigned char)*b;
+}
+
+char *strrchr(const char *s, int c) {
+  const char *last = NULL;
+  while (*s) { if (*s == c) last = s; s++; }
+  return (char *)last;
 }
 
 void exit(int status) {

@@ -6,17 +6,16 @@
 #include "../syscall.h"
 #include "../task.h"
 #include "isr.h"
+#include "cpu.h"
 
 extern void print_serial(const char *);
 
 pml4_table_t *kernel_pml4 = 0;
 uint64_t kernel_pml4_phys = 0;
-pml4_table_t *current_pml4 = 0;
 
 static uint64_t kernel_rsp;
 static uint64_t kernel_rbp;
 static uint8_t user_stack_array[4096] __attribute__((aligned(16)));
-int in_user_mode = 0;
 
 page_t *get_page(uint64_t address, int make, pml4_table_t *pml4) {
   address /= 0x1000;
@@ -84,7 +83,7 @@ void paging_init() {
     page_t *page = get_page(i, 1, kernel_pml4);
     page->present = 1;
     page->rw = 1;
-    page->user = 1;
+    page->user = 0;
     page->frame = i >> 12;
   }
   print_serial(" Done.\n");
@@ -117,7 +116,7 @@ void paging_init() {
       page_t *page = get_page(lfb_phys + i, 1, kernel_pml4);
       page->present = 1;
       page->rw = 1;
-      page->user = 1;
+      page->user = 0;
       page->frame = (lfb_phys + i) >> 12;
     }
   }
@@ -128,17 +127,25 @@ void paging_init() {
     page_t *page = get_page(0xE0000000 + i, 1, kernel_pml4);
     page->present = 1;
     page->rw = 1;
-    page->user = 1;
+    page->user = 0;
     page->frame = (0xE0000000 + i) >> 12;
   }
 
-  current_pml4 = kernel_pml4;
+  // Enable SMEP & SMAP (Supervisor Mode Execution/Access Prevention)
+  uint64_t cr4;
+  __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+  cr4 |= (1 << 20); // SMEP (bit 20)
+  cr4 |= (1 << 21); // SMAP (bit 21)
+  __asm__ volatile("mov %0, %%cr4" : : "r"(cr4));
+  print_serial("SMEP/SMAP enabled.\n");
+
+  set_current_pml4((uint64_t)kernel_pml4);
   __asm__ volatile("mov %0, %%cr3" : : "r"((uint64_t)phys_pml4));
   print_serial("[POST-CR3] PAGING ENABLED\n");
 }
 
 void switch_page_directory(pml4_table_t *new_dir) {
-  current_pml4 = new_dir;
+  set_current_pml4((uint64_t)new_dir);
   // Use identity mapping to get physical address
   uint64_t phys = (uint64_t)(uintptr_t)new_dir;
   __asm__ volatile("mov %0, %%cr3" : : "r"(phys));
@@ -192,15 +199,27 @@ void paging_map_user_page(pml4_table_t *pml4, uint64_t virtual_addr,
                           uint64_t physical_addr, int flags) {
   page_t *p = get_page(virtual_addr, 1, pml4);
   p->present = 1;
-  p->rw = (flags & 0x2) ? 1 : 0;
+
+  // W^X enforcement: if both RW and X requested, strip execute
+  int want_rw = (flags & 0x2) ? 1 : 0;
+  int want_x = (flags & 0x4) ? 1 : 0;
+  if (want_rw && want_x) {
+    // W^X violation: prefer write, strip execute for safety
+    p->rw = 1;
+    p->nx = 1; // Non-executable
+  } else {
+    p->rw = want_rw;
+    p->nx = want_x ? 0 : 1;
+  }
+
   p->user = 1;
   p->frame = physical_addr >> 12;
 }
 
 void enter_user_mode(void *entry_point) {
-  if (in_user_mode)
+  if (get_in_user_mode())
     return;
-  in_user_mode = 1;
+  set_in_user_mode(1);
 
   __asm__ volatile("mov %%rsp, %0" : "=r"(kernel_rsp));
   __asm__ volatile("mov %%rbp, %0" : "=r"(kernel_rbp));
@@ -222,13 +241,13 @@ void enter_user_mode(void *entry_point) {
                    :
                    : "r"(user_stack), "r"((uint64_t)entry_point)
                    : "ax", "memory");
-  in_user_mode = 0;
+  set_in_user_mode(0);
 }
 
 void return_to_kernel() {
-  if (!in_user_mode)
+  if (!get_in_user_mode())
     return;
-  in_user_mode = 0;
+  set_in_user_mode(0);
 
   __asm__ volatile("cli\n"
                    "mov $0x10, %%ax\n"

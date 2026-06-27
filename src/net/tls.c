@@ -185,8 +185,17 @@ int tls_connect(tls_conn_t *conn, uint32_t ip, uint16_t port,
                 const char *hostname) {
   memset(conn, 0, sizeof(tls_conn_t));
 
-  // 1. Establish TCP connection
-  if (tcp_connect(&conn->tcp, ip, port) < 0) {
+  int conn_res = tcp_connect(&conn->tcp, ip, port);
+  if (conn_res == 1) {
+      uint32_t start_conn = get_timer_ticks();
+      while ((conn_res = tcp_check_connect(&conn->tcp)) == 1) {
+          extern void kernel_poll_events(void);
+          kernel_poll_events();
+          __asm__ volatile("int $49");
+          if (get_timer_ticks() - start_conn > 5000) { conn_res = -1; break; }
+      }
+  }
+  if (conn_res != 0) {
     return -1001;
   }
 
@@ -354,8 +363,7 @@ int tls_connect(tls_conn_t *conn, uint32_t ip, uint16_t port,
 
     // Small yield to prevent 100% CPU usage in the handshake loop if nothing's
     // happening
-    for (volatile int i = 0; i < 1000; i++)
-      ;
+    __asm__ volatile("int $49");
   }
 
   print_serial("TLS: Handshake failed (Final iterations: ");
@@ -470,8 +478,7 @@ int tls_recv(tls_conn_t *conn, void *buf, int max_len) {
     }
 
     // Small sleep to avoid eating CPU while waiting
-    for (int i = 0; i < 1000; i++)
-      __asm__("nop");
+    __asm__ volatile("int $49");
   }
 
   print_serial("TLS: Receive timeout\n");

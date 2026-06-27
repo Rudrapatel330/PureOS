@@ -96,7 +96,9 @@ int fs_list_files(const char *path, FileInfo *buffer, int max_files) {
     }
     buffer[count].name[j] = 0;
     buffer[count].size = node->inode ? node->inode->size : 0;
-    buffer[count].is_dir = (node->inode && (node->inode->mode & VFS_DIRECTORY)) ? 1 : 0;
+    int is_symlink = (node->inode && (node->inode->mode & VFS_SYMLINK)) ? 1 : 0;
+    buffer[count].is_symlink = is_symlink;
+    buffer[count].is_dir = (node->inode && (node->inode->mode & VFS_DIRECTORY) && !is_symlink) ? 1 : 0;
     count++;
   }
   vfs_close(fd);

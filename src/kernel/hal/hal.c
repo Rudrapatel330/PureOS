@@ -23,7 +23,7 @@ void hal_init() {
   lapic_init();
   pic_init();
 
-  // smp_init(); // DISABLED FOR DEBUGGING TASKING GPF/BLACK SCREEN
+  smp_init(); // Re-enabled after fixing trampoline offset bug
 
   print_serial("HAL: Layer Initialized.\n");
 }

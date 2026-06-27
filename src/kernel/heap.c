@@ -5,7 +5,7 @@
 
 extern void print_serial(const char *);
 
-static spinlock_t heap_lock = {0};
+static spinlock_irq_t heap_lock = {{0}, 0};
 static uint32_t heap_used_bytes = 0; // Running counter for O(1) usage queries
 
 // Block Header
@@ -80,7 +80,7 @@ static int block_valid(block_t *b) {
 }
 
 void heap_audit() {
-  spinlock_acquire(&heap_lock);
+  spinlock_irq_acquire(&heap_lock);
   block_t *current = physical_head;
   while (current) {
     if (!block_valid(current)) {
@@ -88,7 +88,7 @@ void heap_audit() {
     }
     current = current->next;
   }
-  spinlock_release(&heap_lock);
+  spinlock_irq_release(&heap_lock);
 }
 
 // Helper: Add a FREE block to the appropriate segregated list
@@ -178,7 +178,7 @@ void *kmalloc(size_t size) {
   if (size == 0)
     return 0;
 
-  spinlock_acquire(&heap_lock);
+  spinlock_irq_acquire(&heap_lock);
 
   // Align size and account for footer canary
   // We need enough space for the user data + 4 byte canary,
@@ -228,7 +228,7 @@ void *kmalloc(size_t size) {
         *canary = BLOCK_CANARY;
 
         heap_used_bytes += current->size;
-        spinlock_release(&heap_lock);
+        spinlock_irq_release(&heap_lock);
         return (void *)((uint8_t *)current + sizeof(block_t));
       }
 
@@ -239,7 +239,7 @@ void *kmalloc(size_t size) {
   }
 
   print_serial("MALLOC FAILED: OOM\n");
-  spinlock_release(&heap_lock);
+  spinlock_irq_release(&heap_lock);
   return 0; // OOM
 }
 
@@ -310,7 +310,7 @@ void kfree(void *ptr) {
   if (!ptr)
     return;
 
-  spinlock_acquire(&heap_lock);
+  spinlock_irq_acquire(&heap_lock);
 
   // Get block header
   block_t *block = (block_t *)((uint8_t *)ptr - sizeof(block_t));
@@ -362,7 +362,7 @@ void kfree(void *ptr) {
 
   add_to_free_list(block);
 
-  spinlock_release(&heap_lock);
+  spinlock_irq_release(&heap_lock);
 }
 
 void *malloc(size_t size) { return kmalloc(size); }
@@ -393,7 +393,7 @@ static void print_serial_num(uint32_t n) {
 }
 
 void heap_stats() {
-  spinlock_acquire(&heap_lock);
+  spinlock_irq_acquire(&heap_lock);
   block_t *current = physical_head;
   uint32_t total_blocks = 0;
   uint32_t free_blocks = 0;
@@ -427,7 +427,7 @@ void heap_stats() {
     print_serial(" CORRUPTED!");
   }
   print_serial("\n");
-  spinlock_release(&heap_lock);
+  spinlock_irq_release(&heap_lock);
 }
 
 uint32_t heap_get_used_bytes() { return heap_used_bytes; }

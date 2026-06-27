@@ -1,40 +1,43 @@
 #include "task.h"
 #include "heap.h"
 #include "isr.h"
+#include "smp.h"
+#include "hal/cpu.h"
+#include "hal/atomic.h"
+#include "spinlock.h"
 #include "string.h"
 
 extern void print_serial(const char *str);
+
+// Idle task — runs when no other task is READY.
+// Its cpu_ticks represent "idle" time; sysmon uses this to compute usage.
+static void idle_task_entry(void) {
+  while (1) {
+    __asm__ volatile("sti; hlt");
+  }
+}
 extern uint32_t tick;
 
-static task_t *current_task = 0;
 static task_t *task_queue = 0;
 static int next_pid = 1;
+spinlock_t task_queue_lock;
 
 // Stack guard canary pattern
 #define STACK_GUARD_MAGIC 0xDEADBEEFCAFEBABEULL
 #define STACK_GUARD_SIZE 64 // 64 bytes of guard pattern at stack base
 
-static void task_save_fpu(task_t *t) {
-  if (!t)
-    return;
-  uintptr_t ptr = (uintptr_t)t->fpu_state;
-  ptr = (ptr + 15) & ~15;
-  __asm__ volatile("fxsave (%0)" : : "r"(ptr) : "memory");
-}
 
-static void task_restore_fpu(task_t *t) {
-  if (!t)
-    return;
-  uintptr_t ptr = (uintptr_t)t->fpu_state;
-  ptr = (ptr + 15) & ~15;
-  __asm__ volatile("fxrstor (%0)" : : "r"(ptr) : "memory");
+
+static inline task_t *get_current(void) {
+  return cpu_cores[get_core_id()].current_task;
 }
 
 void init_multitasking() {
-  // Create initial kernel task
-  current_task = (task_t *)kmalloc(sizeof(task_t));
-  memset(current_task, 0, sizeof(task_t));
-  current_task->id = next_pid++;
+  task_t *init_task = (task_t *)kmalloc(sizeof(task_t));
+  memset(init_task, 0, sizeof(task_t));
+  init_task->id = atomic_fetch_inc(&next_pid);
+  cpu_cores[0].current_task = init_task;
+  task_t *current_task = init_task;
   strcpy(current_task->name, "kernel");
   current_task->state = TASK_RUNNING;
   current_task->priority = 1;
@@ -42,9 +45,6 @@ void init_multitasking() {
   current_task->slice_remaining = 2;
   current_task->cpu_ticks = 0;
   current_task->cpu_usage_percent = 0;
-
-  // Initialize FPU state for initial task (using robust helper)
-  task_save_fpu(current_task);
 
   extern uint64_t kernel_stack_top;
   current_task->stack_base = (uint64_t)&kernel_stack_top - 64 * 1024;
@@ -63,9 +63,19 @@ void init_multitasking() {
   current_task->next = current_task;
 
   task_queue = current_task;
+
+  // Create 16 idle tasks so SMP cores always have one available
+  for (int i = 0; i < 16; i++) {
+    task_t *idle = create_task(idle_task_entry, "idle");
+    if (idle) {
+      idle->priority = 0;       // Lowest possible priority
+      idle->time_slice = 1;
+      idle->slice_remaining = 1;
+    }
+  }
 }
 
-task_t *get_current_task() { return current_task; }
+task_t *get_current_task() { return get_current(); }
 
 task_t *create_task(void (*entry)(), char *name) {
   task_t *t = (task_t *)kmalloc(sizeof(task_t));
@@ -76,13 +86,13 @@ task_t *create_task(void (*entry)(), char *name) {
     return 0;
   }
 
-  t->id = next_pid++;
+  t->id = atomic_fetch_inc(&next_pid);
   strcpy(t->name, name);
   t->state = TASK_READY;
   memset(t->files, 0, sizeof(t->files));
 
-  // Allocate 512KB stack
-  uint32_t stack_size = 512 * 1024;
+  // Allocate 2MB stack for tasks (MuPDF is very stack heavy)
+  uint32_t stack_size = 2 * 1024 * 1024;
   uint64_t stack_phys = (uint64_t)kmalloc(stack_size + 16);
   if (!stack_phys) {
     print_serial("TASK: Failed to allocate stack for '");
@@ -124,8 +134,9 @@ task_t *create_task(void (*entry)(), char *name) {
   t->cpu_ticks = 0;
   t->cpu_usage_percent = 0;
 
-  // Initialize FPU state (using robust helper)
-  task_save_fpu(t);
+  // Initialize FPU state for ISR restore
+  uintptr_t fpu_area = (rsp - 512) & ~15;
+  __asm__ volatile("fxsave (%0)" : : "r"(fpu_area) : "memory");
 
   // Run as root by default
   t->uid = 0;
@@ -139,47 +150,70 @@ task_t *create_task(void (*entry)(), char *name) {
   spinlock_irq_init(&t->msg_queue.lock);
 
   __asm__ volatile("cli");
-  t->next = current_task->next;
-  current_task->next = t;
+  spinlock_acquire(&task_queue_lock);
+  task_t *cur = get_current();
+  t->next = cur->next;
+  cur->next = t;
+  spinlock_release(&task_queue_lock);
   __asm__ volatile("sti");
 
   print_serial("Task '");
   print_serial(name);
   print_serial("' linked. List order: ");
-  task_t *tmp = current_task;
+  task_t *tmp = cur;
   do {
     print_serial(tmp->name);
     print_serial(" -> ");
     tmp = tmp->next;
-  } while (tmp != current_task);
+  } while (tmp != cur);
   print_serial("DONE\n");
 
   return t;
 }
 
 uint64_t task_switch(uint64_t current_rsp) {
-  if (!current_task)
+  int this_core = get_core_id();
+  task_t *current_task = cpu_cores[this_core].current_task;
+
+  if (!current_task) {
+    spinlock_acquire(&task_queue_lock);
+    task_t *next = task_queue;
+    if (next) {
+      task_t *start = next;
+      do {
+        if (next->state == TASK_READY) {
+          next->state = TASK_RUNNING;
+          cpu_cores[this_core].current_task = next;
+          spinlock_release(&task_queue_lock);
+          extern void tss_set_stack_cpu(int cpu_num, uint64_t rsp0);
+          tss_set_stack_cpu(this_core, next->stack_base + 128 * 1024);
+          cpu_state[this_core].kernel_stack = next->stack_base + 128 * 1024;
+          if (next->pagedir) {
+            switch_page_directory(next->pagedir);
+          }
+          return next->rsp;
+        }
+        next = next->next;
+      } while (next != start);
+    }
+    spinlock_release(&task_queue_lock);
     return current_rsp;
+  }
 
   current_task->rsp = current_rsp;
 
+  spinlock_acquire(&task_queue_lock);
+
   // --- Reaper: Clean up ZOMBIE tasks ---
-  // A task might have called exit() and become a ZOMBIE. We reap it here
-  // because we are guaranteed not to be running on its stack.
   task_t *prev = current_task;
   task_t *t_reap = current_task->next;
   while (t_reap != current_task) {
     task_t *next_reap = t_reap->next;
     if (t_reap->state == TASK_ZOMBIE) {
       prev->next = next_reap;
-
-      // Update task_queue if it was pointing to the reaped task
-      extern task_t *task_queue;
       if (task_queue == t_reap) {
         task_queue = next_reap;
       }
-
-      // Free the stack and task structure
       if (t_reap->stack_base) {
         kfree((void *)t_reap->stack_base);
       }
@@ -191,93 +225,91 @@ uint64_t task_switch(uint64_t current_rsp) {
   }
 
   // --- Fair Priority Scheduling ---
-  // 1. Decrement current task's time slice
   if (current_task->slice_remaining > 0)
     current_task->slice_remaining--;
 
-  // 2. Find the highest priority among all runnable tasks
   int highest_prio = -1;
   task_t *t = current_task->next;
   do {
-    if (t->state == TASK_READY || t->state == TASK_RUNNING) {
+    if (t->state == TASK_READY) {
       if ((int)t->priority > highest_prio)
         highest_prio = t->priority;
     }
     t = t->next;
   } while (t != current_task->next);
 
-  // Include current task's priority
   if ((current_task->state == TASK_RUNNING) &&
       (int)current_task->priority > highest_prio)
     highest_prio = current_task->priority;
 
-  // 3. If current task still has slice left AND is at highest priority, stay
   if (current_task->state == TASK_RUNNING &&
       current_task->slice_remaining > 0 &&
       (int)current_task->priority >= highest_prio) {
+    spinlock_release(&task_queue_lock);
     return current_task->rsp;
   }
 
-  // 4. Find next runnable task at highest priority (round-robin from current)
   task_t *next_task = 0;
   t = current_task->next;
   do {
-    if ((t->state == TASK_READY || t->state == TASK_RUNNING) &&
-        (int)t->priority == highest_prio) {
-      // Prefer tasks that still have slice remaining
+    if (t->state == TASK_READY && (int)t->priority == highest_prio) {
       if (t->slice_remaining > 0) {
         next_task = t;
         break;
       }
-      // Otherwise, remember first candidate for slice reset
       if (!next_task)
         next_task = t;
     }
     t = t->next;
   } while (t != current_task->next);
 
-  // 5. If all tasks at this priority exhausted their slices, reset them all
   if (next_task && next_task->slice_remaining == 0) {
     t = current_task->next;
     do {
-      if ((t->state == TASK_READY || t->state == TASK_RUNNING) &&
-          (int)t->priority == highest_prio) {
+      if (t->state == TASK_READY && (int)t->priority == highest_prio) {
         t->slice_remaining = t->time_slice;
       }
       t = t->next;
     } while (t != current_task->next);
-    // Also reset current if same priority
     if ((int)current_task->priority == highest_prio &&
         current_task->state == TASK_RUNNING)
       current_task->slice_remaining = current_task->time_slice;
   }
 
   if (!next_task) {
-    if (current_task->state == TASK_READY ||
-        current_task->state == TASK_RUNNING) {
-      next_task = current_task; // Fallback: stay on current
+    if (current_task->state == TASK_RUNNING) {
+      next_task = current_task;
     } else {
-      // Current task is not runnable (STOPPED or ZOMBIE).
-      // Find ANY ready task in the queue, starting from task_queue (kernel).
       t = task_queue;
-      do {
-        if (t->state == TASK_READY || t->state == TASK_RUNNING) {
-          next_task = t;
-          break;
+      if (t) {
+        task_t *start = t;
+        do {
+          if (t->state == TASK_READY) {
+            next_task = t;
+            break;
+          }
+          t = t->next;
+        } while (t != start);
+      }
+      if (!next_task) {
+        t = task_queue;
+        if (t) {
+          task_t *start = t;
+          do {
+            if (t->state == TASK_READY) {
+              next_task = t;
+              break;
+            }
+            t = t->next;
+          } while (t != start);
         }
-        t = t->next;
-      } while (t != task_queue);
-
-      if (!next_task)
-        next_task = task_queue; // Absolute fallback
+        // If we still didn't find one, we are in trouble. 
+        // But with 16 idle tasks, we should always find one.
+      }
     }
   }
 
-  // 6. Perform the switch
-  if (next_task != current_task) {
-    // Save current FPU state (Robust wrapper)
-    task_save_fpu(current_task);
-
+  if (next_task && next_task != current_task) {
     if (current_task->state == TASK_RUNNING) {
       current_task->state = TASK_READY;
     }
@@ -285,21 +317,21 @@ uint64_t task_switch(uint64_t current_rsp) {
     current_task = next_task;
     current_task->state = TASK_RUNNING;
 
-    // Restore next FPU state (Robust wrapper)
-    task_restore_fpu(current_task);
+    cpu_cores[this_core].current_task = current_task;
 
-    extern void tss_set_stack(uint64_t rsp0);
-    tss_set_stack(current_task->stack_base + 128 * 1024);
+    extern void tss_set_stack_cpu(int cpu_num, uint64_t rsp0);
+    tss_set_stack_cpu(this_core, current_task->stack_base + 128 * 1024);
+    cpu_state[this_core].kernel_stack = current_task->stack_base + 128 * 1024;
 
     if (current_task->pagedir) {
       switch_page_directory(current_task->pagedir);
     }
   } else {
-    // Staying on current — reset slice if exhausted
     if (current_task->slice_remaining == 0)
       current_task->slice_remaining = current_task->time_slice;
   }
 
+  spinlock_release(&task_queue_lock);
   return current_task->rsp;
 }
 
@@ -331,7 +363,7 @@ void jump_to_user_mode(uint64_t rip) {
 
 task_t *create_user_process(const char *name, void *entry) {
   task_t *t = (task_t *)kmalloc(sizeof(task_t));
-  t->id = next_pid++;
+  t->id = atomic_fetch_inc(&next_pid);
   strcpy(t->name, (char *)name);
   t->state = TASK_READY;
   t->is_user = 1;
@@ -380,9 +412,9 @@ task_t *create_user_process(const char *name, void *entry) {
   t->cpu_ticks = 0;
   t->cpu_usage_percent = 0;
 
-  // Initialize FPU state on the new task structure (fpu_state is guaranteed
-  // 16-byte aligned)
-  __asm__ volatile("fxsave (%0)" : : "r"(t->fpu_state) : "memory");
+  // Initialize FPU state for ISR restore
+  uintptr_t fpu_area = (rsp - 512) & ~15;
+  __asm__ volatile("fxsave (%0)" : : "r"(fpu_area) : "memory");
 
   t->uid = 1000; // User ID
 
@@ -391,7 +423,7 @@ task_t *create_user_process(const char *name, void *entry) {
 
 int task_fork(registers_t *regs) {
   __asm__ volatile("cli");
-  task_t *parent = current_task;
+  task_t *parent = get_current();
 
   // 1. Deep copy page directory
   pml4_table_t *child_pml4 = copy_page_directory(parent->pagedir);
@@ -399,7 +431,7 @@ int task_fork(registers_t *regs) {
   // 2. Create new task structure
   task_t *child = (task_t *)kmalloc(sizeof(task_t));
   memset(child, 0, sizeof(task_t));
-  child->id = next_pid++;
+  child->id = atomic_fetch_inc(&next_pid);
   strcpy(child->name, parent->name);
   strcat(child->name, "_child");
   child->pagedir = child_pml4;
@@ -434,8 +466,11 @@ int task_fork(registers_t *regs) {
   child_regs->rax = 0; // Return 0 in child
 
   // 5. Link to queue
-  child->next = current_task->next;
-  current_task->next = child;
+  spinlock_acquire(&task_queue_lock);
+  task_t *cur_fork = get_current();
+  child->next = cur_fork->next;
+  cur_fork->next = child;
+  spinlock_release(&task_queue_lock);
 
   __asm__ volatile("sti");
   return child->id; // Return child PID in parent
@@ -462,18 +497,19 @@ void task_set_priority(int pid, int priority) {
 
 void exit(int exit_code) {
   __asm__ volatile("cli");
-  if (current_task) {
+  task_t *cur_exit = get_current();
+  if (cur_exit) {
     extern void vfs_close_all_fds(void **files);
-    vfs_close_all_fds(current_task->files);
-    current_task->state = TASK_ZOMBIE;
+    vfs_close_all_fds(cur_exit->files);
+    cur_exit->state = TASK_ZOMBIE;
     print_serial(" [TASK EXIT: ");
-    print_serial(current_task->name);
+    print_serial(cur_exit->name);
     print_serial("] ");
   }
   __asm__ volatile("sti");
 
   // Force a switch immediately
-  __asm__ volatile("int $32");
+  __asm__ volatile("int $49");
 
   while (1)
     __asm__ volatile("hlt");
@@ -481,6 +517,7 @@ void exit(int exit_code) {
 
 void task_kill(int pid) {
   __asm__ volatile("cli");
+  task_t *cur_kill = get_current();
   task_t *t = task_queue;
   if (!t) {
     __asm__ volatile("sti");
@@ -489,7 +526,7 @@ void task_kill(int pid) {
 
   do {
     if (t->id == pid) {
-      if (t == current_task) {
+      if (t == cur_kill) {
         __asm__ volatile("sti");
         exit(0);
         return;
@@ -510,7 +547,7 @@ void task_kill(int pid) {
 #include "elf.h"
 
 int task_execve(const char *path, registers_t *regs) {
-  task_t *t = current_task;
+  task_t *t = get_current();
 
   // 1. Clear current user address space
   // For now, let's just create a fresh one
@@ -624,10 +661,11 @@ int msg_send_to_name(const char *name, msg_t *msg) {
 }
 
 int msg_receive(msg_t *msg) {
-  if (!current_task || !msg)
+  task_t *cur_recv = get_current();
+  if (!cur_recv || !msg)
     return -1;
 
-  msg_queue_t *q = &current_task->msg_queue;
+  msg_queue_t *q = &cur_recv->msg_queue;
   spinlock_irq_acquire(&q->lock);
 
   if (q->head == q->tail) {
@@ -644,10 +682,11 @@ int msg_receive(msg_t *msg) {
 }
 
 int msg_peek(msg_t *msg) {
-  if (!current_task || !msg)
+  task_t *cur_peek = get_current();
+  if (!cur_peek || !msg)
     return -1;
 
-  msg_queue_t *q = &current_task->msg_queue;
+  msg_queue_t *q = &cur_peek->msg_queue;
   spinlock_irq_acquire(&q->lock);
 
   if (q->head == q->tail) {
@@ -679,20 +718,37 @@ int task_check_stack(task_t *t) {
 }
 
 uint32_t task_get_uid(void) {
-  if (current_task)
-    return current_task->uid;
-  return 0; // Default to root
+  task_t *cur = get_current();
+  if (cur)
+    return cur->uid;
+  return 0;
 }
 
 uint32_t task_get_gid(void) {
-  if (current_task)
-    return current_task->gid;
-  return 0; // Default to root
+  task_t *cur = get_current();
+  if (cur)
+    return cur->gid;
+  return 0;
 }
 
-void print_cpu_stats(void) {
-  if (!task_queue)
+void task_set_uid(uint32_t uid) {
+  task_t *cur = get_current();
+  if (cur)
+    cur->uid = uid;
+}
+
+void task_set_gid(uint32_t gid) {
+  task_t *cur = get_current();
+  if (cur)
+    cur->gid = gid;
+}
+
+void update_cpu_stats(void) {
+  spinlock_acquire(&task_queue_lock);
+  if (!task_queue) {
+    spinlock_release(&task_queue_lock);
     return;
+  }
   uint64_t total_ticks = 0;
   task_t *t = task_queue;
   do {
@@ -700,34 +756,36 @@ void print_cpu_stats(void) {
     t = t->next;
   } while (t != task_queue);
 
-  if (total_ticks == 0)
+  if (total_ticks == 0) {
+    spinlock_release(&task_queue_lock);
     return;
+  }
 
-  print_serial("--- CPU Profile ---\n");
   t = task_queue;
   do {
     int pct = (t->cpu_ticks * 100) / total_ticks;
     t->cpu_usage_percent = pct;
-
-    if (pct > 0 || strcmp(t->name, "kernel") == 0) {
-      char buf[32];
-      print_serial("[");
-      extern void k_itoa(int, char *);
-      k_itoa(t->id, buf);
-      print_serial(buf);
-      print_serial("] ");
-      print_serial(t->name);
-      print_serial(": ");
-      k_itoa(pct, buf);
-      print_serial(buf);
-      print_serial("% (");
-      k_itoa((int)t->cpu_ticks, buf);
-      print_serial(buf);
-      print_serial(" ticks)\n");
-    }
-
     t->cpu_ticks = 0; // reset for next window
     t = t->next;
   } while (t != task_queue);
-  print_serial("-------------------\n");
+  
+  spinlock_release(&task_queue_lock);
+}
+
+uint32_t get_idle_cpu_usage(void) {
+  spinlock_acquire(&task_queue_lock);
+  if (!task_queue) {
+    spinlock_release(&task_queue_lock);
+    return 0;
+  }
+  uint32_t idle_sum = 0;
+  task_t *t = task_queue;
+  do {
+    if (strcmp(t->name, "idle") == 0) {
+      idle_sum += t->cpu_usage_percent;
+    }
+    t = t->next;
+  } while (t != task_queue);
+  spinlock_release(&task_queue_lock);
+  return idle_sum;
 }

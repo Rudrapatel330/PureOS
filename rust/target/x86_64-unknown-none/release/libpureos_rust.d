@@ -1,0 +1,1 @@
+D:\1os-copy\backup\1os\rust\target\x86_64-unknown-none\release\libpureos_rust.a: D:\1os-copy\backup\1os\rust\src\ehci.rs D:\1os-copy\backup\1os\rust\src\heap.rs D:\1os-copy\backup\1os\rust\src\lib.rs D:\1os-copy\backup\1os\rust\src\usb_ffi.rs

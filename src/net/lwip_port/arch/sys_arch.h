@@ -21,6 +21,7 @@ typedef struct sys_mbox_t {
     volatile int head;
     volatile int tail;
     sys_sem_t sem;
+    volatile int lock;
 } *sys_mbox_t;
 
 typedef void * sys_thread_t;

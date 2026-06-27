@@ -45,4 +45,9 @@ extern int disable_animations;
 extern int magnifier_enabled;
 extern float magnifier_scale;
 
+extern int in_cube_mode;
+extern float cube_angle;
+void compositor_handle_cube_drag(int mx, int my, int dx, int dy, int btns);
+void compositor_create_cube_buffers(void);
+
 #endif

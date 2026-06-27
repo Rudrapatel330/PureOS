@@ -179,7 +179,12 @@ void pci_check_device(uint8_t bus, uint8_t device, uint8_t function) {
         ohci_init(bar0 & 0xFFFFFFF0);
       }
     } else if (progIF == 0x20) { // EHCI
-      print_serial(" [USB EHCI Controller DETECTED - (High Speed but NO DRIVER)]");
+      print_serial(" [USB EHCI Controller DETECTED (Rust)]");
+      uint32_t bar0 = pci_config_read_dword(bus, device, function, 0x10);
+      if (!(bar0 & 1)) { // Memory-mapped
+        extern void ehci_init(uintptr_t bar0, uint8_t bus, uint8_t slot, uint8_t func);
+        ehci_init(bar0 & 0xFFFFFFF0, bus, device, function);
+      }
     }
   }
 

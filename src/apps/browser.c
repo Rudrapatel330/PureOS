@@ -1235,8 +1235,12 @@ static void browser_mouse_cb(void *w, int mx, int my, int buttons) {
   int doc_x = mx - content_x_off;
   int doc_y = my - content_top_off + scroll_y;
 
+  __asm__ volatile("cli");
+  int is_updating = browser_updating;
+  __asm__ volatile("sti");
+
   // Hover state update (CSS :hover, :focus)
-  if (litehtml_engine && doc_y >= 0) {
+  if (!is_updating && litehtml_engine && doc_y >= 0) {
       static int last_hover_x = -1000;
       static int last_hover_y = -1000;
       int dx = doc_x - last_hover_x;
@@ -1269,7 +1273,7 @@ static void browser_mouse_cb(void *w, int mx, int my, int buttons) {
   }
 
   // Forward click into litehtml (JS event dispatch + :active + <a> handling)
-  if (litehtml_engine && doc_y >= 0) {
+  if (!is_updating && litehtml_engine && doc_y >= 0) {
       browser_engine_on_click(litehtml_engine, doc_x, doc_y);
       ui_dirty = 1;
       win->needs_redraw = 1;
@@ -1346,12 +1350,41 @@ void js_request_rerender(void) {
   __asm__ volatile("sti");
 }
 
+// Background task that performs heavy browser engine initialization
+static void browser_init_task(void) {
+  print_serial("BROWSER: Background init task starting...\n");
+
+  // Heavy operation 1: Initialize Duktape JS engine
+  js_init();
+  print_serial("BROWSER: JS init done\n");
+
+  // Heavy operation 2: Set home page content and parse with litehtml
+  browser_set_home();
+  print_serial("BROWSER: Home set, parsing...\n");
+  browser_parse_html();
+  print_serial("BROWSER: Parse done, ready\n");
+  backing_store_dirty = 1;
+  is_loading = 0;
+  strcpy(status_text, "Ready");
+
+  __asm__ volatile("cli");
+  browser_updating = 0;
+  __asm__ volatile("sti");
+
+  if (browser_win)
+    browser_win->needs_redraw = 1;
+  ui_dirty = 1;
+
+  extern void exit(int status);
+  exit(0);
+}
+
 void browser_init(void) {
   print_serial("BROWSER: Starting init...\n");
   is_loading = 0;
-  js_init();
   anim_init_val(&scroll_anim, 0.0f);
-  print_serial("BROWSER: JS init done\n");
+
+  // Create window immediately (lightweight) so UI stays responsive
   browser_win = winmgr_create_window(-1, -1, 1000, 700, "PureBrowser");
   print_serial("BROWSER: Window created\n");
   if (!browser_win)
@@ -1367,9 +1400,17 @@ void browser_init(void) {
   // Enable modern custom frameless UI
   win->flags |= 0x01; // WINDOW_FLAG_NO_TITLEBAR
   win->needs_redraw = 1;
-  browser_set_home();
-  print_serial("BROWSER: Home set, parsing...\n");
-  browser_parse_html();
-  print_serial("BROWSER: Parse done, ready\n");
+
+  // Show loading state while heavy init happens in background
+  strcpy(status_text, "Initializing browser engine...");
+  is_loading = 1;
+  __asm__ volatile("cli");
+  browser_updating = 1;
+  __asm__ volatile("sti");
   ui_dirty = 1;
+
+  // Offload heavy litehtml/Duktape init to a background task
+  extern void* create_task(void (*entry)(), char *name);
+  create_task(browser_init_task, "BrowserInit");
+  print_serial("BROWSER: Init task spawned, returning to caller\n");
 }

@@ -9,8 +9,11 @@ trampoline_start:
 
 align 8
     ap_pml4_ptr:         dd 0
+align 8
     ap_stack_ptr:        dq 0
+align 8
     ap_kernel_ptr:       dq 0
+align 8
     ap_num:              dd 0
 
 entry16:
@@ -40,9 +43,9 @@ ap_pm_entry:
     mov es, ax
     mov ss, ax
 
-    ; Enable PAE
+    ; Enable PAE (+ SSE/SSE2)
     mov eax, cr4
-    or eax, 0x20
+    or eax, 0x620    ; PAE(5) | OSFXSR(9) | OSXMMEXCPT(10)
     mov cr4, eax
 
     ; Load CR3 (PML4 address)
@@ -76,6 +79,9 @@ ap_long_mode_entry:
     ; Load stack pointer
     mov rsp, [0x8000 + (ap_stack_ptr - trampoline_start)]
     mov rbp, rsp
+
+    ; Load CPU number into first argument (rdi) for ap_kernel_entry_common(cpu_num)
+    mov rdi, [0x8000 + (ap_num - trampoline_start)]
 
     ; Jump to C entry point (64-bit)
     mov rax, [0x8000 + (ap_kernel_ptr - trampoline_start)]

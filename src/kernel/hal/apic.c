@@ -33,7 +33,7 @@ void lapic_init(void) {
   }
 
   print_serial("APIC: Initializing Local APIC...\n");
-  // disable_pic(); // Keep PIC enabled for keyboard/timer until IOAPIC is ready
+  // PIC will be disabled after IOAPIC is ready
 
   // Enable APIC via Spurious Interrupt Vector Register
   // Set spurious interrupt vector to 0xFF, and set the APIC Enable bit (bit 8)
@@ -42,8 +42,8 @@ void lapic_init(void) {
   // Configure timer to mask (we'll keep using PIT or APIC timer later)
   lapic_write(LAPIC_LVT_TIMER, 0x10000); // masked
 
-  // Configure LINT0 as ExtINT for Virtual Wire Mode (PIC pass-through)
-  lapic_write(LAPIC_LVT_LINT0, 0x700); // 0x700 = ExtINT, not masked
+  // Mask LINT0 since we are using IOAPIC for legacy interrupts
+  lapic_write(LAPIC_LVT_LINT0, 0x10000); // Masked
   lapic_write(LAPIC_LVT_LINT1, 0x400); // NMI
 
   // Mask Error Register
@@ -60,6 +60,33 @@ void lapic_init(void) {
   lapic_write(LAPIC_TPR, 0);
 
   print_serial("APIC: Local APIC Initialized & Enabled\n");
+
+  extern uint32_t io_apic_phys_addr;
+  if (io_apic_phys_addr) {
+    print_serial("APIC: Initializing IOAPIC...\n");
+    volatile uint32_t *ioapic = (volatile uint32_t *)(uintptr_t)io_apic_phys_addr;
+    
+    // Helper to write to IOAPIC
+    void ioapic_write(uint8_t reg, uint32_t data) {
+      ioapic[0] = (reg & 0xFF);
+      ioapic[4] = data;
+    }
+    
+    // Route GSI 2 (PIT) to vector 32 on BSP
+    ioapic_write(0x10 + 2 * 2 + 1, ((uint32_t)cpus[0].apic_id) << 24);
+    ioapic_write(0x10 + 2 * 2, 32); 
+    
+    // Route GSI 1 (Keyboard) to vector 33 on BSP
+    ioapic_write(0x10 + 1 * 2 + 1, ((uint32_t)cpus[0].apic_id) << 24);
+    ioapic_write(0x10 + 1 * 2, 33);
+
+    // Route GSI 12 (Mouse) to vector 44 on BSP
+    ioapic_write(0x10 + 12 * 2 + 1, ((uint32_t)cpus[0].apic_id) << 24);
+    ioapic_write(0x10 + 12 * 2, 44);
+
+    print_serial("APIC: IOAPIC configured, disabling legacy PIC.\n");
+    disable_pic();
+  }
 }
 
 void lapic_send_ipi(uint8_t target_apic_id, uint32_t flags) {

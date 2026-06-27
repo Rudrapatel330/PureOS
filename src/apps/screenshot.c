@@ -96,7 +96,7 @@ void screenshot_init() {
   if (!win)
     return;
 
-  screenshot_app_t *app = (screenshot_app_t *)malloc(sizeof(screenshot_app_t));
+  screenshot_app_t *app = (screenshot_app_t *)kmalloc(sizeof(screenshot_app_t));
   memset(app, 0, sizeof(screenshot_app_t));
   strcpy(app->status, "Ready.");
 

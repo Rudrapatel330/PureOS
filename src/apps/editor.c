@@ -668,7 +668,7 @@ void editor_thread_entry(void) {
       }
     } else {
       if (self) self->state = TASK_STOPPED;
-      __asm__ volatile("int $32");
+      __asm__ volatile("int $49");
     }
   }
 
@@ -717,7 +717,10 @@ void editor_init(void) {
   win->on_close = editor_on_close;
   win->needs_redraw = 1;
 
-  create_task(editor_thread_entry, "Editor");
+  task_t *t = create_task(editor_thread_entry, "Editor");
+  if (t) {
+    win->owner_pid = t->id;
+  }
 }
 
 /* ======================== FILE OPEN ======================== */
@@ -726,12 +729,35 @@ void editor_open_internal(window_t *win, const char *filename) {
   editor_app_t *ed = get_editor(win);
   if (!ed || !filename || filename[0] == 0) return;
 
+  // Store the full path
   int i = 0;
-  while (filename[i] && i < 127) { ed->filename[i] = filename[i]; i++; }
-  ed->filename[i] = 0;
+  while (filename[i] && i < 127) { ed->full_path[i] = filename[i]; i++; }
+  ed->full_path[i] = 0;
+
+  // Also set filename to the full path (used by save)
+  strcpy(ed->filename, ed->full_path);
+
+  // Update current_dir from the path
+  strcpy(ed->current_dir, ed->full_path);
+  int last_slash = -1;
+  for (int k = 0; ed->current_dir[k]; k++) {
+    if (ed->current_dir[k] == '/') last_slash = k;
+  }
+  if (last_slash > 0) ed->current_dir[last_slash] = 0;
+  else strcpy(ed->current_dir, "/");
+
+  print_serial("EDITOR: Opening file '");
+  print_serial(ed->full_path);
+  print_serial("'\n");
 
   ed_read_buf[0] = 0;
-  int bytes = fs_read(ed->filename, ed_read_buf);
+  int bytes = fs_read(ed->full_path, ed_read_buf);
+
+  print_serial("EDITOR: Read ");
+  char nbuf[16]; k_itoa(bytes, nbuf);
+  print_serial(nbuf);
+  print_serial(" bytes\n");
+
   spinlock_irq_acquire(&ed->lock);
   if (bytes > 0 && bytes <= 8192) {
     if (bytes > 8191) bytes = 8191;
@@ -742,6 +768,8 @@ void editor_open_internal(window_t *win, const char *filename) {
     ed->buffer[0] = 0;
     ed->cursor_pos = 0;
   }
+  ed->scroll_y = 0;
+  ed->selected_all = 0;
   spinlock_irq_release(&ed->lock);
 
   ui_dirty = 1;

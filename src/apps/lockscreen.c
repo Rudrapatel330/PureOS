@@ -372,17 +372,23 @@ static void ls_render_wallpaper(uint32_t *buf) {
 
   print_serial("LS: Attempting to load wallpaper...\n");
 
-  // Try multiple possible paths for the wallpaper
-  // Note: bulk_upload_icons.py uploads to the root of the data disk
-  const char *paths[] = {"/WALL4.JPG", "WALL4.JPG", "/WALLPAPER/WALL4.JPG", "/wallpaper/wall4.jpg", "wall4.jpg"};
-  file_entry_t *fe = NULL;
-  for (int i = 0; i < 5; i++) {
-    fe = fs_find(paths[i]);
+  char wp_path[32] = "/WALL1.JPG";
+  char idx_str[4];
+  extern void k_itoa(int num, char *str);
+  k_itoa(global_config.wallpaper_index + 1, idx_str);
+  wp_path[5] = idx_str[0]; // /WALLX.JPG
+
+  file_entry_t *fe = fs_find(wp_path);
+  if (fe) {
+    print_serial("LS: Found wallpaper at ");
+    print_serial(wp_path);
+    print_serial("\n");
+  } else {
+    fe = fs_find(wp_path + 1);
     if (fe) {
       print_serial("LS: Found wallpaper at ");
-      print_serial(paths[i]);
+      print_serial(wp_path + 1);
       print_serial("\n");
-      break;
     }
   }
   
@@ -396,29 +402,37 @@ static void ls_render_wallpaper(uint32_t *buf) {
         unsigned char *pixels = stbi_load_from_memory(raw, fe->size, &bw, &bh, &channels, 4);
         if (pixels) {
           print_serial("LS: Image decoded successfully. Rendering...\n");
+          
           for (int sy = 0; sy < screen_height; sy++) {
             for (int sx = 0; sx < screen_width; sx++) {
-              int gx = (sx * bw << 8) / screen_width;
-              int gy = (sy * bh << 8) / screen_height;
+              int gx = (int)(((uint64_t)sx * (uint64_t)bw << 8) / screen_width);
+              int gy = (int)(((uint64_t)sy * (uint64_t)bh << 8) / screen_height);
+
               int bx = gx >> 8;
               int by = gy >> 8;
+
               if (bx >= bw - 1) bx = bw - 2;
               if (by >= bh - 1) by = bh - 2;
               if (bx < 0) bx = 0;
               if (by < 0) by = 0;
+
               int dx = gx & 0xFF;
               int dy = gy & 0xFF;
+
               const uint8_t *p00 = pixels + (by * bw + bx) * 4;
               const uint8_t *p10 = p00 + 4;
               const uint8_t *p01 = pixels + ((by + 1) * bw + bx) * 4;
               const uint8_t *p11 = p01 + 4;
+
               int w00 = (256 - dx) * (256 - dy);
               int w10 = dx * (256 - dy);
               int w01 = (256 - dx) * dy;
               int w11 = dx * dy;
+
               uint8_t r = (p00[0] * w00 + p10[0] * w10 + p01[0] * w01 + p11[0] * w11) >> 16;
               uint8_t g = (p00[1] * w00 + p10[1] * w10 + p01[1] * w01 + p11[1] * w11) >> 16;
               uint8_t b = (p00[2] * w00 + p10[2] * w10 + p01[2] * w01 + p11[2] * w11) >> 16;
+
               buf[sy * screen_width + sx] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
           }
@@ -450,8 +464,8 @@ static void ls_render_wallpaper(uint32_t *buf) {
       print_serial("LS: PNG Decoded. Rendering to backbuffer...\n");
       for (int sy = 0; sy < screen_height; sy++) {
         for (int sx = 0; sx < screen_width; sx++) {
-          int gx = (sx * bw << 8) / screen_width;
-          int gy = (sy * bh << 8) / screen_height;
+          int gx = (int)(((uint64_t)sx * (uint64_t)bw << 8) / screen_width);
+          int gy = (int)(((uint64_t)sy * (uint64_t)bh << 8) / screen_height);
 
           int bx = gx >> 8;
           int by = gy >> 8;
@@ -506,8 +520,8 @@ static void ls_render_wallpaper(uint32_t *buf) {
       const uint8_t *pixels = bmp + poff;
       for (int sy = 0; sy < screen_height; sy++) {
         for (int sx = 0; sx < screen_width; sx++) {
-          int gx = (sx * bw << 8) / screen_width;
-          int gy = (sy * bh << 8) / screen_height;
+          int gx = (int)(((uint64_t)sx * (uint64_t)bw << 8) / screen_width);
+          int gy = (int)(((uint64_t)sy * (uint64_t)bh << 8) / screen_height);
 
           int bx = gx >> 8;
           int by = bh - 1 - (gy >> 8);

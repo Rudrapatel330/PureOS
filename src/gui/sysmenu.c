@@ -434,29 +434,16 @@ void sysmenu_draw(uint32_t *buffer, rect_t clip) {
     sysmenu_render_to_cache();
 
   int cy = (int)anim_y.current_val;
-  int start_y = (cy > clip.y) ? cy : clip.y;
-  int end_y = (cy + PANEL_H < clip.y + clip.h) ? (cy + PANEL_H)
-                                                 : (clip.y + clip.h);
-  if (start_y >= end_y) return;
-
-  for (int y = start_y; y < end_y; y++) {
-    int src_y = y - cy;
-    if (src_y < 0 || src_y >= PANEL_H) continue;
-
-    int start_x = (panel_x > clip.x) ? panel_x : clip.x;
-    int end_x = (panel_x + PANEL_W < clip.x + clip.w)
-                    ? (panel_x + PANEL_W) : (clip.x + clip.w);
-
-    int dst_off = y * screen_width;
-    int src_off = src_y * PANEL_W;
-
-    for (int x = start_x; x < end_x; x++) {
-      int sx = x - panel_x;
-      if (sx < 0 || sx >= PANEL_W) continue;
-      uint32_t px = sysmenu_surface[src_off + sx];
-      if ((px >> 24) > 0)
-        buffer[dst_off + x] = px;
-    }
+  rect_t sys_r = {panel_x, cy, PANEL_W, PANEL_H};
+  rect_t overlap;
+  if (rect_intersect(clip, sys_r, &overlap)) {
+    extern void gfx_blend_rect(uint32_t *dst, uint32_t *src, uint8_t global_alpha,
+                               int w, int h, int dst_pitch, int src_pitch);
+    int surf_off_x = overlap.x - sys_r.x;
+    int surf_off_y = overlap.y - sys_r.y;
+    uint32_t *src_start = &sysmenu_surface[surf_off_y * PANEL_W + surf_off_x];
+    uint32_t *dst_start = &buffer[overlap.y * screen_width + overlap.x];
+    gfx_blend_rect(dst_start, src_start, 255, overlap.w, overlap.h, screen_width, PANEL_W);
   }
 }
 

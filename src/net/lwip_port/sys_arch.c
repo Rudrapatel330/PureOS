@@ -9,7 +9,7 @@ extern uint64_t get_timer_ms_hires();
 extern void print_serial(const char *);
 
 static void yield(void) {
-    __asm__ volatile("int $32");
+    __asm__ volatile("int $49");
 }
 
 u32_t sys_now(void) {
@@ -103,6 +103,7 @@ err_t sys_mbox_new(sys_mbox_t *mbox, int size) {
     (*mbox)->head = 0;
     (*mbox)->tail = 0;
     (*mbox)->messages = (void**)kmalloc(sizeof(void*) * size);
+    (*mbox)->lock = 0;
     
     sys_sem_new(&((*mbox)->sem), 0);
     
@@ -119,23 +120,31 @@ void sys_mbox_free(sys_mbox_t *mbox) {
 }
 
 void sys_mbox_post(sys_mbox_t *mbox, void *msg) {
-    while ((((*mbox)->head + 1) % (*mbox)->size) == (*mbox)->tail) {
-        yield(); 
+    while (1) {
+        while (__atomic_test_and_set(&((*mbox)->lock), __ATOMIC_ACQUIRE)) yield();
+        if ((((*mbox)->head + 1) % (*mbox)->size) == (*mbox)->tail) {
+            __atomic_clear(&((*mbox)->lock), __ATOMIC_RELEASE);
+            yield();
+        } else {
+            (*mbox)->messages[(*mbox)->head] = msg;
+            (*mbox)->head = ((*mbox)->head + 1) % (*mbox)->size;
+            __atomic_clear(&((*mbox)->lock), __ATOMIC_RELEASE);
+            sys_sem_signal(&((*mbox)->sem));
+            break;
+        }
     }
-    
-    (*mbox)->messages[(*mbox)->head] = msg;
-    (*mbox)->head = ((*mbox)->head + 1) % (*mbox)->size;
-    
-    sys_sem_signal(&((*mbox)->sem));
 }
 
 err_t sys_mbox_trypost(sys_mbox_t *mbox, void *msg) {
+    while (__atomic_test_and_set(&((*mbox)->lock), __ATOMIC_ACQUIRE)) yield();
     if ((((*mbox)->head + 1) % (*mbox)->size) == (*mbox)->tail) {
+        __atomic_clear(&((*mbox)->lock), __ATOMIC_RELEASE);
         return ERR_MEM;
     }
     
     (*mbox)->messages[(*mbox)->head] = msg;
     (*mbox)->head = ((*mbox)->head + 1) % (*mbox)->size;
+    __atomic_clear(&((*mbox)->lock), __ATOMIC_RELEASE);
     
     sys_sem_signal(&((*mbox)->sem));
     return ERR_OK;
@@ -147,16 +156,20 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout) {
         return SYS_ARCH_TIMEOUT;
     }
     
+    while (__atomic_test_and_set(&((*mbox)->lock), __ATOMIC_ACQUIRE)) yield();
     if (msg != NULL) {
         *msg = (*mbox)->messages[(*mbox)->tail];
     }
     (*mbox)->tail = ((*mbox)->tail + 1) % (*mbox)->size;
+    __atomic_clear(&((*mbox)->lock), __ATOMIC_RELEASE);
     
     return time_waited;
 }
 
 u32_t sys_arch_mbox_tryfetch(sys_mbox_t *mbox, void **msg) {
+    while (__atomic_test_and_set(&((*mbox)->lock), __ATOMIC_ACQUIRE)) yield();
     if ((*mbox)->head == (*mbox)->tail) {
+        __atomic_clear(&((*mbox)->lock), __ATOMIC_RELEASE);
         return SYS_MBOX_EMPTY;
     }
     
@@ -164,6 +177,7 @@ u32_t sys_arch_mbox_tryfetch(sys_mbox_t *mbox, void **msg) {
         *msg = (*mbox)->messages[(*mbox)->tail];
     }
     (*mbox)->tail = ((*mbox)->tail + 1) % (*mbox)->size;
+    __atomic_clear(&((*mbox)->lock), __ATOMIC_RELEASE);
     
     __atomic_sub_fetch(&(((*mbox)->sem)->count), 1, __ATOMIC_SEQ_CST);
     

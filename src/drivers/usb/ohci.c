@@ -216,15 +216,15 @@ static int ohci_start_isochronous_in(usb_device_t *dev, uint8_t endpoint, void *
 }
 
 static int ohci_control_transfer(struct usb_device *dev, usb_setup_packet_t *setup, void *buffer, uint16_t length) {
-    ohci_controller_t *hc = (ohci_controller_t *)ohci_hcd.data;
+    ohci_controller_t *hc = (ohci_controller_t *)dev->hcd->data;
     if (!hc) return -1;
     
     print_serial("OHCI: Control Transfer Starting...\n");
 
-    // Allocate 3 TDs (Setup, Data, Status)
+    // Allocate 4 TDs (Setup, Data, Status, Dummy)
     uint32_t tdp;
-    ohci_td_t *tds = (ohci_td_t *)kmalloc_ap(sizeof(ohci_td_t) * 3, &tdp);
-    memset(tds, 0, sizeof(ohci_td_t) * 3);
+    ohci_td_t *tds = (ohci_td_t *)kmalloc_ap(sizeof(ohci_td_t) * 4, &tdp);
+    memset(tds, 0, sizeof(ohci_td_t) * 4);
 
     // SETUP TD
     tds[0].flags = (0 << 19) | (2 << 21) | (1 << 24); // SETUP PID, 0xFF max err, Data0
@@ -246,23 +246,35 @@ static int ohci_control_transfer(struct usb_device *dev, usb_setup_packet_t *set
     tds[2].flags = (1 << 19) | (1 << 24); // OUT PID, Data1
     tds[2].cbp = 0;
     tds[2].bep = 0;
-    tds[2].next_td = 0;
+    tds[2].next_td = tdp + 3 * sizeof(ohci_td_t); // Point to dummy
+
+    // Dummy TD is tds[3], initialized to 0
 
     // Setup ED
-    hc->ctrl_ed->flags = (dev->address) | (length > 64 ? 64 : 8 << 16); // MaxPacketSize=8 or 64
+    hc->ctrl_ed->flags = (dev->address) | ((length > 64 ? 64 : 8) << 16); // MaxPacketSize
     hc->ctrl_ed->head_td = tdp;
-    hc->ctrl_ed->tail_td = 0; // Terminal
+    hc->ctrl_ed->tail_td = tdp + 3 * sizeof(ohci_td_t);
 
-    // Wait for completion (poll done_head or TDs)
+    // Tell HC that control list is filled
+    oh_write(hc->base_addr, OH_COMMAND_STATUS, (1 << 1)); // ControlListFilled
+
+    // Wait for completion
     int timeout = 100000;
     while (timeout-- > 0) {
-        if (hc->ctrl_ed->head_td == 0) break;
+        if ((hc->ctrl_ed->head_td & 0xFFFFFFF0) == hc->ctrl_ed->tail_td) break;
+        if (hc->ctrl_ed->head_td & 1) break; // Halted (error)
         for (volatile int i = 0; i < 100; i++);
     }
 
     kfree(tds);
     if (timeout <= 0) {
         print_serial("OHCI: Control Transfer TIMEOUT!\n");
+        return -1;
+    }
+    if (hc->ctrl_ed->head_td & 1) {
+        print_serial("OHCI: Control Transfer HALTED (Error)!\n");
+        // Clear halted bit
+        hc->ctrl_ed->head_td &= ~1;
         return -1;
     }
     return 0;

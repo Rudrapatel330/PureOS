@@ -3,6 +3,7 @@
 #include "net.h"
 
 extern void print_serial(const char *);
+extern uint32_t get_timer_ticks(void);
 
 volatile int http_download_progress = 0;
 
@@ -227,6 +228,15 @@ int http_get(const char *url, char *response, int max_len) {
     return -1;
   }
   int conn_res = tcp_connect(conn, target_ip, target_port);
+  if (conn_res == 1) {
+    uint32_t start_conn = get_timer_ticks();
+    while ((conn_res = tcp_check_connect(conn)) == 1) {
+      extern void kernel_poll_events(void);
+      kernel_poll_events();
+      __asm__ volatile("int $49");
+      if (get_timer_ticks() - start_conn > 5000) { conn_res = -1; break; }
+    }
+  }
   if (conn_res != 0) {
     print_serial("HTTP: TCP connect failed\n");
     kfree(conn);
@@ -280,15 +290,22 @@ int http_get(const char *url, char *response, int max_len) {
 
   // 5. Receive response (accumulate all data)
   int total = 0;
+  uint32_t start_recv = get_timer_ticks();
   while (total < max_len - 1) {
     int n = tcp_recv(conn, response + total, max_len - 1 - total);
     if (n < 0) {
       print_serial("HTTP: Receive error\n");
       break;
     }
-    if (n == 0)
-      break;
+    if (n == 0) {
+      if (get_timer_ticks() - start_recv > 10000) break;
+      extern void kernel_poll_events(void);
+      kernel_poll_events();
+      __asm__ volatile("int $49");
+      continue;
+    }
     total += n;
+    start_recv = get_timer_ticks();
     http_download_progress = total;
   }
   response[total] = 0;
@@ -748,7 +765,21 @@ int http_post(const char *url, const char *post_data, int post_len,
     tcp_conn_t *conn = kmalloc(sizeof(tcp_conn_t));
     if (!conn)
       return -1;
-    if (tcp_connect(conn, ip, target_port) != 0) {
+    if (tcp_connect(conn, ip, target_port) == 1) {
+      uint32_t start_conn = get_timer_ticks();
+      int res = 1;
+      while ((res = tcp_check_connect(conn)) == 1) {
+        extern void kernel_poll_events(void);
+        kernel_poll_events();
+        __asm__ volatile("int $49");
+        if (get_timer_ticks() - start_conn > 5000) break;
+      }
+      if (res != 0) {
+        tcp_close(conn);
+        kfree(conn);
+        return -3;
+      }
+    } else if (conn->state != 2) { // TCP_STATE_ESTABLISHED
       tcp_close(conn);
       kfree(conn);
       return -3;
@@ -758,11 +789,19 @@ int http_post(const char *url, const char *post_data, int post_len,
       tcp_send(conn, post_data, post_len);
 
     int total = 0;
+    uint32_t start_recv = get_timer_ticks();
     while (total < max_len - 1) {
       int n = tcp_recv(conn, response + total, max_len - 1 - total);
-      if (n <= 0)
-        break;
+      if (n < 0) break;
+      if (n == 0) {
+        if (get_timer_ticks() - start_recv > 10000) break;
+        extern void kernel_poll_events(void);
+        kernel_poll_events();
+        __asm__ volatile("int $49");
+        continue;
+      }
       total += n;
+      start_recv = get_timer_ticks();
     }
     response[total] = 0;
     tcp_close(conn);

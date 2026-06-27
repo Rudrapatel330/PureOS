@@ -160,7 +160,7 @@ static vfs_dentry_t *ramfs_get_vfs_node(int index) {
       inode->symlink_target[f->size] = 0;
     }
   } else {
-    inode->mode = (f->flags == 1) ? VFS_DIRECTORY : VFS_FILE;
+    inode->mode = (f->flags == 1) ? (VFS_DIRECTORY | 0555) : (VFS_FILE | 0444);
   }
   inode->impl = index;
   extern file_operations_t ramfs_file_ops;
@@ -224,7 +224,9 @@ inode_operations_t ramfs_inode_ops = {
   ramfs_vfs_finddir,
   0,
   0,
-  0
+  0,
+  0,  // create
+  0   // rename
 };
 
 int ramfs_init() {
@@ -241,7 +243,7 @@ int ramfs_init() {
   // Create Root Node for ramfs
   vfs_inode_t *ram_inode = (vfs_inode_t *)kmalloc(sizeof(vfs_inode_t));
   memset(ram_inode, 0, sizeof(vfs_inode_t));
-  ram_inode->mode = VFS_DIRECTORY;
+  ram_inode->mode = VFS_DIRECTORY | 0555;
   ram_inode->i_ops = &ramfs_inode_ops;
   ram_inode->f_ops = &ramfs_file_ops;
 

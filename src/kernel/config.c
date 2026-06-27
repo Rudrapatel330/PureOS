@@ -9,16 +9,18 @@ void config_init(void) {
   strcpy(global_config.lock_password, "123456");
   global_config.wallpaper_type = 3; // 3 = PNG
   global_config.theme_mode = 0;     // 0 = dark (default)
-  global_config.screen_width = 1600;
-  global_config.screen_height = 900;
+  global_config.screen_width = 1920;
+  global_config.screen_height = 1000;
   global_config.show_desktop_icons = 1; // 1 = visible (default)
-  global_config.num_pinned = 6;
+  global_config.num_pinned = 8;
   global_config.pinned[0] = 5;  // APP_FILEMGR
   global_config.pinned[1] = 0;  // APP_TERMINAL
   global_config.pinned[2] = 2;  // APP_EDITOR
   global_config.pinned[3] = 13; // APP_MAIL
   global_config.pinned[4] = 7;  // APP_BROWSER
   global_config.pinned[5] = 9;  // APP_SETTINGS
+  global_config.pinned[6] = 6;  // APP_TASKMGR
+  global_config.pinned[7] = 10; // APP_PDFREADER
   global_config.show_clock_widget = 0;
   global_config.show_calendar_widget = 0;
   global_config.clock_x = 1320;
@@ -34,7 +36,7 @@ void config_init(void) {
   global_config.show_sysmon_widget = 1;
   global_config.font_size = 0;         // 0 = Normal
   global_config.font_style = 0;        // 0 = Regular
-  global_config.wallpaper_index = 3;   // Default to wall4.jpg
+  global_config.wallpaper_index = 2;   // Default to wall3.jpg
 }
 
 #include "../fs/fat.h"
@@ -61,6 +63,13 @@ void config_load(void) {
 
     if (temp_cfg.magic == 0x105C0002) {
       global_config = temp_cfg;
+      
+      // Force resolution upgrade if they had the old 1600x900 default saved
+      if (global_config.screen_width == 1600 && global_config.screen_height == 900) {
+          global_config.screen_width = 1920;
+          global_config.screen_height = 1000;
+      }
+
       print_serial("CONFIG: Loaded successfully. Magic: 0x");
       char mstr[16];
       extern void k_itoa_hex(uint32_t, char *);

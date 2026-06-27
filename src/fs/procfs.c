@@ -138,7 +138,7 @@ static vfs_dentry_t *procfs_finddir(vfs_inode_t *inode, const char *name) {
 file_operations_t procfs_file_ops = {procfs_read, 0, // no write
                                      0, 0, procfs_readdir};
 
-inode_operations_t procfs_inode_ops = {procfs_finddir, 0, 0, 0};
+inode_operations_t procfs_inode_ops = {procfs_finddir, 0, 0, 0, 0, 0};
 
 void procfs_init() {
   vfs_inode_t *root_inode = kmalloc(sizeof(vfs_inode_t));

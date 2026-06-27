@@ -19,8 +19,19 @@ static int get_sidebar_width(void) {
 #define FM_MAX_FILES 64
 #define FM_MAX_PATH 128
 
+typedef struct {
+  char name[32];
+  uint32_t size;
+  int is_dir;
+  int is_symlink;
+  uint32_t mode;
+  uint32_t uid;
+  uint32_t gid;
+  uint32_t mtime;
+} FMFileInfo;
+
 // File listing
-static FileInfo file_list[FM_MAX_FILES];
+static FMFileInfo file_list[FM_MAX_FILES];
 static int file_count = 0;
 static int selected_index = -1;
 static int scroll_offset = 0;
@@ -88,9 +99,12 @@ static void fm_path_up() {
 
 static void fm_navigate_to(const char *name) {
   if (at_root) {
-    // Entering C: drive
     at_root = 0;
-    strcpy(current_path, "/");
+    if (strcmp(name, "Ram Disk (R:)") == 0) {
+      strcpy(current_path, "/ram");
+    } else {
+      strcpy(current_path, "/");
+    }
     return;
   }
 
@@ -116,8 +130,16 @@ static void fm_refresh() {
   selected_index = -1;
   scroll_offset = 0;
 
-  if (at_root)
-    return; // Root shows C: drive icon only
+  if (at_root) {
+    strcpy(file_list[0].name, "Local Disk (C:)");
+    file_list[0].size = 0;
+    file_list[0].is_dir = 1;
+    strcpy(file_list[1].name, "Ram Disk (R:)");
+    file_list[1].size = 0;
+    file_list[1].is_dir = 1;
+    file_count = 2;
+    return;
+  }
 
   // Open directory using VFS
   int fd = vfs_open(current_path, 0); // O_RDONLY
@@ -138,8 +160,26 @@ static void fm_refresh() {
       }
       file_list[idx].name[j] = 0;
       
-      file_list[idx].size = node->inode ? node->inode->size : 0;
-      file_list[idx].is_dir = (node->inode && (node->inode->mode & VFS_DIRECTORY)) ? 1 : 0;
+      char full_path[FM_MAX_PATH + 32];
+      strcpy(full_path, current_path);
+      if (strcmp(full_path, "/") != 0) strcat(full_path, "/");
+      strcat(full_path, file_list[idx].name);
+      
+      vfs_stat_t st;
+      if (vfs_stat(full_path, &st) == 0) {
+        file_list[idx].size = st.st_size;
+        file_list[idx].is_dir = (st.st_mode & VFS_DIRECTORY) ? 1 : 0;
+        file_list[idx].is_symlink = (st.st_mode & VFS_SYMLINK) ? 1 : 0;
+        file_list[idx].mode = st.st_mode;
+        file_list[idx].uid = st.st_uid;
+        file_list[idx].gid = st.st_gid;
+        file_list[idx].mtime = st.st_mtime;
+      } else {
+        file_list[idx].size = node->inode ? node->inode->size : 0;
+        file_list[idx].is_dir = (node->inode && (node->inode->mode & VFS_DIRECTORY)) ? 1 : 0;
+        file_list[idx].is_symlink = 0;
+        file_list[idx].mode = 0;
+      }
       idx++;
     }
     file_count = idx;
@@ -289,10 +329,22 @@ static void fm_draw_column_headers(window_t *win) {
 
   // Column: Name
   winmgr_draw_text(win, 30, 88 + (24 - ui_get_font_scale()) / 2, "Name", 0x0000);
+  
   // Separator
-  winmgr_fill_rect(win, bw - 104, 88, 1, (fs + 8), 0x8410);
+  winmgr_fill_rect(win, bw - 224, 88, 1, (fs + 8), 0x8410);
   // Column: Size
-  winmgr_draw_text(win, bw - 100, 88 + (24 - ui_get_font_scale()) / 2, "Size", 0x0000);
+  winmgr_draw_text(win, bw - 220, 88 + (24 - ui_get_font_scale()) / 2, "Size", 0x0000);
+
+  // Separator
+  winmgr_fill_rect(win, bw - 164, 88, 1, (fs + 8), 0x8410);
+  // Column: Perms
+  winmgr_draw_text(win, bw - 160, 88 + (24 - ui_get_font_scale()) / 2, "Perms", 0x0000);
+
+  // Separator
+  winmgr_fill_rect(win, bw - 94, 88, 1, (fs + 8), 0x8410);
+  // Column: User
+  winmgr_draw_text(win, bw - 90, 88 + (24 - ui_get_font_scale()) / 2, "User", 0x0000);
+
   // Separator
   winmgr_fill_rect(win, bw - 52, 88, 1, (fs + 8), 0x8410);
   // Column: Type
@@ -310,14 +362,17 @@ static void fm_draw_file_list(window_t *win) {
   winmgr_fill_rect(win, 2, list_y, bw - 4, win->height - list_y - 28, 0xFFFF);
 
   if (at_root) {
-    // Show "My Computer" with C: drive
-    winmgr_fill_rect(win, 20, list_y + 10, bw - 44, 40,
-                     (selected_index == 0) ? 0x001F : 0xFFFF);
-    fm_draw_drive_icon(win, 24, list_y + 14);
-    winmgr_draw_text(win, 62, list_y + 42, "Local Disk (C:)",
-                     (selected_index == 0) ? 0xFFFF : 0x0000);
-    winmgr_draw_text(win, 62, list_y + 34, "10 MB  FAT12",
-                     (selected_index == 0) ? 0xBDF7 : 0x8410);
+    // Show Drives
+    for (int i = 0; i < file_count; i++) {
+        int y = list_y + 10 + (i * 44);
+        winmgr_fill_rect(win, 20, y, bw - 44, 40,
+                         (selected_index == i) ? 0x001F : 0xFFFF);
+        fm_draw_drive_icon(win, 24, y + 4);
+        winmgr_draw_text(win, 62, y + 32, file_list[i].name,
+                         (selected_index == i) ? 0xFFFF : 0x0000);
+        winmgr_draw_text(win, 62, y + 24, (i == 0) ? "10 MB  FAT12" : "Dynamic  RAMFS",
+                         (selected_index == i) ? 0xBDF7 : 0x8410);
+    }
     return;
   }
 
@@ -373,14 +428,29 @@ static void fm_draw_file_list(window_t *win) {
         size_str[sl + 1] = 'B';
         size_str[sl + 2] = 0;
       }
-      winmgr_draw_text(win, bw - 100, y + (28 - ui_get_font_scale()) / 2, size_str,
+      winmgr_draw_text(win, bw - 220, y + (28 - ui_get_font_scale()) / 2, size_str,
                        is_sel ? 0xBDF7 : 0x8410);
     } else {
-      winmgr_draw_text(win, bw - 100, y + (28 - ui_get_font_scale()) / 2, "-", is_sel ? 0xBDF7 : 0x8410);
+      winmgr_draw_text(win, bw - 220, y + (28 - ui_get_font_scale()) / 2, "-", is_sel ? 0xBDF7 : 0x8410);
     }
 
+    // Permissions
+    char perms[10] = "rwxrwxrwx";
+    for(int b=0; b<9; b++) {
+      if ((file_list[i].mode & (1 << (8 - b))) == 0) perms[b] = '-';
+    }
+    perms[9] = 0;
+    winmgr_draw_text(win, bw - 160, y + (28 - ui_get_font_scale()) / 2, perms, is_sel ? 0xBDF7 : 0x8410);
+
+    // UID
+    char uid_str[16] = "U:";
+    k_itoa(file_list[i].uid, uid_str + 2);
+    winmgr_draw_text(win, bw - 90, y + (28 - ui_get_font_scale()) / 2, uid_str, is_sel ? 0xBDF7 : 0x8410);
+
     // Type
-    const char *type = file_list[i].is_dir ? "Dir" : "File";
+    const char *type = "File";
+    if (file_list[i].is_dir) type = "Dir";
+    if (file_list[i].is_symlink) type = "Link";
     winmgr_draw_text(win, bw - 48, y + (28 - ui_get_font_scale()) / 2, type, is_sel ? 0xBDF7 : 0x8410);
   }
 }
@@ -398,13 +468,13 @@ static void fm_draw_status_bar(window_t *win) {
   char status[64];
   char num[12];
   if (at_root) {
-    strcpy(status, "1 Drive");
+    strcpy(status, "2 Drives");
   } else {
     k_itoa(file_count, num);
     strcpy(status, num);
-    strcat(status, " items");
+    strcat(status, " objects");
   }
-  winmgr_draw_text(win, 8, by + (28 - ui_get_font_scale()) / 2, status, 0x0000);
+  winmgr_draw_text(win, 6, by + (28 - ui_get_font_scale()) / 2, status, 0x0000);
 }
 
 static void fm_draw_input_dialog(window_t *win) {
@@ -751,8 +821,10 @@ void filemgr_on_key(window_t *win, int key, char c) {
     ui_dirty = 1;
   } else if (c == '\n' || key == 0x1C) { // Enter
     if (at_root) {
-      fm_navigate_to("C:");
-      fm_refresh();
+      if (selected_index >= 0 && selected_index < file_count) {
+        fm_navigate_to(file_list[selected_index].name);
+        fm_refresh();
+      }
     } else if (selected_index >= 0 && selected_index < file_count) {
       if (file_list[selected_index].is_dir) {
         if (strcmp(file_list[selected_index].name, "..") == 0) {
@@ -886,14 +958,14 @@ void filemgr_on_mouse(window_t *win, int mx, int my, int buttons) {
     int clicked_index = scroll_offset + (ry - list_y) / row_h;
 
     if (at_root) {
-      // C: drive click
-      if (clicked_index == 0) {
-        if (selected_index == 0) {
-          // Double-click: enter C: drive
-          fm_navigate_to("C:");
+      int c_idx = (ry - (list_y + 10)) / 44;
+      if (c_idx >= 0 && c_idx < file_count && ry >= list_y + 10) {
+        if (selected_index == c_idx) {
+          // Double-click: enter drive
+          fm_navigate_to(file_list[c_idx].name);
           fm_refresh();
         } else {
-          selected_index = 0;
+          selected_index = c_idx;
         }
       }
     } else {

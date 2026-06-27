@@ -22,7 +22,9 @@ struct gdt_ptr {
 
 // Initialization function
 void gdt_init();
+void gdt_init_cpu(int cpu_num);
 void tss_set_stack(uint64_t rsp0);
+void tss_set_stack_cpu(int cpu_num, uint64_t rsp0);
 
 // Assembly function to reload segments
 // Defined in gdt_flush.asm

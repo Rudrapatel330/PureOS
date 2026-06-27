@@ -81,6 +81,9 @@ int msg_send(int pid, msg_t *msg);
 int msg_receive(msg_t *msg); // Pops from current task
 int msg_peek(msg_t *msg);    // Peeks without popping
 
+// Global lock protecting the task queue
+extern spinlock_t task_queue_lock;
+
 // Multitasking Interface
 void init_multitasking();
 uint64_t task_switch(uint64_t current_rsp);
@@ -97,5 +100,11 @@ int task_fork(registers_t *regs);
 int task_execve(const char *path, registers_t *regs);
 
 void print_cpu_stats(void);
+
+// Security
+uint32_t task_get_uid(void);
+uint32_t task_get_gid(void);
+void task_set_uid(uint32_t uid);
+void task_set_gid(uint32_t gid);
 
 #endif

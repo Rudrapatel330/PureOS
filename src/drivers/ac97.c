@@ -75,6 +75,10 @@ uint64_t ac97_handler(registers_t *regs) {
                 if (ac97_po_last_civ < (uint8_t)ac97_bdl_entry_count) {
                     ac97_samples_played += ac97_bdl_entry_samples[ac97_po_last_civ];
                 }
+                if (ac97_po_running) {
+                    uint32_t chunk_size = AC97_PO_RING_SIZE / AC97_BDL_ENTRIES;
+                    memset(ac97_po_ring + (ac97_po_last_civ * chunk_size), 0, chunk_size);
+                }
                 ac97_po_last_civ = (ac97_po_last_civ + 1) % AC97_BDL_ENTRIES;
             }
         }
@@ -309,17 +313,11 @@ void ac97_stream_pcm(const void *data, uint32_t size, uint32_t sample_rate, uint
                          (ac97_po_write_pos - read_pos) : 
                          (AC97_PO_RING_SIZE - read_pos + ac97_po_write_pos);
         
-        // CATCH-UP LOGIC:
-        // Underrun threshold: chunk_size (approx 31ms) - tolerant of normal jitter
-        // Lag threshold: chunk_size * 6 (approx 187ms) - catch real drift sooner
-        if (ahead > chunk_size * 12 || ahead < chunk_size / 2) {
-            ac97_po_write_pos = (read_pos + chunk_size * 4) % AC97_PO_RING_SIZE;
-            
-            uint32_t clear_ptr = ac97_po_write_pos;
-            uint32_t clear_size = chunk_size * 2; // ~62 ms
-            for (uint32_t c = 0; c < clear_size; c++) {
-                ac97_po_ring[(clear_ptr + c) % AC97_PO_RING_SIZE] = 0;
-            }
+        // Jitter Buffer Logic:
+        // If we fall completely behind (ahead == 0) or are wildly out of sync (> 48KB),
+        // we add a small 2048-byte (10ms) cushion.
+        if (ahead > 49152 || ahead == 0) {
+            ac97_po_write_pos = (read_pos + 2048) % AC97_PO_RING_SIZE;
         }
     }
 

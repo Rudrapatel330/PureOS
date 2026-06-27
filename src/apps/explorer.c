@@ -5,11 +5,11 @@
 #include "../fs/vfs.h"
 #include "../gui/explorer_icons.h"
 #include "../kernel/clipboard.h"
+#include "../kernel/dragdrop.h"
 #include "../kernel/heap.h"
 #include "../kernel/string.h"
 #include "../kernel/theme.h"
 #include "../kernel/window.h"
-#include "../gui/explorer_icons.h"
 #include "../ui/ctxmenu.h"
 #include <stdint.h>
 #include <string.h>
@@ -75,6 +75,13 @@ typedef struct {
   
   // Added Features
   int sort_mode; // 0 = Name, 1 = Size
+
+  // Drag-and-drop state
+  int drag_potential;
+  int drag_potential_idx;
+  int drag_potential_mx;
+  int drag_potential_my;
+  int drag_hover_idx; // folder being hovered during drag
 } explorer_app_t;
 
 // Forward Declarations
@@ -88,6 +95,7 @@ static void action_delete_selected(void);
 static void action_new_folder(void);
 static void action_rename_selected(void);
 static void action_refresh_view(void);
+static void action_properties(void);
 
 static inline explorer_app_t *get_explorer_app(void *w) {
   if (!w)
@@ -244,6 +252,14 @@ static void action_delete_selected(void) {
   char rb[12]; k_itoa(res, rb); print_serial(rb); print_serial("\n");
   for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) app->dir_cache[i].valid = 0;
   explorer_refresh(win);
+  win->needs_redraw = 1;
+}
+
+static void action_properties(void) {
+  window_t *win = active_window;
+  explorer_app_t *app = get_explorer_app(win);
+  if (!app || app->selected_index < 0) return;
+  app->dialog_active = 5;
   win->needs_redraw = 1;
 }
 
@@ -586,8 +602,11 @@ static void draw_column_headers(window_t *win) {
 }
 
 
-static void draw_file_list_row(window_t *win, FileInfo *fi, int x, int y, int w, int h, int selected, int hovered) {
-    if (selected) {
+static void draw_file_list_row(window_t *win, FileInfo *fi, int x, int y, int w, int h, int selected, int hovered, int drag_hover) {
+    if (drag_hover) {
+        winmgr_fill_rect(win, x, y, w, h, 0xFF1A3A5C);
+        winmgr_draw_rect(win, x, y, w, h, COL_ACCENT);
+    } else if (selected) {
         winmgr_fill_rect(win, x, y, w, h, COL_CARD_SEL);
     } else if (hovered) {
         winmgr_fill_rect(win, x, y, w, h, COL_CARD_HOVER);
@@ -619,7 +638,10 @@ static void draw_file_list_row(window_t *win, FileInfo *fi, int x, int y, int w,
     winmgr_draw_text(win, x + 350, y + (h - ui_get_font_scale()) / 2, size_buf, COL_TEXT_MUTED);
 
     // Type
-    winmgr_draw_text(win, x + 500, y + (h - ui_get_font_scale()) / 2, fi->is_dir ? "Folder" : "File", COL_TEXT_MUTED);
+    const char *type_str = "File";
+    if (fi->is_dir) type_str = "Folder";
+    if (fi->is_symlink) type_str = "Shortcut";
+    winmgr_draw_text(win, x + 500, y + (h - ui_get_font_scale()) / 2, type_str, COL_TEXT_MUTED);
 
     // Date Modified (Mock)
     winmgr_draw_text(win, x + 650, y + (h - ui_get_font_scale()) / 2, fi->is_dir ? "-" : "2026-05-10", COL_TEXT_MUTED);
@@ -635,6 +657,24 @@ static void draw_file_list(window_t *win) {
   int content_x = get_sidebar_width();
 
   winmgr_fill_rect(win, content_x, content_y, w - content_x, content_h, COL_CONTENT_BG);
+
+  if (app->at_this_pc) {
+    win->max_scroll = 0;
+    FileInfo c_drive;
+    strcpy(c_drive.name, "Local Disk (C:)");
+    c_drive.is_dir = 1;
+    c_drive.size = 0;
+    draw_file_list_row(win, &c_drive, content_x, content_y, w - content_x, 32,
+                       (app->selected_index == 0), (app->hovered_index == 0), 0);
+                       
+    FileInfo r_drive;
+    strcpy(r_drive.name, "Ram Disk (R:)");
+    r_drive.is_dir = 1;
+    r_drive.size = 0;
+    draw_file_list_row(win, &r_drive, content_x, content_y + 32, w - content_x, 32,
+                       (app->selected_index == 1), (app->hovered_index == 1), 0);
+    return;
+  }
 
   int slot = -1;
   for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
@@ -654,11 +694,16 @@ static void draw_file_list(window_t *win) {
   int row_h = 32;
   win->max_scroll = (f_count * row_h > content_h) ? (f_count * row_h - content_h) : 0;
 
+  // Check if there's an active drag-over highlight on this window
+  int active_drag_hover = (file_drag_is_active() && app->drag_hover_idx >= 0);
+
   for (int i = 0; i < f_count; i++) {
     int fy = content_y + i * row_h - win->scroll_position;
     if (fy + row_h < content_y || fy > win->height - 25) continue;
+    int is_drag_hover = (active_drag_hover && i == app->drag_hover_idx);
+    int is_hovered = (i == app->hovered_index) && !is_drag_hover;
     draw_file_list_row(win, &f_cache[i], content_x, fy, w - content_x, row_h, 
-                      (i == app->selected_index), (i == app->hovered_index));
+                      (i == app->selected_index), is_hovered, is_drag_hover);
   }
 }
 
@@ -690,7 +735,7 @@ static void draw_search_results(window_t *win) {
     fi.size = app->search_results[i].size;
     
     draw_file_list_row(win, &fi, content_x, fy, w - content_x, row_h, 
-                      (i == app->selected_index), (i == app->hovered_index));
+                      (i == app->selected_index), (i == app->hovered_index), 0);
   }
 }
 
@@ -712,6 +757,7 @@ static void draw_status_bar(window_t *win) {
     }
   }
   if (app->search_active) count = app->search_count;
+  else if (app->at_this_pc) count = 2;
   else if (slot != -1) count = app->dir_cache[slot].count;
 
   k_itoa(count, status);
@@ -742,6 +788,67 @@ static void draw_input_dialog(window_t *win) {
 
     winmgr_fill_rect(win, dx + 105, dy + 75, 70, (fs + 8), COL_ACCENT); 
     winmgr_draw_text(win, dx + 130, dy + 81, "OK", COL_TEXT_WHT);
+    return;
+  }
+
+  if (app->dialog_active == 5) {
+    int dw = 320, dh = 240;
+    int dx = (win->width - dw) / 2;
+    int dy = (win->height - dh) / 2;
+
+    winmgr_fill_rect(win, dx, dy, dw, dh, 0xFF1A1A24);
+    winmgr_draw_rect(win, dx, dy, dw, dh, COL_ACCENT);
+
+    winmgr_draw_text(win, dx + 10, dy + 8, "Properties", COL_TEXT_WHT);
+
+    int slot = -1;
+    for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+      if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+        slot = i; break;
+      }
+    }
+    
+    if (slot != -1 && app->selected_index >= 0 && app->selected_index < app->dir_cache[slot].count) {
+       FileInfo *fi = &app->dir_cache[slot].files[app->selected_index];
+       char full_path[160];
+       strcpy(full_path, app->explorer_path);
+       if (full_path[strlen(full_path)-1] != '/') strcat(full_path, "/");
+       strcat(full_path, fi->name);
+
+       vfs_stat_t st;
+       if (vfs_stat(full_path, &st) == 0) {
+           char buf[64];
+           winmgr_draw_text(win, dx + 20, dy + 40, "Name:", COL_TEXT_MUTED);
+           winmgr_draw_text(win, dx + 80, dy + 40, fi->name, COL_TEXT_WHT);
+
+           winmgr_draw_text(win, dx + 20, dy + 60, "Type:", COL_TEXT_MUTED);
+           const char *t = "File"; if (fi->is_dir) t = "Folder"; if (fi->is_symlink) t = "Shortcut";
+           winmgr_draw_text(win, dx + 80, dy + 60, t, COL_TEXT_WHT);
+
+           winmgr_draw_text(win, dx + 20, dy + 80, "Size:", COL_TEXT_MUTED);
+           k_itoa(st.st_size, buf); strcat(buf, " Bytes");
+           winmgr_draw_text(win, dx + 80, dy + 80, buf, COL_TEXT_WHT);
+
+           winmgr_draw_text(win, dx + 20, dy + 100, "Owner:", COL_TEXT_MUTED);
+           strcpy(buf, "UID: "); k_itoa(st.st_uid, buf + 5);
+           strcat(buf, " / GID: "); k_itoa(st.st_gid, buf + strlen(buf));
+           winmgr_draw_text(win, dx + 80, dy + 100, buf, COL_TEXT_WHT);
+
+           winmgr_draw_text(win, dx + 20, dy + 120, "Mode:", COL_TEXT_MUTED);
+           int mode = st.st_mode & 0777;
+           char mstr[10] = "rwxrwxrwx";
+           for (int i=0; i<9; i++) {
+               if (!(mode & (1 << (8-i)))) mstr[i] = '-';
+           }
+           winmgr_draw_text(win, dx + 80, dy + 120, mstr, COL_TEXT_WHT);
+           
+           winmgr_draw_text(win, dx + 20, dy + 140, "Path:", COL_TEXT_MUTED);
+           winmgr_draw_text(win, dx + 80, dy + 140, full_path, COL_TEXT_WHT);
+       }
+    }
+
+    winmgr_fill_rect(win, dx + 125, dy + dh - 40, 70, (fs + 8), COL_ACCENT); 
+    winmgr_draw_text(win, dx + 150, dy + dh - 36, "OK", COL_TEXT_WHT);
     return;
   }
 
@@ -799,6 +906,18 @@ void explorer_open_file(window_t *win, int index) {
     return;
   char final_path[160];
   int is_dir = 0;
+
+  if (app->at_this_pc) {
+    if (index == 0) {
+      strcpy(app->explorer_path, "/");
+    } else if (index == 1) {
+      strcpy(app->explorer_path, "/ram");
+    }
+    app->at_this_pc = 0;
+    app->search_active = 0;
+    explorer_refresh(win);
+    return;
+  }
 
   if (app->search_active) {
     if (index < 0 || index >= app->search_count)
@@ -1086,6 +1205,88 @@ static void explorer_on_paste(void *w, const char *path) {
   win->needs_redraw = 1;
 }
 
+// ======================== DRAG & DROP ========================
+
+static void explorer_on_drop(void *w, const char *source_path, const char *name, int is_dir, int is_cut) {
+  window_t *win = (window_t *)w;
+  explorer_app_t *app = get_explorer_app(win);
+  if (!app) return;
+
+  // Build destination path
+  int slot = -1;
+  for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+    if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+      slot = i; break;
+    }
+  }
+
+  char dest_path[160];
+
+  if (app->hovered_sidebar >= 0) {
+    if (app->hovered_sidebar == 0) strcpy(dest_path, "/");
+    else if (app->hovered_sidebar == 1) strcpy(dest_path, "/Documents");
+    else if (app->hovered_sidebar == 2) strcpy(dest_path, "/Downloads");
+    else if (app->hovered_sidebar == 3) strcpy(dest_path, "/Pictures");
+    else if (app->hovered_sidebar == 4) return; // My Computer (can't drop here)
+    else if (app->hovered_sidebar == 5) strcpy(dest_path, "/");
+    else return;
+
+    if (dest_path[strlen(dest_path) - 1] != '/') strcat(dest_path, "/");
+    strcat(dest_path, name);
+  } else if (app->drag_hover_idx >= 0 && slot != -1 && app->drag_hover_idx < app->dir_cache[slot].count) {
+    char *folder_name = app->dir_cache[slot].files[app->drag_hover_idx].name;
+    if (app->dir_cache[slot].files[app->drag_hover_idx].is_dir) {
+      strcpy(dest_path, app->explorer_path);
+      if (dest_path[strlen(dest_path) - 1] != '/') strcat(dest_path, "/");
+      strcat(dest_path, folder_name);
+      strcat(dest_path, "/");
+      // Append filename to dest
+      strcat(dest_path, name);
+    } else {
+      strcpy(dest_path, app->explorer_path);
+      if (dest_path[strlen(dest_path) - 1] != '/') strcat(dest_path, "/");
+      strcat(dest_path, name);
+    }
+  } else {
+    // Drop onto empty area = move to current directory
+    strcpy(dest_path, app->explorer_path);
+    if (dest_path[strlen(dest_path) - 1] != '/') strcat(dest_path, "/");
+    strcat(dest_path, name);
+  }
+
+  // Clear hover highlight
+  app->drag_hover_idx = -1;
+  app->hovered_sidebar = -1;
+
+  if (strcmp(source_path, dest_path) == 0) {
+    explorer_show_popup(app, "Same location!");
+    win->needs_redraw = 1;
+    return;
+  }
+
+  print_serial("EXPLORER DROP: Src='"); print_serial(source_path);
+  print_serial("' Dest='"); print_serial(dest_path); print_serial("'\n");
+
+  char msg[64] = "Transfer failed!";
+  if (is_cut) {
+    int res = fat_move_file(source_path, dest_path);
+    if (res == 0) {
+      strcpy(msg, "Moved successfully!");
+    }
+  } else {
+    int res = fat_copy_recursive(source_path, dest_path);
+    if (res == 0) {
+      strcpy(msg, "Copied successfully!");
+    }
+  }
+
+  explorer_show_popup(app, msg);
+  for (int i = 0; i < EXPLORER_CACHE_SIZE; i++)
+    app->dir_cache[i].valid = 0;
+  explorer_refresh(win);
+  win->needs_redraw = 1;
+}
+
 // ======================== INPUT HANDLERS ========================
 
 void explorer_handle_key(window_t *win, int key, char ascii) {
@@ -1093,7 +1294,7 @@ void explorer_handle_key(window_t *win, int key, char ascii) {
   if (!app)
     return;
 
-  if (app->dialog_active == 3) {
+  if (app->dialog_active == 3 || app->dialog_active == 5) {
     if (key == 0x1C || key == 0x01 || ascii == '\n') {
       app->dialog_active = 0;
       win->needs_redraw = 1;
@@ -1206,7 +1407,16 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
   int content_y = 97;
   int cell_w = 140, padding = 15;
   
-  // HOVER DETECTION
+  // Check for file drag-over events (bit 4 set by window manager routing)
+  int file_drag_active = file_drag_is_active();
+  if (file_drag_active && !(buttons & 3) && !(buttons & 4)) {
+    // This is a button-0 event but not from drag routing - check if we finished a drag
+    app->prev_mouse_buttons = 0;
+    app->drag_potential = 0;
+    return;
+  }
+
+  // HOVER DETECTION - Side bar
   int new_hover_sb = -1;
   if (rx < get_sidebar_width() && ry >= 32) {
     int y = 50;
@@ -1230,19 +1440,20 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
     win->needs_redraw = 1;
   }
 
+  // HOVER DETECTION - Content area
   int new_hover = -1;
   int row_h = 32;
+  int slot = -1;
+  for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+    if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+      slot = i; break;
+    }
+  }
+
   if (rx >= content_x && ry >= content_y && ry < win->height - 25) {
       int local_y = ry - content_y + win->scroll_position;
       if (local_y >= 0) {
           new_hover = local_y / row_h;
-          
-          int slot = -1;
-          for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
-            if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
-              slot = i; break;
-            }
-          }
           int max_items = (slot != -1) ? app->dir_cache[slot].count : 0;
           if (app->search_active) max_items = app->search_count;
           if (new_hover >= max_items) new_hover = -1;
@@ -1253,14 +1464,82 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
     win->needs_redraw = 1;
   }
 
-  // CLICK DETECTION (Rising edge only)
-  if (!(buttons & 3)) { // Track both left & right
+  // Handle routed file drag-over
+  if (file_drag_active && (buttons & 4)) {
+    int actual_buttons = buttons & 3;
+
+    // Set drag_hover_idx only for folders
+    int drag_hover = new_hover;
+    if (drag_hover >= 0 && slot != -1 && !app->search_active) {
+      if (!app->dir_cache[slot].files[drag_hover].is_dir) {
+        drag_hover = -1;
+      }
+    }
+    if (drag_hover != app->drag_hover_idx) {
+      app->drag_hover_idx = drag_hover;
+      win->needs_redraw = 1;
+    }
+
+    if (actual_buttons == 0) {
+      // The drop is handled by window manager now via on_drop callback
+      // DO NOT clear drag_hover_idx here, on_drop needs it to know the target!
+    }
+    return;
+  }
+
+  // Buttons state tracking for drag detection
+  int actual_buttons = buttons & 3;
+
+  // Button released
+  if (!actual_buttons) {
+    if (app->drag_potential) {
+      // Potential drag didn't start - handle as click open
+      app->drag_potential = 0;
+      app->prev_mouse_buttons = 0;
+      // If we had a selected item, open it (click-to-open behavior)
+      if (new_hover != -1) {
+        explorer_open_file(win, new_hover);
+      }
+      return;
+    }
     app->prev_mouse_buttons = 0;
     return;
   }
-  if (app->prev_mouse_buttons)
+
+  // Button held - check for drag initiation
+  if (app->prev_mouse_buttons) {
+    if (app->drag_potential && (actual_buttons & 1)) {
+      int dx = rx - app->drag_potential_mx;
+      int dy = ry - app->drag_potential_my;
+      if (dx * dx + dy * dy > 25) {
+        // Initiate drag
+        int slot = -1;
+        for (int i = 0; i < EXPLORER_CACHE_SIZE; i++) {
+          if (app->dir_cache[i].valid && strcmp(app->dir_cache[i].path, app->explorer_path) == 0) {
+            slot = i; break;
+          }
+        }
+        if (slot != -1 && app->drag_potential_idx >= 0 && app->drag_potential_idx < app->dir_cache[slot].count) {
+          char full_path[160];
+          strcpy(full_path, (app->explorer_path[0] == 0) ? "/" : app->explorer_path);
+          if (full_path[strlen(full_path) - 1] != '/') strcat(full_path, "/");
+          strcat(full_path, app->dir_cache[slot].files[app->drag_potential_idx].name);
+
+          // Default to cut (move) for same-volume drag
+          file_drag_start(win, full_path,
+                         app->dir_cache[slot].files[app->drag_potential_idx].name,
+                         app->dir_cache[slot].files[app->drag_potential_idx].is_dir,
+                         1, // is_cut = 1 (move)
+                         win->x + rx, win->y + ry);
+        }
+        app->drag_potential = 0;
+      }
+    }
     return;
-  app->prev_mouse_buttons = buttons;
+  }
+
+  // New button press
+  app->prev_mouse_buttons = actual_buttons;
 
   // Handle Right Click
   if (buttons & 2) {
@@ -1276,11 +1555,13 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
         {"Copy", action_copy_selected},
         {"Cut", action_cut_selected},
         {"Rename", action_rename_selected},
-        {"Delete", action_delete_selected}
+        {"Delete", action_delete_selected},
+        {0, 0},
+        {"Properties", action_properties}
       };
       
       // Global coordinates for ctxmenu_show
-      ctxmenu_show(win->x + mx, win->y + my, folder_items, 7);
+      ctxmenu_show(win->x + mx, win->y + my, folder_items, 9);
       return;
     }
     // Right click on empty area
@@ -1302,6 +1583,17 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
     int dx = (win->width - dw) / 2;
     int dy = (win->height - dh) / 2;
     if (rx >= dx + 105 && rx < dx + 175 && ry >= dy + 75 && ry < dy + 99) {
+      app->dialog_active = 0;
+      win->needs_redraw = 1;
+    }
+    return;
+  }
+
+  if (app->dialog_active == 5) {
+    int dw = 320, dh = 240;
+    int dx = (win->width - dw) / 2;
+    int dy = (win->height - dh) / 2;
+    if (rx >= dx + 125 && rx < dx + 195 && ry >= dy + dh - 40 && ry < dy + dh - 10) {
       app->dialog_active = 0;
       win->needs_redraw = 1;
     }
@@ -1406,11 +1698,18 @@ void explorer_handle_mouse(window_t *win, int mx, int my, int buttons) {
   // Content Area Hit Test
   if (new_hover != -1) {
       app->search_focus = 0;
-      if (app->selected_index == new_hover)
-          explorer_open_file(win, new_hover);
-      else
-          app->selected_index = new_hover;
-      win->needs_redraw = 1;
+      if (actual_buttons & 1) {
+        // Left click: set drag potential (defer open to mouse up)
+        app->drag_potential = 1;
+        app->drag_potential_idx = new_hover;
+        app->drag_potential_mx = rx;
+        app->drag_potential_my = ry;
+        app->selected_index = new_hover;
+        win->needs_redraw = 1;
+      } else {
+        app->selected_index = new_hover;
+        win->needs_redraw = 1;
+      }
   } else if (rx >= content_x && ry >= content_y && ry < win->height - 30) {
       app->search_focus = 0;
       app->selected_index = -1; // Deselect
@@ -1451,6 +1750,7 @@ void explorer_init() {
   win->on_copy = explorer_on_copy;
   win->on_cut = explorer_on_cut;
   win->on_paste = explorer_on_paste;
+  win->on_drop = explorer_on_drop;
   win->on_close = explorer_on_close;
   win->bg_color = 0xFFFFFFFF; // Pure White
   win->app_type = 5;
@@ -1467,6 +1767,9 @@ void explorer_init() {
   app->hovered_index = -1;
   app->hovered_sidebar = -1;
   app->sort_mode = 0;
+  app->drag_potential = 0;
+  app->drag_potential_idx = -1;
+  app->drag_hover_idx = -1;
 
   // Ensure standard folders exist
   fat_mkdir("/Downloads");

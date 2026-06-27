@@ -324,11 +324,11 @@ static const char *app_icon_paths[] = {
     [APP_COMPUTER] = 0,
     [APP_PAINT] = "/PAINT.PNG",
     [APP_FILEMGR] = "/FILEEXPL.PNG",
-    [APP_TASKMGR] = 0,
+    [APP_TASKMGR] = "/TASKMANA.PNG",
     [APP_BROWSER] = "/BROWSER.PNG",
     [APP_VIDEOPLAYER] = "/VIDEO.PNG",
     [APP_SETTINGS] = "/SETTINGS.PNG",
-    [APP_PDFREADER] = 0,
+    [APP_PDFREADER] = "/PDFREADE.PNG",
     [APP_CAMERA] = 0,
     [APP_PHOTOS] = "/PHOTOS.PNG",
     [APP_MAIL] = "/MAIL.PNG",
@@ -404,22 +404,28 @@ static int draw_icon_png(int x, int y, int draw_w, int draw_h, int type, uint32_
 
   if (app_icon_cache[type]) {
     uint32_t *data = app_icon_cache[type];
+    int step_x = (64 * 256) / draw_w;
+    int step_y = (64 * 256) / draw_h;
+
     for (int py = 0; py < draw_h; py++) {
       int dy = y + py;
       if (dy < 0 || dy >= screen_height) continue;
+      
+      int gy = py * step_y;
+      int by = gy >> 8;
+      if (by >= 63) by = 62;
+      int v_frac = gy & 0xFF;
+      int v_inv = 256 - v_frac;
+
       for (int px = 0; px < draw_w; px++) {
         int dx = x + px;
         if (dx < 0 || dx >= screen_width) continue;
         
-        int gx = (px * 64 * 256) / draw_w;
-        int gy = (py * 64 * 256) / draw_h;
+        int gx = px * step_x;
         int bx = gx >> 8;
-        int by = gy >> 8;
-        int u_frac = gx & 0xFF;
-        int v_frac = gy & 0xFF;
-        
         if (bx >= 63) bx = 62;
-        if (by >= 63) by = 62;
+        int u_frac = gx & 0xFF;
+        int u_inv = 256 - u_frac;
 
         uint32_t c00 = data[by * 64 + bx];
         uint32_t c10 = data[by * 64 + bx + 1];
@@ -427,8 +433,6 @@ static int draw_icon_png(int x, int y, int draw_w, int draw_h, int type, uint32_
         uint32_t c11 = data[(by + 1) * 64 + bx + 1];
 
         // Bilinear blend
-        int u_inv = 256 - u_frac;
-        int v_inv = 256 - v_frac;
         int w00 = (u_inv * v_inv) >> 8;
         int w10 = (u_frac * v_inv) >> 8;
         int w01 = (u_inv * v_frac) >> 8;
@@ -1117,21 +1121,21 @@ void desktop_render_icons(uint32_t *target, rect_t clip) {
 
   // Icons
   for (int i = 0; i < icon_count; i++) {
-    // Icon hit box for clipping (approx 80x100)
-    rect_t icon_r = {icons[i].x - 8, icons[i].y - 8, 80, 100};
+    // Icon hit box for clipping (approx 96x116)
+    rect_t icon_r = {icons[i].x - 8, icons[i].y - 8, 96, 116};
     rect_t overlap;
     if (!rect_intersect(clip, icon_r, &overlap))
       continue;
 
     // Selection Highlight — solid gray like Windows
     if (icons[i].selected) {
-      draw_rect_trg(target, icons[i].x - 8, icons[i].y - 8, 80, 96, 0xFF555555);
+      draw_rect_trg(target, icons[i].x - 8, icons[i].y - 8, 96, 112, 0xFF555555);
     }
     // Hover Highlight — transparent gray overlay
     else if (i == hovered_icon) {
       // Blend transparent gray over the background
-      for (int hy = 0; hy < 96; hy++) {
-        for (int hx = 0; hx < 80; hx++) {
+      for (int hy = 0; hy < 112; hy++) {
+        for (int hx = 0; hx < 96; hx++) {
           int px = icons[i].x - 8 + hx;
           int py = icons[i].y - 8 + hy;
           if (px >= 0 && px < screen_width && py >= 0 && py < screen_height) {
@@ -1147,13 +1151,13 @@ void desktop_render_icons(uint32_t *target, rect_t clip) {
     }
 
     // Draw app icon natively without bounding box background
-    draw_icon(icons[i].x, icons[i].y, 64, 64, icons[i].type, target);
+    draw_icon(icons[i].x, icons[i].y, 80, 80, icons[i].type, target);
 
     uint32_t text_col = icons[i].selected ? 0xFFFFFFFF : theme_get()->fg;
     int text_len = 0;
     for (int c = 0; icons[i].label[c]; c++) text_len += 8;
-    int text_x = icons[i].x + 32 - (text_len / 2); // Center around 64px width
-    draw_string_to_trg(target, text_x, icons[i].y + 70, icons[i].label,
+    int text_x = icons[i].x + 40 - (text_len / 2); // Center around 80px width
+    draw_string_to_trg(target, text_x, icons[i].y + 86, icons[i].label,
                        text_col);
   }
 }
@@ -1724,8 +1728,8 @@ void desktop_mouse_move(int mx, int my) {
   extern os_config_t global_config;
   if (global_config.show_desktop_icons) {
     for (int i = 0; i < icon_count; i++) {
-      if (mx >= icons[i].x - 8 && mx < icons[i].x + 72 &&
-          my >= icons[i].y - 8 && my < icons[i].y + 92) {
+      if (mx >= icons[i].x - 8 && mx < icons[i].x + 88 &&
+          my >= icons[i].y - 8 && my < icons[i].y + 108) {
         new_hover = i;
         break;
       }
@@ -1734,12 +1738,12 @@ void desktop_mouse_move(int mx, int my) {
   if (new_hover != hovered_icon) {
     // Invalidate old hover area
     if (hovered_icon >= 0 && hovered_icon < icon_count) {
-      compositor_invalidate_rect(icons[hovered_icon].x - 8, icons[hovered_icon].y - 8, 80, 100);
+      compositor_invalidate_rect(icons[hovered_icon].x - 8, icons[hovered_icon].y - 8, 96, 116);
     }
     hovered_icon = new_hover;
     // Invalidate new hover area
     if (hovered_icon >= 0 && hovered_icon < icon_count) {
-      compositor_invalidate_rect(icons[hovered_icon].x - 8, icons[hovered_icon].y - 8, 80, 100);
+      compositor_invalidate_rect(icons[hovered_icon].x - 8, icons[hovered_icon].y - 8, 96, 116);
     }
     extern int ui_dirty;
     ui_dirty = 1;
@@ -1923,8 +1927,8 @@ void desktop_click(int mx, int my, int buttons) {
   extern os_config_t global_config;
   if (global_config.show_desktop_icons) {
     for (int i = 0; i < icon_count; i++) {
-      if (mx >= icons[i].x - 8 && mx < icons[i].x + 72 && my >= icons[i].y - 8 &&
-          my < icons[i].y + 92) {
+      if (mx >= icons[i].x - 8 && mx < icons[i].x + 88 && my >= icons[i].y - 8 &&
+          my < icons[i].y + 108) {
         clicked_icon = i;
         break;
       }
@@ -1947,7 +1951,7 @@ void desktop_click(int mx, int my, int buttons) {
         icons[i].selected = (i == clicked_icon);
         selection_changed = 1;
         // Invalidate icon area to redraw selection state
-        compositor_invalidate_rect(icons[i].x - 8, icons[i].y - 8, 80, 100);
+        compositor_invalidate_rect(icons[i].x - 8, icons[i].y - 8, 96, 116);
       }
     }
 
@@ -1968,7 +1972,7 @@ void desktop_click(int mx, int my, int buttons) {
       icons[i].selected = 0;
       selection_changed = 1;
       // Invalidate to redraw unselected state
-      compositor_invalidate_rect(icons[i].x - 5, icons[i].y - 5, 55, 70);
+      compositor_invalidate_rect(icons[i].x - 8, icons[i].y - 8, 96, 116);
     }
   }
 

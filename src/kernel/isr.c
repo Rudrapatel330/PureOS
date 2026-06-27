@@ -85,6 +85,10 @@ void isr_install() {
   idt_set_gate(46, (uint64_t)irq14, 0x08, 0x8E);
   idt_set_gate(47, (uint64_t)irq15, 0x08, 0x8E);
 
+  // LAPIC timer (SMP scheduling)
+  extern void isr48();
+  idt_set_gate(48, (uint64_t)isr48, 0x08, 0x8E);
+
   // Syscall (int 0x80, DPL 3)
   extern void isr128();
   idt_set_gate(128, (uint64_t)isr128, 0x08, 0xEE);

@@ -71,6 +71,7 @@ void uvc_init_device(usb_device_t *dev) {
     print_serial("UVC: Probe SET_CUR failed!\n");
     return;
   }
+  print_serial("UVC: Probe SET_CUR succeeded.\n");
 
   // 2. Negotiation (Commit)
   setup.request = UVC_SET_CUR;
@@ -79,6 +80,7 @@ void uvc_init_device(usb_device_t *dev) {
     print_serial("UVC: Commit SET_CUR failed!\n");
     return;
   }
+  print_serial("UVC: Commit SET_CUR succeeded.\n");
 
   print_serial("UVC: Negotiation Complete.\n");
 

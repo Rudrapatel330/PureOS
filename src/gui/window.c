@@ -119,7 +119,7 @@ void winmgr_minimize_window(Window *win) {
   if (!win)
     return;
 
-  animation_start_window_minimize(win, win->x + win->width / 2, 768, 12);
+  animation_start_window_minimize(win, win->x + win->width / 2, 768, 60);
 }
 
 void winmgr_maximize_window(Window *win) {
@@ -149,7 +149,7 @@ void winmgr_maximize_window(Window *win) {
     win->height = screen_height - 40; // Desktop area
     win->is_maximized = 1;
 
-    animation_start_bounds_transition(win, old_x, old_y, old_w, old_h, 30);
+    animation_start_bounds_transition(win, old_x, old_y, old_w, old_h, 60);
   } else {
     int old_x = win->x;
     int old_y = win->y;
@@ -163,7 +163,7 @@ void winmgr_maximize_window(Window *win) {
     win->height = win->saved_h;
     win->is_maximized = 0;
 
-    animation_start_bounds_transition(win, old_x, old_y, old_w, old_h, 12);
+    animation_start_bounds_transition(win, old_x, old_y, old_w, old_h, 60);
   }
 }
 
@@ -248,7 +248,7 @@ Window *create_window(int x, int y, int w, int h, const char *title, int type) {
 
       // Start the scale-up animation (approx 300ms)
       animation_start_window_open(win, start_x, start_y,
-                                  12); // 12 ticks ~ 50ms at 250Hz
+                                  60); // 60 ticks ~ 240ms at 250Hz
 
       return win;
     }
@@ -687,7 +687,7 @@ void winmgr_close_active(void) {
     int dest_x = screen_width / 2;
     int dest_y = screen_height; // Taskbar area
 
-    animation_start_window_close(active_window, dest_x, dest_y, 12); // 12 ticks
+    animation_start_window_close(active_window, dest_x, dest_y, 60); // 60 ticks
 
     // We don't NULL out active_window yet, animation.c will complete the
     // closure.

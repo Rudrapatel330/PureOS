@@ -219,7 +219,7 @@ int fat_init() {
   // Mount FAT at /
   vfs_inode_t *fat_inode = (vfs_inode_t *)kmalloc(sizeof(vfs_inode_t));
   memset(fat_inode, 0, sizeof(vfs_inode_t));
-  fat_inode->mode = VFS_DIRECTORY;
+  fat_inode->mode = VFS_DIRECTORY | 0555;
   fat_inode->inode_no = root_cluster;
   extern file_operations_t fat_file_ops;
   extern inode_operations_t fat_inode_ops;
@@ -1108,7 +1108,7 @@ static vfs_dentry_t *fat_get_vfs_node(fat_dir_entry_t *entry) {
     inode->size = entry->file_size;
     inode->inode_no = cluster;
     inode->mode =
-        (entry->attributes & FAT_ATTR_DIRECTORY) ? VFS_DIRECTORY : VFS_FILE;
+        (entry->attributes & FAT_ATTR_DIRECTORY) ? (VFS_DIRECTORY | 0555) : (VFS_FILE | 0444);
     inode->i_ops = &fat_inode_ops;
     inode->f_ops = &fat_file_ops;
     inode->refcount = 1;
@@ -1187,7 +1187,9 @@ inode_operations_t fat_inode_ops = {
   fat_vfs_finddir,
   0,
   0,
-  0
+  0,
+  0,  // create
+  0   // rename
 };
 
 int fat_copy_file(const char *src, const char *dst) {

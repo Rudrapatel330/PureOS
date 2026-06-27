@@ -40,8 +40,12 @@ static int was_btn = 0;
 extern int ui_dirty;
 static spinlock_irq_t pdf_lock;
 
-static char pdf_filename[128] = "sample.pdf";
+static char pdf_filename[128] = "";
 static char pdf_title[160] = "PDF Reader";
+
+#define MAX_PDF_FILES 16
+static char pdf_picker_files[MAX_PDF_FILES][32];
+static int pdf_picker_count = 0;
 
 /* Raw file buffer */
 #define PDF_FILE_SIZE (1024 * 1024 * 2) /* 2MB max PDF */
@@ -591,19 +595,25 @@ static void pdfreader_draw(void *w) {
   winmgr_draw_text(win, 8, status_y + 6, status_text, PDF_COL_DIM);
 
   if (pdf_dialog_mode == 1) {
-    int dw = 320, dh = 130;
+    int dw = 320, dh = 50 + (pdf_picker_count > 0 ? pdf_picker_count * 30 : 30) + 40;
     int dx = (width - dw) / 2;
     int dy = (height - dh) / 2;
     winmgr_fill_rect(win, dx, dy, dw, dh, PDF_COL_DIALOG_BG);
     winmgr_draw_rect(win, dx, dy, dw, dh, PDF_COL_DIALOG_BORDER);
-    winmgr_draw_text(win, dx + 12, dy + 12, "Open PDF File", 0xFFFFFF);
+    winmgr_draw_text(win, dx + 12, dy + 12, "Select PDF File", 0xFFFFFF);
 
-    winmgr_fill_rect(win, dx + 12, dy + 40, dw - 24, 24, PDF_COL_INPUT_BG);
-    winmgr_draw_text(win, dx + 20, dy + 46, pdf_filename, 0xFFFFFF);
+    if (pdf_picker_count == 0) {
+      winmgr_draw_text(win, dx + 20, dy + 40, "No PDF files found.", PDF_COL_DIM);
+    } else {
+      for (int i = 0; i < pdf_picker_count; i++) {
+        winmgr_fill_rect(win, dx + 12, dy + 40 + i * 30, dw - 24, 24, PDF_COL_INPUT_BG);
+        winmgr_draw_text(win, dx + 20, dy + 46 + i * 30, pdf_picker_files[i], 0xFFFFFF);
+      }
+    }
 
-    /* OK button */
-    winmgr_fill_rect(win, dx + dw - 64, dy + dh - 32, 52, 22, PDF_COL_ACCENT);
-    winmgr_draw_text(win, dx + dw - 52, dy + dh - 26, "OK", 0xFFFFFF);
+    /* Cancel button */
+    winmgr_fill_rect(win, dx + dw - 74, dy + dh - 32, 62, 22, PDF_COL_ACCENT);
+    winmgr_draw_text(win, dx + dw - 62, dy + dh - 26, "Cancel", 0xFFFFFF);
   }
 
   /* Release lock (no IRQ restore needed — we never disabled IRQs) */
@@ -682,29 +692,10 @@ static void pdfreader_zoom(int delta) {
 }
 
 static void pdfreader_handle_dialog_input(char c) {
-  int len = strlen(pdf_filename);
-  if (c == '\n' || c == '\r') {
-    /* Open the file */
-    pdf_dialog_mode = 0;
-
-    char *fname = (char *)kmalloc(128);
-    if (fname) {
-      strcpy(fname, pdf_filename);
-      msg_t m = {0};
-      m.type = MSG_USER + 1;
-      m.ptr = fname;
-      msg_send_to_name("PDFReader", &m);
+    if (c == 27) {
+      /* Cancel */
+      pdf_dialog_mode = 0;
     }
-  } else if (c == 27) {
-    /* Cancel */
-    pdf_dialog_mode = 0;
-  } else if (c == '\b') {
-    if (len > 0)
-      pdf_filename[len - 1] = 0;
-  } else if (len < 31 && c >= 32 && c < 127) {
-    pdf_filename[len] = c;
-    pdf_filename[len + 1] = 0;
-  }
   ui_dirty = 1;
   if (pdf_win)
     pdf_win->needs_redraw = 1;
@@ -724,25 +715,39 @@ static void pdfreader_on_mouse(void *w, int rx, int ry, int buttons) {
 
   /* Dialog mode clicks */
   if (pdf_dialog_mode == 1) {
-    int dw = 280, dh = 110;
+    int dw = 320, dh = 50 + (pdf_picker_count > 0 ? pdf_picker_count * 30 : 30) + 40;
     int dx = (win->width - dw) / 2;
     int dy = (win->height - dh) / 2;
-    /* OK button */
-    if (rx >= dx + dw - 64 && rx < dx + dw - 12 && ry >= dy + 82 &&
-        ry < dy + 104) {
-      pdf_dialog_mode = 0;
 
-      char *fname = (char *)kmalloc(128);
-      if (fname) {
-        strcpy(fname, pdf_filename);
-        msg_t m = {0};
-        m.type = MSG_USER + 1;
-        m.ptr = fname;
-        msg_send_to_name("PDFReader", &m);
+    /* Cancel button */
+    if (rx >= dx + dw - 74 && rx < dx + dw - 12 && ry >= dy + dh - 32 && ry < dy + dh - 10) {
+      pdf_dialog_mode = 0;
+      pdf_win->needs_redraw = 1;
+      ui_dirty = 1;
+      return;
+    }
+
+    /* File items */
+    for (int i = 0; i < pdf_picker_count; i++) {
+      if (rx >= dx + 12 && rx < dx + dw - 12 && ry >= dy + 40 + i * 30 && ry < dy + 64 + i * 30) {
+        strcpy(pdf_filename, pdf_picker_files[i]);
+        pdf_dialog_mode = 0;
+        
+        char *fname = (char *)kmalloc(128);
+        if (fname) {
+          strcpy(fname, "/");
+          strcat(fname, pdf_filename);
+          msg_t m = {0};
+          m.type = MSG_USER + 1;
+          m.ptr = fname;
+          msg_send_to_name("PDFReader", &m);
+        }
+        
+        pdf_win->needs_redraw = 1;
+        ui_dirty = 1;
+        return;
       }
     }
-    ui_dirty = 1;
-    win->needs_redraw = 1;
     return;
   }
 
@@ -750,7 +755,27 @@ static void pdfreader_on_mouse(void *w, int rx, int ry, int buttons) {
   if (ry >= PDF_MENU_Y && ry < PDF_MENU_Y + PDF_MENU_H) {
     /* Open button */
     if (rx >= 6 && rx < 54) {
-      pdf_dialog_mode = 1;
+        pdf_dialog_mode = 1;
+        pdf_picker_count = 0;
+        FileInfo files[64];
+        int n = fs_list_files("/", files, 64);
+        for (int i = 0; i < n; i++) {
+          if (!files[i].is_dir) {
+            int len = strlen(files[i].name);
+            if (len > 4) {
+              char *ext = files[i].name + len - 4;
+              char ext_up[5];
+              for (int k = 0; k < 4; k++) {
+                char c = ext[k];
+                ext_up[k] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+              }
+              ext_up[4] = 0;
+              if (strcmp(ext_up, ".PDF") == 0 && pdf_picker_count < MAX_PDF_FILES) {
+                strcpy(pdf_picker_files[pdf_picker_count++], files[i].name);
+              }
+            }
+          }
+        }
       ui_dirty = 1;
       win->needs_redraw = 1;
       return;
@@ -864,7 +889,7 @@ static void pdfreader_thread_entry(void) {
       task_t *self = get_current_task();
       if (self)
         self->state = TASK_STOPPED;
-      __asm__ volatile("int $32");
+      __asm__ volatile("int $49");
     }
   }
 
@@ -922,7 +947,29 @@ void pdfreader_init(void) {
   pdf_error_msg[0] = 0;
   pdf_rendered_page = -1;
   pdf_page_pixels = 0;
-  strcpy(pdf_filename, "sample.pdf");
+  pdf_filename[0] = 0;
+
+  /* Auto-load first PDF found */
+  FileInfo files[64];
+  int n = fs_list_files("/", files, 64);
+  for (int i = 0; i < n; i++) {
+    if (!files[i].is_dir) {
+      int len = strlen(files[i].name);
+      if (len > 4) {
+        char *ext = files[i].name + len - 4;
+        char ext_up[5];
+        for (int k = 0; k < 4; k++) {
+          char c = ext[k];
+          ext_up[k] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+        }
+        ext_up[4] = 0;
+        if (strcmp(ext_up, ".PDF") == 0) {
+          strcpy(pdf_filename, files[i].name);
+          break;
+        }
+      }
+    }
+  }
 
   print_serial("PDF: Window created.\n");
 
@@ -938,6 +985,18 @@ void pdfreader_init(void) {
   if (t) {
     task_set_priority(t->id, 3);
     pdf_win->owner_pid = t->id;
+
+    if (pdf_filename[0] != 0) {
+      char *fname = (char *)kmalloc(128);
+      if (fname) {
+        strcpy(fname, "/");
+        strcat(fname, pdf_filename);
+        msg_t m = {0};
+        m.type = MSG_USER + 1;
+        m.ptr = fname;
+        msg_send_to_name("PDFReader", &m);
+      }
+    }
   } else {
     print_serial("PDFREADER: Failed to start thread\n");
     pdf_running = 0;

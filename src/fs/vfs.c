@@ -121,20 +121,63 @@ static file_handle_t **get_current_fd_table() {
   return boot_fd_table;
 }
 
-typedef struct vfs_mount {
-  char path[64];
-  vfs_dentry_t *root;
-  struct vfs_mount *next;
-} vfs_mount_t;
+// Mount struct is defined in vfs.h
+vfs_mount_t *mount_list = 0;
 
-static vfs_mount_t *mount_list = 0;
+uint32_t vfs_get_time(void) {
+  extern uint32_t get_timer_ticks(void);
+  return get_timer_ticks() / 250; // 250Hz PIT -> seconds
+}
 
 void vfs_mount(const char *path, vfs_dentry_t *root) {
   vfs_mount_t *m = (vfs_mount_t *)kmalloc(sizeof(vfs_mount_t));
   strcpy(m->path, path);
+  m->fstype[0] = 0; // Will be set by caller if needed
   m->root = root;
   m->next = mount_list;
   mount_list = m;
+}
+
+int vfs_get_mount_count(void) {
+  int count = 0;
+  vfs_mount_t *m = mount_list;
+  while (m) { count++; m = m->next; }
+  return count;
+}
+
+// Resolve parent directory and extract basename from path
+// Returns parent dentry (caller must free), puts basename into basename_out
+vfs_dentry_t *vfs_resolve_parent(const char *path, char *basename_out, int basename_maxlen) {
+  if (!path || !basename_out) return 0;
+  
+  // Find last slash
+  int last_slash = -1;
+  for (int i = 0; path[i]; i++) {
+    if (path[i] == '/') last_slash = i;
+  }
+  
+  if (last_slash < 0) {
+    // No slash — parent is cwd (treat as root for now)
+    strncpy(basename_out, path, basename_maxlen - 1);
+    basename_out[basename_maxlen - 1] = 0;
+    return vfs_resolve_path("/");
+  }
+  
+  // Extract basename
+  strncpy(basename_out, path + last_slash + 1, basename_maxlen - 1);
+  basename_out[basename_maxlen - 1] = 0;
+  
+  // Extract parent path
+  char parent_path[256];
+  if (last_slash == 0) {
+    parent_path[0] = '/';
+    parent_path[1] = 0;
+  } else {
+    strncpy(parent_path, path, last_slash);
+    parent_path[last_slash] = 0;
+  }
+  
+  return vfs_resolve_path(parent_path);
 }
 
 extern void devfs_init(void);
@@ -192,24 +235,44 @@ vfs_dentry_t *vfs_resolve_path(const char *path) {
   }
 
   if (best_mount) {
-    current = best_mount->root;
+    vfs_dentry_t *m_root = (vfs_dentry_t *)kmalloc(sizeof(vfs_dentry_t));
+    memcpy(m_root, best_mount->root, sizeof(vfs_dentry_t));
+    m_root->refcount = 1;
+    if (m_root->inode) m_root->inode->refcount++;
+    current = m_root;
+    
     remaining_path = path_copy + longest_match;
     if (remaining_path[0] == '/')
       remaining_path++;
+  } else {
+    // Clone vfs_root as well so we can safely free current in the loop
+    vfs_dentry_t *root_ref = (vfs_dentry_t *)kmalloc(sizeof(vfs_dentry_t));
+    memcpy(root_ref, vfs_root, sizeof(vfs_dentry_t));
+    root_ref->refcount = 1;
+    if (root_ref->inode) root_ref->inode->refcount++;
+    current = root_ref;
   }
 
   if (strlen(remaining_path) == 0) {
-    vfs_dentry_t *ref = (vfs_dentry_t *)kmalloc(sizeof(vfs_dentry_t));
-    memcpy(ref, current, sizeof(vfs_dentry_t));
-    ref->refcount = 1;
-    if (ref->inode) ref->inode->refcount++;
-    return ref;
+    return current;
   }
 
-  char *token = strtok(remaining_path, "/");
+  char *saveptr = remaining_path;
+  char *token = 0;
+  
+  while (*saveptr == '/') saveptr++;
+  if (*saveptr) {
+    token = saveptr;
+    while (*saveptr && *saveptr != '/') saveptr++;
+    if (*saveptr == '/') {
+      *saveptr = 0;
+      saveptr++;
+    }
+  }
+
   vfs_dentry_t *next = 0;
 
-  while (token) {
+  while (token && *token) {
     if (!current->inode || !current->inode->i_ops || !current->inode->i_ops->lookup) {
       if (next)
         kfree(next);
@@ -224,13 +287,10 @@ vfs_dentry_t *vfs_resolve_path(const char *path) {
       }
     }
 
-    // If we just resolved a part of the path, and it's not the first part,
-    // we should free the intermediate node 'current' IF it's not the global
-    // vfs_root.
-    if (current != vfs_root) {
-      if (current->inode && current->inode->refcount > 0) current->inode->refcount--;
-      kfree(current);
-    }
+    // If we just resolved a part of the path, we should free the intermediate node 'current'
+    // since we already found 'next'. current is guaranteed to be a temporary clone here.
+    if (current->inode && current->inode->refcount > 0) current->inode->refcount--;
+    kfree(current);
 
     if (!next)
       return 0;
@@ -249,7 +309,17 @@ vfs_dentry_t *vfs_resolve_path(const char *path) {
       symlink_depth++;
     }
 
-    token = strtok(0, "/");
+    while (*saveptr == '/') saveptr++;
+    if (*saveptr == 0) {
+      token = 0;
+    } else {
+      token = saveptr;
+      while (*saveptr && *saveptr != '/') saveptr++;
+      if (*saveptr == '/') {
+        *saveptr = 0;
+        saveptr++;
+      }
+    }
   }
 
   return current;
@@ -464,28 +534,80 @@ int vfs_stat(const char *path, vfs_stat_t *st) {
   vfs_dentry_t *node = vfs_resolve_path(path);
   if (!node) return -1;
   
+  memset(st, 0, sizeof(vfs_stat_t));
+  
+  // Try FS-specific stat first
   if (node->inode && node->inode->i_ops && node->inode->i_ops->stat) {
     int ret = node->inode->i_ops->stat(node->inode, st);
     if (node->inode && node->inode->refcount > 0) node->inode->refcount--;
-    kfree(node); // Assuming node is dynamically allocated copy
+    kfree(node);
     return ret;
   }
   
+  // Fill from inode
   if (node->inode) {
+    st->st_ino = node->inode->inode_no;
+    st->st_mode = node->inode->mode;
+    st->st_nlink = node->inode->nlink > 0 ? node->inode->nlink : 1;
+    st->st_uid = node->inode->uid;
+    st->st_gid = node->inode->gid;
+    st->st_size = node->inode->size;
+    st->st_blksize = 512;
+    st->st_blocks = (node->inode->size + 511) / 512;
+    st->st_atime = node->inode->atime;
+    st->st_mtime = node->inode->mtime;
+    st->st_ctime = node->inode->ctime;
+    // Legacy compat
     st->size = node->inode->size;
     st->flags = node->inode->mode;
-  } else {
-    st->size = 0;
-    st->flags = 0;
   }
+  
   if (node->inode && node->inode->refcount > 0) node->inode->refcount--;
   kfree(node);
   return 0;
 }
 
+int vfs_fstat(int fd, vfs_stat_t *st) {
+  file_handle_t **table = get_current_fd_table();
+  if (fd < 0 || fd >= MAX_FD || !table[fd]) return -1;
+  vfs_dentry_t *dentry = table[fd]->dentry;
+  if (!dentry || !dentry->inode) return -1;
+  
+  memset(st, 0, sizeof(vfs_stat_t));
+  vfs_inode_t *inode = dentry->inode;
+  st->st_ino = inode->inode_no;
+  st->st_mode = inode->mode;
+  st->st_nlink = inode->nlink > 0 ? inode->nlink : 1;
+  st->st_uid = inode->uid;
+  st->st_gid = inode->gid;
+  st->st_size = inode->size;
+  st->st_blksize = 512;
+  st->st_blocks = (inode->size + 511) / 512;
+  st->st_atime = inode->atime;
+  st->st_mtime = inode->mtime;
+  st->st_ctime = inode->ctime;
+  st->size = inode->size;
+  st->flags = inode->mode;
+  return 0;
+}
+
 int vfs_mkdir(const char *path) {
-  // Try to dispatch to driver if parent is resolvable
-  // For Sprint 2, simple prefix routing since proper VFS parent lookup is missing
+  // Try proper VFS dispatch via parent inode
+  char basename[128];
+  vfs_dentry_t *parent = vfs_resolve_parent(path, basename, sizeof(basename));
+  
+  if (parent && parent->inode && parent->inode->i_ops && parent->inode->i_ops->mkdir) {
+    int ret = parent->inode->i_ops->mkdir(parent->inode, basename, S_IFDIR | 0755);
+    if (parent->inode && parent->inode->refcount > 0) parent->inode->refcount--;
+    kfree(parent);
+    return ret;
+  }
+  if (parent) {
+    if (parent->inode && parent->inode->refcount > 0) parent->inode->refcount--;
+    kfree(parent);
+  }
+  
+  // Fallback: direct FS dispatch for backward compat
   if (strncmp(path, "/ram/", 5) == 0 || strcmp(path, "/ram") == 0) {
     extern int ramfs_mkdir(const char *);
     const char *name = path;
@@ -497,20 +619,35 @@ int vfs_mkdir(const char *path) {
 }
 
 int vfs_unlink(const char *path) {
+  // Permission check
   vfs_dentry_t *node = vfs_resolve_path(path);
   if (!node) return -1;
   
-  if (node->inode && !inode_permission(node->inode, 2)) { // write permission needed to unlink
+  if (node->inode && !inode_permission(node->inode, 2)) {
     if (node->inode->refcount > 0) node->inode->refcount--;
     kfree(node);
-    extern void print_serial(const char*);
     print_serial("VFS: Permission denied on unlink\n");
     return -1;
   }
-  
   if (node->inode && node->inode->refcount > 0) node->inode->refcount--;
   kfree(node);
 
+  // Try proper VFS dispatch via parent inode
+  char basename[128];
+  vfs_dentry_t *parent = vfs_resolve_parent(path, basename, sizeof(basename));
+  
+  if (parent && parent->inode && parent->inode->i_ops && parent->inode->i_ops->unlink) {
+    int ret = parent->inode->i_ops->unlink(parent->inode, basename);
+    if (parent->inode && parent->inode->refcount > 0) parent->inode->refcount--;
+    kfree(parent);
+    return ret;
+  }
+  if (parent) {
+    if (parent->inode && parent->inode->refcount > 0) parent->inode->refcount--;
+    kfree(parent);
+  }
+
+  // Fallback: direct FS dispatch
   if (strncmp(path, "/ram/", 5) == 0 || strcmp(path, "/ram") == 0) {
     extern int ramfs_delete(const char *);
     const char *name = path;
@@ -521,14 +658,86 @@ int vfs_unlink(const char *path) {
   return fat_delete_file(path);
 }
 
+// Cross-filesystem copy via VFS read/write
 int vfs_copy_file(const char *src, const char *dst) {
+  // Try FAT fast-path first (same filesystem)
   extern int fat_copy_file(const char *src, const char *dst);
-  return fat_copy_file(src, dst);
+  
+  // Check if both are on same FS (FAT root)
+  int src_is_fat = (strncmp(src, "/ram/", 5) != 0 && strncmp(src, "/dev/", 5) != 0 && strncmp(src, "/proc/", 6) != 0);
+  int dst_is_fat = (strncmp(dst, "/ram/", 5) != 0 && strncmp(dst, "/dev/", 5) != 0 && strncmp(dst, "/proc/", 6) != 0);
+  
+  if (src_is_fat && dst_is_fat) {
+    return fat_copy_file(src, dst);
+  }
+  
+  // Cross-filesystem: read source, write to destination
+  vfs_stat_t st;
+  if (vfs_stat(src, &st) < 0) return -1;
+  
+  uint32_t file_size = st.st_size;
+  if (file_size == 0) file_size = st.size; // legacy compat
+  
+  uint8_t *buf = kmalloc(file_size + 1);
+  if (!buf) return -1;
+  
+  int src_fd = vfs_open(src, O_RDONLY);
+  if (src_fd < 0) { kfree(buf); return -1; }
+  
+  int bytes_read = vfs_read(src_fd, buf, file_size);
+  vfs_close(src_fd);
+  
+  if (bytes_read <= 0) { kfree(buf); return -1; }
+  
+  // Write to destination
+  extern int fs_write(const char *, const uint8_t *, uint32_t);
+  int ret = fs_write(dst, buf, bytes_read) ? 0 : -1;
+  kfree(buf);
+  return ret;
 }
 
 int vfs_move_file(const char *src, const char *dst) {
-  extern int fat_move_file(const char *src, const char *dst);
-  return fat_move_file(src, dst);
+  // Try FAT fast-path (atomic rename within same FS)
+  int src_is_fat = (strncmp(src, "/ram/", 5) != 0 && strncmp(src, "/dev/", 5) != 0 && strncmp(src, "/proc/", 6) != 0);
+  int dst_is_fat = (strncmp(dst, "/ram/", 5) != 0 && strncmp(dst, "/dev/", 5) != 0 && strncmp(dst, "/proc/", 6) != 0);
+  
+  if (src_is_fat && dst_is_fat) {
+    extern int fat_move_file(const char *src, const char *dst);
+    return fat_move_file(src, dst);
+  }
+  
+  // Cross-filesystem: copy + delete
+  if (vfs_copy_file(src, dst) == 0) {
+    vfs_unlink(src);
+    return 0;
+  }
+  return -1;
+}
+
+int vfs_rename(const char *oldpath, const char *newpath) {
+  return vfs_move_file(oldpath, newpath);
+}
+
+int vfs_create_file(const char *path, uint32_t mode) {
+  // Try proper VFS dispatch via parent inode
+  char basename[128];
+  vfs_dentry_t *parent = vfs_resolve_parent(path, basename, sizeof(basename));
+  
+  if (parent && parent->inode && parent->inode->i_ops && parent->inode->i_ops->create) {
+    int ret = parent->inode->i_ops->create(parent->inode, basename, S_IFREG | (mode & 0777));
+    if (parent->inode && parent->inode->refcount > 0) parent->inode->refcount--;
+    kfree(parent);
+    return ret;
+  }
+  if (parent) {
+    if (parent->inode && parent->inode->refcount > 0) parent->inode->refcount--;
+    kfree(parent);
+  }
+  
+  // Fallback: write empty file
+  extern int fs_write(const char *, const uint8_t *, uint32_t);
+  uint8_t empty = 0;
+  return fs_write(path, &empty, 0) ? 0 : -1;
 }
 
 int vfs_chmod(const char *path, uint32_t mode) {
@@ -546,7 +755,7 @@ int vfs_chmod(const char *path, uint32_t mode) {
       return -1;
     }
     node->inode->mode = (node->inode->mode & ~0777) | (mode & 0777);
-    // Note: This only changes it in memory. It should ideally persist to disk.
+    node->inode->ctime = vfs_get_time();
   }
   
   if (node->inode && node->inode->refcount > 0) node->inode->refcount--;
@@ -562,7 +771,6 @@ int vfs_chown(const char *path, uint32_t uid, uint32_t gid) {
   uint32_t current_uid = curr_task ? curr_task->uid : 0;
   
   if (node->inode) {
-    // Only root can chown arbitrary users. Owner can chgrp.
     if (current_uid != 0) {
       if (node->inode->refcount > 0) node->inode->refcount--;
       kfree(node);
@@ -570,13 +778,14 @@ int vfs_chown(const char *path, uint32_t uid, uint32_t gid) {
     }
     node->inode->uid = uid;
     node->inode->gid = gid;
-    // Note: Only memory change for now
+    node->inode->ctime = vfs_get_time();
   }
   
   if (node->inode && node->inode->refcount > 0) node->inode->refcount--;
   kfree(node);
   return 0;
 }
+
 
 // ======================== SYMLINK SUPPORT ========================
 

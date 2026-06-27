@@ -21,12 +21,14 @@ static void camera_draw_cb(void *w) {
   winmgr_fill_rect(win, 2, 24, win->width - 4, win->height - 26, 0xFF000000);
 
   if (state && state->cam_ctx && state->cam_ctx->frame_buffer) {
-    int draw_w = state->cam_ctx->width;
-    int draw_h = state->cam_ctx->height;
+    int src_w = state->cam_ctx->width;
+    int src_h = state->cam_ctx->height;
+    int dst_w = src_w * 2;
+    int dst_h = src_h * 2;
 
-    // Center video in window
-    int off_x = (win->width - draw_w) / 2;
-    int off_y = (win->height - draw_h) / 2 + 12;
+    // Center upscaled video in window
+    int off_x = (win->width - dst_w) / 2;
+    int off_y = (win->height - dst_h) / 2 + 12;
 
     if (off_x < 2) off_x = 2;
     if (off_y < 24) off_y = 24;
@@ -36,14 +38,14 @@ static void camera_draw_cb(void *w) {
     uint32_t *src = state->cam_ctx->frame_buffer;
     uint32_t *dst = win->surface;
 
-    int max_h = (draw_h < (win->surface_h - off_y)) ? draw_h : (win->surface_h - off_y);
-    int max_w = (draw_w < (win->surface_w - off_x)) ? draw_w : (win->surface_w - off_x);
+    int max_h = (dst_h < (win->surface_h - off_y)) ? dst_h : (win->surface_h - off_y);
+    int max_w = (dst_w < (win->surface_w - off_x)) ? dst_w : (win->surface_w - off_x);
 
     for (int y = 0; y < max_h; y++) {
       uint32_t *dst_row = &dst[(off_y + y) * win->surface_w];
-      uint32_t *src_row = &src[y * draw_w];
+      uint32_t *src_row = &src[(y / 2) * src_w];
       for (int x = 0; x < max_w; x++) {
-        dst_row[off_x + x] = 0xFF000000 | src_row[x];
+        dst_row[off_x + x] = 0xFF000000 | src_row[x / 2];
       }
     }
   } else {

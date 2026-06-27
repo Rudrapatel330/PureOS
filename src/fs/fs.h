@@ -18,6 +18,7 @@ typedef struct {
   char name[32]; // Increased from 12 to prevent overflow with 8.3+dot+null
   int size;
   int is_dir;
+  int is_symlink;
 } __attribute__((packed)) FileInfo;
 
 // FS Interface

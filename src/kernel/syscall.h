@@ -2,7 +2,14 @@
 #define SYSCALL_H
 
 #include "isr.h"
+#include <stddef.h>
 #include <stdint.h>
+
+// Syscall convention:
+// RAX = syscall number
+// RBX = arg1, RCX = arg2, RDX = arg3
+// RSI = arg4, RDI = arg5
+// Return in RAX
 
 #define SYS_EXIT 0
 #define SYS_PRINT 1
@@ -33,9 +40,53 @@
 #define SYS_DUP2 27
 #define SYS_CHMOD 28
 #define SYS_CHOWN 29
+#define SYS_RENAME 30
+#define SYS_READDIR 31
+#define SYS_FSTAT 32
+#define SYS_CREAT 33
+#define SYS_SYMLINK 34
+#define SYS_READLINK 35
+
+// === Phase 1: New Production Syscalls ===
+#define SYS_GETUID 40
+#define SYS_GETGID 41
+#define SYS_SETUID 42
+#define SYS_SETGID 43
+#define SYS_UMASK 44
+
+// Shared Memory IPC
+#define SYS_SHM_CREATE 50
+#define SYS_SHM_ATTACH 51
+#define SYS_SHM_DETACH 52
+#define SYS_SHM_STAT 53
+
+// Unix Domain Sockets
+#define SYS_SOCKETPAIR 60
+#define SYS_SENDMSG 61
+#define SYS_RECVMSG 62
+
+// Semaphore / Synchronization
+#define SYS_SEM_CREATE 70
+#define SYS_SEM_WAIT 71
+#define SYS_SEM_POST 72
+
+// Window Server IPC
+#define SYS_WM_CONNECT 80
+#define SYS_WM_CREATE_WINDOW 81
+#define SYS_WM_SUBMIT_FRAME 82
+#define SYS_WM_GET_EVENT 83
+#define SYS_WM_GET_MOUSE 84
 
 void syscall_init();
 uint64_t syscall_handler(registers_t *regs);
+void syscall_fast_entry(void);
+
+// Syscall fast path (syscall/sysret) support
+void arch_syscall_init(void);
+
+// User pointer validation
+int is_user_range(const void *addr, size_t len);
+int is_user_string(const char *str);
 
 // User mode entry/exit
 void enter_user_mode(void *entry_point);

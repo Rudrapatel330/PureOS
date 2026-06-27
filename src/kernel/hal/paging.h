@@ -50,4 +50,13 @@ void paging_map_user_page(pml4_table_t *pml4, uint64_t virtual_addr,
 
 extern int in_user_mode;
 
+// SMAP/SMUP user access helpers
+static inline void stac(void) {
+  __asm__ volatile("stac" : : : "memory");
+}
+
+static inline void clac(void) {
+  __asm__ volatile("clac" : : : "memory");
+}
+
 #endif

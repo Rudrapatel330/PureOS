@@ -1,5 +1,6 @@
 #include "../kernel/ui_layout.h"
 #include "../fs/fs.h"
+#include "../fs/vfs.h"
 #include "../kernel/heap.h"
 #include "../kernel/image.h"
 #include "../kernel/string.h"
@@ -56,12 +57,25 @@ static void photos_load_image(photos_app_t *app, const char *filename, int expec
   print_serial("\n");
 
   if (expected_size <= 0) {
-    FileInfo files[MAX_PHOTOS];
-    int count = fs_list_files("/", files, MAX_PHOTOS);
-    for (int i = 0; i < count; i++) {
-      if (strcmp(files[i].name, filename) == 0) {
-        expected_size = files[i].size;
-        break;
+    // Try vfs_stat first for full VFS paths
+    vfs_stat_t vst;
+    if (vfs_stat(filename, &vst) == 0 && vst.size > 0) {
+      expected_size = vst.size;
+    } else {
+      // Fallback: scan root directory by basename
+      const char *basename = filename;
+      for (int k = 0; filename[k]; k++)
+        if (filename[k] == '/') basename = &filename[k+1];
+      FileInfo *files = (FileInfo *)kmalloc(sizeof(FileInfo) * MAX_PHOTOS);
+      if (files) {
+        int count = fs_list_files("/", files, MAX_PHOTOS);
+        for (int i = 0; i < count; i++) {
+          if (strcmp(files[i].name, basename) == 0) {
+            expected_size = files[i].size;
+            break;
+          }
+        }
+        kfree(files);
       }
     }
   }
@@ -71,7 +85,7 @@ static void photos_load_image(photos_app_t *app, const char *filename, int expec
     return;
   }
 
-  uint8_t *raw_data = (uint8_t *)malloc(expected_size + 16);
+  uint8_t *raw_data = (uint8_t *)kmalloc(expected_size + 16);
   if (!raw_data) {
     strcpy(app->status, "Out of memory.");
     return;
@@ -79,14 +93,14 @@ static void photos_load_image(photos_app_t *app, const char *filename, int expec
 
   int size = fs_read(filename, raw_data);
   if (size <= 0) {
-    free(raw_data);
+    kfree(raw_data);
     strcpy(app->status, "Read failed.");
     return;
   }
 
   int w, h, n;
   unsigned char *pixels = stbi_load_from_memory(raw_data, size, &w, &h, &n, 4);
-  free(raw_data);
+  kfree(raw_data);
 
   if (!pixels) {
     strcpy(app->status, "Decode failed.");
@@ -128,14 +142,14 @@ static void photos_load_image(photos_app_t *app, const char *filename, int expec
 static void photos_create_thumbnail(photos_app_t *app, int idx) {
   if (app->thumbs[idx].data) return;
 
-  uint8_t *raw_data = (uint8_t *)malloc(app->file_sizes[idx] + 16);
+  uint8_t *raw_data = (uint8_t *)kmalloc(app->file_sizes[idx] + 16);
   if (!raw_data) return;
   int size = fs_read(app->filenames[idx], raw_data);
-  if (size <= 0) { free(raw_data); return; }
+  if (size <= 0) { kfree(raw_data); return; }
 
   int w, h, n;
   unsigned char *pixels = stbi_load_from_memory(raw_data, size, &w, &h, &n, 4);
-  free(raw_data);
+  kfree(raw_data);
   if (!pixels) return;
 
   int tw = THUMB_SIZE;
@@ -145,7 +159,7 @@ static void photos_create_thumbnail(photos_app_t *app, int idx) {
     tw = (w * THUMB_SIZE) / h;
   }
 
-  uint32_t *thumb_data = (uint32_t *)malloc(tw * th * 4);
+  uint32_t *thumb_data = (uint32_t *)kmalloc(tw * th * 4);
   if (!thumb_data) { stbi_image_free(pixels); return; }
 
   uint32_t *src32 = (uint32_t *)pixels;
@@ -204,7 +218,9 @@ static void photos_create_thumbnail(photos_app_t *app, int idx) {
 }
 
 static void photos_refresh_list(photos_app_t *app) {
-  FileInfo files[MAX_PHOTOS];
+  FileInfo *files = (FileInfo *)kmalloc(sizeof(FileInfo) * MAX_PHOTOS);
+  if (!files) return;
+
   int count = fs_list_files("/", files, MAX_PHOTOS);
 
   app->count = 0;
@@ -224,13 +240,17 @@ static void photos_refresh_list(photos_app_t *app) {
       else if (strcmp(ext, ".tga") == 0 || strcmp(ext, ".TGA") == 0) match = 1;
 
       if (match) {
-        strcpy(app->filenames[app->count], name);
+        // Safe copy preventing buffer overflow
+        strncpy(app->filenames[app->count], name, 31);
+        app->filenames[app->count][31] = '\0';
         app->file_sizes[app->count] = files[i].size;
         app->count++;
         if (app->count >= MAX_PHOTOS) break;
       }
     }
   }
+
+  kfree(files);
 
   if (app->count == 0) strcpy(app->status, "No images found.");
   else strcpy(app->status, "Gallery View");
@@ -439,7 +459,9 @@ static void photos_draw_viewer(window_t *win, photos_app_t *app) {
 
 static void photos_draw(void *w) {
   window_t *win = (window_t *)w;
+  if (win->fading_mode == 2) return;
   photos_app_t *app = (photos_app_t *)win->user_data;
+  if (!app) return;
   const theme_t *theme = theme_get();
 
   winmgr_fill_rect(win, 0, TITLE_H, win->width, win->height - TITLE_H, theme->bg);
@@ -567,7 +589,7 @@ static void photos_on_close(void *w) {
   if (app) {
     if (app->img_data) stbi_image_free(app->img_data);
     for (int i = 0; i < MAX_PHOTOS; i++) {
-      if (app->thumbs[i].data) free(app->thumbs[i].data);
+      if (app->thumbs[i].data) kfree(app->thumbs[i].data);
     }
     kfree(app);
     win->user_data = 0;
@@ -585,7 +607,7 @@ void photos_open(const char *path) {
     win = winmgr_create_window(-1, -1, 800, 600, "Photos");
     if (!win) return;
 
-    app = (photos_app_t *)malloc(sizeof(photos_app_t));
+    app = (photos_app_t *)kmalloc(sizeof(photos_app_t));
     memset(app, 0, sizeof(photos_app_t));
     app->selected_idx = -1;
 
@@ -601,13 +623,35 @@ void photos_open(const char *path) {
   }
 
   if (path && path[0] != 0) {
-    // Open specific file
+    // Try to match against gallery list first
+    int found = 0;
     for (int i = 0; i < app->count; i++) {
       if (strstr(path, app->filenames[i])) {
         app->selected_idx = i;
-        photos_load_image(app, path, 0);
+        photos_load_image(app, path, app->file_sizes[i]);
+        found = 1;
         break;
       }
+    }
+    // If not in gallery, load directly with full VFS path
+    if (!found) {
+      // Extract basename and add to list temporarily
+      const char *basename = path;
+      for (int k = 0; path[k]; k++)
+        if (path[k] == '/') basename = &path[k+1];
+      if (app->count < MAX_PHOTOS) {
+        strncpy(app->filenames[app->count], basename, 31);
+        app->filenames[app->count][31] = '\0';
+        app->file_sizes[app->count] = 0;
+        app->selected_idx = app->count;
+        app->count++;
+      } else {
+        app->selected_idx = 0;
+        strncpy(app->filenames[0], basename, 31);
+        app->filenames[0][31] = '\0';
+        app->file_sizes[0] = 0;
+      }
+      photos_load_image(app, path, 0);
     }
   }
 

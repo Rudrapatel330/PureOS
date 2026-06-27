@@ -187,6 +187,24 @@ void receive_keyboard_byte(uint8_t scancode) {
         winmgr_handle_cut();
         return;
       }
+      // Workspace switching: Ctrl+Left (previous), Ctrl+Right (next)
+      if (scancode == 0x4B) {
+        extern void workspace_switch(int);
+        extern int workspace_get_current(void);
+        int cur = workspace_get_current();
+        if (cur > 0)
+          workspace_switch(cur - 1);
+        return;
+      }
+      if (scancode == 0x4D) {
+        extern void workspace_switch(int);
+        extern int workspace_get_current(void);
+        extern int workspace_get_count(void);
+        int cur = workspace_get_current();
+        if (cur < workspace_get_count() - 1)
+          workspace_switch(cur + 1);
+        return;
+      }
     }
 
     // Lookup ASCII

@@ -103,7 +103,9 @@ inode_operations_t devfs_inode_ops = {
   devfs_finddir,
   0,
   0,
-  0
+  0,
+  0,  // create
+  0   // rename
 };
 
 void devfs_init(void) {

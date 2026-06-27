@@ -55,9 +55,15 @@ int elf_load_into_process(task_t *t, const char *path) {
       vfs_lseek(fd, ph.p_offset, 0); // SEEK_SET
       vfs_read(fd, (uint8_t *)seg_buf, (uint32_t)ph.p_filesz);
 
+      // Determine page flags based on ELF segment type (W^X enforcement)
+      // ph.p_flags: 1=EXEC, 2=WRITE, 4=READ
+      int user_flags = 0x1; // Present
+      if (ph.p_flags & 2) user_flags |= 0x2; // Writable
+      if (ph.p_flags & 1) user_flags |= 0x4; // Executable (NX cleared)
+
       for (uint64_t j = 0; j < num_pages * 4096; j += 4096) {
         paging_map_user_page(t->pagedir, ph.p_vaddr + j, seg_phys + j,
-                             0x7); // User, RW, Present
+                             user_flags);
       }
     }
   }

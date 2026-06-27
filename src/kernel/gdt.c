@@ -1,13 +1,16 @@
 // gdt.c
+#include "acpi.h"
 #include "gdt.h"
-#include "string.h" // For memset
+#include "heap.h"
+#include "smp.h"
+#include "string.h"
 #include <stdint.h>
 
-struct gdt_entry
-    gdt[7]; // Space for Null, KCode, KData, UCode, UData, TSS (2 slots)
+#define GDT_ENTRIES (5 + 2 * MAX_CPUS)
+
+struct gdt_entry gdt[GDT_ENTRIES];
 struct gdt_ptr gp;
 
-// 64-bit TSS structure
 typedef struct tss_entry {
   uint32_t reserved0;
   uint64_t rsp0;
@@ -26,46 +29,76 @@ typedef struct tss_entry {
   uint16_t iomap_base;
 } __attribute__((packed)) tss_entry_t;
 
-static tss_entry_t tss;
+static tss_entry_t bsp_tss;
+static tss_entry_t *cpu_tss_entries[MAX_CPUS];
 
-// Forward declarations
 void gdt_set_gate(int num, uint64_t base, uint64_t limit, uint8_t access,
                   uint8_t gran);
-extern void tss_flush(); // In gdt_flush.asm
+extern void tss_flush();
+extern uint64_t kernel_stack_top;
 
-void init_tss() {
-  extern uint64_t kernel_stack_top;
-  memset(&tss, 0, sizeof(tss_entry_t));
-  tss.rsp0 = (uint64_t)&kernel_stack_top;
-  tss.iomap_base = sizeof(tss_entry_t);
+static void init_tss_common(tss_entry_t *t, uint64_t rsp0) {
+  memset(t, 0, sizeof(tss_entry_t));
+  t->rsp0 = rsp0;
+  t->iomap_base = sizeof(tss_entry_t);
+}
+
+static void set_tss_descriptor(int gdt_index, uint64_t tss_base) {
+  uint32_t tss_limit = sizeof(tss_entry_t) - 1;
+  gdt_set_gate(gdt_index, tss_base, tss_limit, 0x89, 0x00);
+  struct gdt_entry *upper = &gdt[gdt_index + 1];
+  uint32_t base_high = (uint32_t)(tss_base >> 32);
+  upper->limit_low = (uint16_t)(base_high & 0xFFFF);
+  upper->base_low = (uint16_t)(base_high >> 16);
+  upper->base_middle = 0;
+  upper->access = 0;
+  upper->granularity = 0;
+  upper->base_high = 0;
+}
+
+static inline void ltr_selector(uint16_t sel) {
+  __asm__ volatile("ltr %0" : : "r"(sel));
+}
+
+void gdt_init_cpu(int cpu_num) {
+  if (cpu_num == 0) {
+    gdt_init();
+    return;
+  }
+
+  tss_entry_t *t = (tss_entry_t *)kmalloc(sizeof(tss_entry_t));
+  uint64_t stack = (uint64_t)kmalloc(16384) + 16384;
+  init_tss_common(t, stack);
+  cpu_tss_entries[cpu_num] = t;
+  cpu_cores[cpu_num].tss = t;
+
+  int tss_idx = 5 + 2 * cpu_num;
+  set_tss_descriptor(tss_idx, (uint64_t)t);
+
+  gdt_flush((uint64_t)&gp);
+
+  uint16_t sel = (uint16_t)(tss_idx * 8);
+  ltr_selector(sel);
 }
 
 void gdt_init() {
-  gp.limit = (sizeof(struct gdt_entry) * 7) - 1;
+  gp.limit = (sizeof(struct gdt_entry) * GDT_ENTRIES) - 1;
   gp.base = (uint64_t)&gdt;
 
-  gdt_set_gate(0, 0, 0, 0, 0);                // Null
-  gdt_set_gate(1, 0, 0xFFFFFFFF, 0x9A, 0xAF); // KCode (64-bit, L=1)
-  gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xAF); // KData
-  gdt_set_gate(3, 0, 0xFFFFFFFF, 0xFA, 0xAF); // UCode (64-bit, L=1)
-  gdt_set_gate(4, 0, 0xFFFFFFFF, 0xF2, 0xAF); // UData
+  gdt_set_gate(0, 0, 0, 0, 0);
+  gdt_set_gate(1, 0, 0xFFFFFFFF, 0x9A, 0xAF);
+  gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xAF);
+  gdt_set_gate(3, 0, 0xFFFFFFFF, 0xFA, 0xAF);
+  gdt_set_gate(4, 0, 0xFFFFFFFF, 0xF2, 0xAF);
 
-  init_tss();
-  // TSS takes two entries (16 bytes) in 64-bit GDT at index 5 and 6
-  gdt_set_gate(5, (uint64_t)&tss, sizeof(tss_entry_t) - 1, 0x89,
-               0x00); // TSS (0x28)
+  init_tss_common(&bsp_tss, (uint64_t)&kernel_stack_top);
+  cpu_tss_entries[0] = &bsp_tss;
+  cpu_cores[0].tss = &bsp_tss;
 
-  // Top 32 bits of TSS base into GDT index 6
-  uint64_t tss_base = (uint64_t)&tss;
-  gdt[6].limit_low = (tss_base >> 32) & 0xFFFF;
-  gdt[6].base_low = (tss_base >> 48) & 0xFFFF;
-  gdt[6].base_middle = 0;
-  gdt[6].access = 0;
-  gdt[6].granularity = 0;
-  gdt[6].base_high = 0;
+  set_tss_descriptor(5, (uint64_t)&bsp_tss);
 
   gdt_flush((uint64_t)&gp);
-  tss_flush(); // Load TR with 0x28
+  tss_flush();
 }
 
 void gdt_set_gate(int num, uint64_t base, uint64_t limit, uint8_t access,
@@ -80,4 +113,12 @@ void gdt_set_gate(int num, uint64_t base, uint64_t limit, uint8_t access,
   gdt[num].access = access;
 }
 
-void tss_set_stack(uint64_t rsp0) { tss.rsp0 = rsp0; }
+void tss_set_stack(uint64_t rsp0) {
+  bsp_tss.rsp0 = rsp0;
+}
+
+void tss_set_stack_cpu(int cpu_num, uint64_t rsp0) {
+  if (cpu_num >= 0 && cpu_num < MAX_CPUS && cpu_tss_entries[cpu_num]) {
+    cpu_tss_entries[cpu_num]->rsp0 = rsp0;
+  }
+}

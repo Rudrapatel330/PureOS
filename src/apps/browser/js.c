@@ -584,17 +584,17 @@ static void native_fatal(void *udata, const char *msg) {
 
 static void *duk_alloc_wrapper(void *udata, duk_size_t size) {
     (void)udata;
-    return malloc(size);
+    return kmalloc(size);
 }
 
 static void *duk_realloc_wrapper(void *udata, void *ptr, duk_size_t size) {
     (void)udata;
-    return realloc(ptr, size);
+    return krealloc(ptr, size);
 }
 
 static void duk_free_wrapper(void *udata, void *ptr) {
     (void)udata;
-    free(ptr);
+    kfree(ptr);
 }
 
 void js_init(void) {

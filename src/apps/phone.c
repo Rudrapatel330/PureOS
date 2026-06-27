@@ -95,6 +95,7 @@ typedef struct {
     tcp_conn_t conn;
     int connected;
     int connecting;
+    int conn_in_progress;
     uint32_t server_ip;
     call_state_t state;
     
@@ -123,22 +124,11 @@ typedef struct {
 } phone_state_t;
 
 static void phone_init_aec(phone_state_t *s) {
-    if (s->echo_state) return;
-    int sample_rate = 48000;
-    int frame_size = 1024;
-    int filter_length = 4800; // 100ms
-    s->echo_state = speex_echo_state_init(frame_size, filter_length);
-    speex_echo_ctl(s->echo_state, SPEEX_ECHO_SET_SAMPLING_RATE, &sample_rate);
-    s->preprocess_state = speex_preprocess_state_init(frame_size, sample_rate);
-    speex_preprocess_ctl(s->preprocess_state, SPEEX_PREPROCESS_SET_ECHO_STATE, s->echo_state);
-    int enable_ns = 1;
-    speex_preprocess_ctl(s->preprocess_state, SPEEX_PREPROCESS_SET_DENOISE, &enable_ns);
-    int enable_agc = 1;
-    speex_preprocess_ctl(s->preprocess_state, SPEEX_PREPROCESS_SET_AGC, &enable_agc);
+    // Disabled Speex Preprocess: WebRTC in browser already handles it, 
+    // and sending raw pristine 48kHz PCM provides much clearer audio.
 }
 
 static void phone_destroy_aec(phone_state_t *s) {
-    if (s->echo_state) { speex_echo_state_destroy(s->echo_state); s->echo_state = NULL; }
     if (s->preprocess_state) { speex_preprocess_state_destroy(s->preprocess_state); s->preprocess_state = NULL; }
 }
 
@@ -163,111 +153,211 @@ static void draw_fill_circle(window_t *win, int cx, int cy, int r, uint32_t colo
     }
 }
 
+static void draw_rounded_rect(window_t *win, int x, int y, int w, int h, int r, uint32_t color) {
+    winmgr_fill_rect(win, x + r, y, w - 2*r, h, color);
+    winmgr_fill_rect(win, x, y + r, r, h - 2*r, color);
+    winmgr_fill_rect(win, x + w - r, y + r, r, h - 2*r, color);
+    
+    int cx1 = x + r;
+    int cy1 = y + r;
+    int cx2 = x + w - r - 1;
+    int cy2 = y + r;
+    int cx3 = x + r;
+    int cy3 = y + h - r - 1;
+    int cx4 = x + w - r - 1;
+    int cy4 = y + h - r - 1;
+
+    for (int dy = -r; dy <= 0; dy++) {
+        for (int dx = -r; dx <= 0; dx++) {
+            if (dx*dx + dy*dy <= r*r) {
+                winmgr_put_pixel(win, cx1 + dx, cy1 + dy, color);
+                winmgr_put_pixel(win, cx2 - dx, cy2 + dy, color);
+                winmgr_put_pixel(win, cx3 + dx, cy3 - dy, color);
+                winmgr_put_pixel(win, cx4 - dx, cy4 - dy, color);
+            }
+        }
+    }
+}
+
+static int approx_text_width(const char *text) {
+    int w = 0;
+    while (*text) {
+        char c = *text;
+        if (c == '1' || c == 'i' || c == 'l' || c == 'I') w += 6;
+        else if (c == 'W' || c == 'M') w += 11;
+        else if (c == 'w' || c == 'm') w += 9;
+        else if (c == 'o') w += 7;
+        else if (c == '_') w += 6;
+        else w += 8;
+        text++;
+    }
+    return w;
+}
+
 static void phone_draw(window_t *win) {
     phone_state_t *s = get_state(win);
-    const theme_t *th = theme_get();
-
-    winmgr_fill_rect(win, 0, 24, win->width, win->height - 24, 0xFF0B141A); // WhatsApp Dark theme bg
     
-    int cx = win->width / 2;
-    int cy = (win->height + 24) / 2;
+    int left_w = 200;
+    int mid_w = 400;
+    int right_w = 300;
+    
+    winmgr_fill_rect(win, 0, 24, left_w, win->height - 24, 0xFF171A21);
+    winmgr_fill_rect(win, left_w, 24, mid_w, win->height - 24, 0xFF111319);
+    winmgr_fill_rect(win, left_w + mid_w, 24, right_w, win->height - 24, 0xFF171A21);
 
     if (!s->connected) {
-        winmgr_draw_text(win, cx - 60, cy, s->connecting ? "Connecting to network..." : "Network Offline", 0xFF888888);
+        winmgr_draw_text(win, win->width/2 - 60, win->height/2, s->connecting ? "Connecting to network..." : "Offline. Click to connect", 0xFF888888);
         return;
     }
     
-    if (s->state == CALL_STATE_IDLE) {
-        // Top Navigation Tabs
-        winmgr_fill_rect(win, 0, 24, win->width, 34, 0xFF202C33);
-        winmgr_fill_rect(win, 0, 24, win->width/2, 34, s->ui_tab == 0 ? 0xFF2A3942 : 0xFF202C33);
-        winmgr_draw_text(win, win->width/4 - 24, 34, "Dialer", s->ui_tab == 0 ? 0xFFFFFFFF : 0xFF8696A0);
-        
-        winmgr_fill_rect(win, win->width/2, 24, win->width/2, 34, s->ui_tab == 1 ? 0xFF2A3942 : 0xFF202C33);
-        winmgr_draw_text(win, win->width*3/4 - 32, 34, "Contacts", s->ui_tab == 1 ? 0xFFFFFFFF : 0xFF8696A0);
-
-        if (s->ui_tab == 0) {
-            int num_len = strlen(s->target_username);
-            winmgr_draw_text(win, cx - (num_len*4), 70, s->target_username, 0xFFFFFFFF);
-            
-            const char *cname = contacts_get_name(s->target_username);
-            if (strcmp(cname, "Unknown") != 0 && s->target_username[0] != 0) {
-                int nlen = strlen(cname);
-                winmgr_draw_text(win, cx - (nlen*4), 90, cname, 0xFF8696A0);
-            }
-            
-            // Draw Keypad
-            const char *keys[12] = {"1","2","3","4","5","6","7","8","9","*","0","#"};
-            for (int i=0; i<12; i++) {
-                int kx = cx + ((i%3)-1)*65;
-                int ky = 140 + (i/3)*55;
-                draw_fill_circle(win, kx, ky, 22, 0xFF202C33);
-                winmgr_draw_text(win, kx - 4, ky - 6, keys[i], 0xFFFFFFFF);
-            }
-            
-            // Draw Call
-            draw_fill_circle(win, cx, 350, 26, 0xFF00A884);
-            winmgr_draw_text(win, cx - 16, 344, "Call", 0xFFFFFFFF);
-            
-            // Draw Del
-            if (num_len > 0) {
-                winmgr_draw_text(win, cx + 55, 344, "Del", 0xFF8696A0);
-            }
-        } else if (s->ui_tab == 1) {
-            int current_y = 70;
-            // New Contact logic
-            winmgr_fill_rect(win, 20, current_y, win->width - 40, 36, 0xFF2A3942);
-            winmgr_draw_text(win, cx - 40, current_y + 12, "+ Add Contact", 0xFF00A884);
-            current_y += 46;
-            
-            for (int i=0; i<_global_contacts_count; i++) {
-                winmgr_fill_rect(win, 10, current_y, win->width - 20, 48, 0xFF202C33);
-                winmgr_draw_text(win, 20, current_y + 10, _global_contacts[i].name, 0xFFFFFFFF);
-                winmgr_draw_text(win, 20, current_y + 26, _global_contacts[i].number, 0xFF8696A0);
-                
-                draw_fill_circle(win, win->width - 40, current_y + 24, 16, 0xFF00A884);
-                winmgr_draw_text(win, win->width - 52, current_y + 18, "Call", 0xFFFFFFFF);
-                
-                current_y += 52;
-            }
-        }
-    } else if (s->state == CALL_STATE_ADD_CONTACT) {
-        if (s->add_step == 0) {
-            winmgr_draw_text(win, cx - 80, cy - 60, "Enter phone number:", 0xFF8696A0);
-            winmgr_fill_rect(win, cx - 80, cy - 40, 160, 30, 0xFF202C33);
-            winmgr_draw_text(win, cx - 70, cy - 32, s->target_username, 0xFFFFFFFF);
-            
-            winmgr_fill_rect(win, cx - 40, cy + 10, 80, 36, 0xFF00A884);
-            winmgr_draw_text(win, cx - 16, cy + 22, "Next", 0xFFFFFFFF);
+    winmgr_draw_text(win, 30, 60, "Phone", 0xFFFFFFFF);
+    winmgr_draw_text(win, 31, 60, "Phone", 0xFFFFFFFF);
+    
+    int menu_y = 120;
+    const char* tabs[] = {"   Keypad", "   Recents", "   Contacts"};
+    for(int i=0; i<3; i++) {
+        if(s->ui_tab == i) {
+            draw_rounded_rect(win, 15, menu_y - 8, 170, 36, 18, 0xFF2D4E9A);
+            winmgr_draw_text(win, 45, menu_y + 2, tabs[i], 0xFFFFFFFF);
         } else {
-            winmgr_draw_text(win, cx - 80, cy - 60, "Enter contact name:", 0xFF8696A0);
-            winmgr_fill_rect(win, cx - 80, cy - 40, 160, 30, 0xFF202C33);
-            winmgr_draw_text(win, cx - 70, cy - 32, s->contact_name, 0xFFFFFFFF);
-            
-            winmgr_fill_rect(win, cx - 40, cy + 10, 80, 36, 0xFF00A884);
-            winmgr_draw_text(win, cx - 16, cy + 22, "Save", 0xFFFFFFFF);
+            winmgr_draw_text(win, 45, menu_y + 2, tabs[i], 0xFF868C96);
         }
-    } else if (s->state == CALL_STATE_CALLING) {
-        winmgr_draw_text(win, cx - 40, cy - 30, "Calling...", th->fg);
-        winmgr_draw_text(win, cx - 40, cy - 10, contacts_get_name(s->target_username), th->accent);
+        menu_y += 50;
+    }
+    
+    if(s->ui_tab == 1 || s->ui_tab == 0) {
+        winmgr_draw_text(win, left_w + 30, 60, "Recents", 0xFFFFFFFF);
+        winmgr_draw_text(win, left_w + 31, 60, "Recents", 0xFFFFFFFF);
+        
+        int ry = 110;
+        
+        draw_fill_circle(win, left_w + 50, ry + 16, 20, 0xFF353A45);
+        winmgr_draw_text(win, left_w + 46, ry + 10, "E", 0xFFFFFFFF);
+        winmgr_draw_text(win, left_w + 90, ry, "Emma Watson", 0xFFFFFFFF);
+        winmgr_draw_text(win, left_w + 90, ry + 16, "\xFB 10:42 AM", 0xFF868C96);
+        
+        ry += 60;
+        draw_fill_circle(win, left_w + 50, ry + 16, 20, 0xFF353A45);
+        winmgr_draw_text(win, left_w + 46, ry + 10, "#", 0xFFFFFFFF);
+        winmgr_draw_text(win, left_w + 90, ry, "+1 555-3921", 0xFFFFFFFF);
+        winmgr_draw_text(win, left_w + 90, ry + 16, "\xFB Yesterday", 0xFF868C96);
+        
+        ry += 60;
+        draw_fill_circle(win, left_w + 50, ry + 16, 20, 0xFF353A45);
+        winmgr_draw_text(win, left_w + 46, ry + 10, "A", 0xFFFFFFFF);
+        winmgr_draw_text(win, left_w + 90, ry, "Alex Thompson", 0xFFFFFFFF);
+        winmgr_draw_text(win, left_w + 90, ry + 16, "\xFB Oct 14", 0xFF868C96);
+    } else if (s->ui_tab == 2) {
+        winmgr_draw_text(win, left_w + 30, 60, "Contacts", 0xFFFFFFFF);
+        winmgr_draw_text(win, left_w + 31, 60, "Contacts", 0xFFFFFFFF);
 
-        winmgr_fill_rect(win, cx - 40, cy + 20, 80, 40, 0xFFAA0000);
-        winmgr_draw_text(win, cx - 25, cy + 32, "Cancel", 0xFFFFFFFF);
-    } else if (s->state == CALL_STATE_RINGING) {
-        winmgr_draw_text(win, cx - 50, cy - 30, "Incoming call!", 0xFF00AA00);
-        winmgr_draw_text(win, cx - 40, cy - 10, contacts_get_name(s->target_username), th->accent);
+        draw_rounded_rect(win, left_w + 30, 110, 150, 36, 18, 0xFF232630);
+        winmgr_draw_text(win, left_w + 50, 120, "+ Add Contact", 0xFF3C9B4A);
+        
+        int cy_c = 170;
+        for (int i=0; i<_global_contacts_count; i++) {
+            draw_fill_circle(win, left_w + 50, cy_c + 16, 20, 0xFF353A45);
+            char initial[2] = { _global_contacts[i].name[0], 0 };
+            winmgr_draw_text(win, left_w + 46, cy_c + 10, initial, 0xFFFFFFFF);
+            
+            winmgr_draw_text(win, left_w + 90, cy_c, _global_contacts[i].name, 0xFFFFFFFF);
+            winmgr_draw_text(win, left_w + 90, cy_c + 16, _global_contacts[i].number, 0xFF868C96);
+            
+            draw_rounded_rect(win, left_w + 310, cy_c, 60, 32, 16, 0xFF3C9B4A);
+            winmgr_draw_text(win, left_w + 326, cy_c + 10, "Call", 0xFFFFFFFF);
+            cy_c += 60;
+        }
+    }
+    
+    draw_fill_circle(win, 840, 60, 15, 0xFF171A21);
+    winmgr_draw_text(win, 836, 54, "Q", 0xFF868C96); 
+    winmgr_draw_text(win, 870, 54, "...", 0xFF868C96);
+    
+    int keypad_cx = 750;
+    int keypad_cy = 200;
+    
+    int num_len = strlen(s->target_username);
+    if (num_len > 0) {
+        winmgr_draw_text(win, 650, 120, s->target_username, 0xFFFFFFFF);
+        winmgr_draw_text(win, 850, 120, "X", 0xFF868C96);
+    }
+    
+    const char *keys[12] = {"1","2","3","4","5","6","7","8","9","*","0","#"};
+    const char *subkeys[12] = {"\x01","ABC","DEF","GHI","JKL","MNO","PQRS","TUV","WXYZ","","+",""};
+    for(int i=0; i<12; i++) {
+        int row = i / 3;
+        int col = i % 3;
+        int kx = keypad_cx + (col - 1) * 82;
+        int ky = keypad_cy + row * 82;
+        draw_fill_circle(win, kx, ky, 38, 0xFF232630);
+        
+        int key_w = approx_text_width(keys[i]);
+        if (subkeys[i][0] != '\0' && subkeys[i][0] != '\x01') {
+            int sub_w = approx_text_width(subkeys[i]);
+            winmgr_draw_text(win, kx - (key_w / 2), ky - 8, keys[i], 0xFFFFFFFF);
+            winmgr_draw_text(win, kx - (sub_w / 2), ky + 8, subkeys[i], 0xFF868C96);
+        } else {
+            winmgr_draw_text(win, kx - (key_w / 2), ky - 6, keys[i], 0xFFFFFFFF);
+            if (subkeys[i][0] == '\x01') {
+               int o_w = approx_text_width("o_o");
+               winmgr_draw_text(win, kx - (o_w / 2), ky + 8, "o_o", 0xFF868C96); 
+            }
+        }
+    }
+    
+    int call_y = keypad_cy + 4 * 82;
+    draw_fill_circle(win, keypad_cx, call_y, 38, 0xFF3C9B4A);
+    int call_w = approx_text_width("Call");
+    winmgr_draw_text(win, keypad_cx - (call_w / 2), call_y - 6, "Call", 0xFFFFFFFF);
 
-        winmgr_fill_rect(win, cx - 90, cy + 20, 80, 40, 0xFF00AA00);
-        winmgr_draw_text(win, cx - 75, cy + 32, "Accept", 0xFFFFFFFF);
+    if (s->state != CALL_STATE_IDLE) {
+        int pw = 400;
+        int ph = 300;
+        int px = (win->width - pw) / 2;
+        int py = (win->height + 24 - ph) / 2;
+        draw_rounded_rect(win, px, py, pw, ph, 20, 0xFF171A21);
+        
+        int pcx = px + pw / 2;
+        int pcy = py + ph / 2;
+        
+        if (s->state == CALL_STATE_ADD_CONTACT) {
+            if (s->add_step == 0) {
+                winmgr_draw_text(win, pcx - 80, pcy - 60, "Enter phone number:", 0xFF868C96);
+                draw_rounded_rect(win, pcx - 100, pcy - 40, 200, 36, 10, 0xFF111319);
+                winmgr_draw_text(win, pcx - 90, pcy - 30, s->target_username, 0xFFFFFFFF);
+                
+                draw_rounded_rect(win, pcx - 50, pcy + 20, 100, 40, 10, 0xFF3C9B4A);
+                winmgr_draw_text(win, pcx - 16, pcy + 32, "Next", 0xFFFFFFFF);
+            } else {
+                winmgr_draw_text(win, pcx - 80, pcy - 60, "Enter contact name:", 0xFF868C96);
+                draw_rounded_rect(win, pcx - 100, pcy - 40, 200, 36, 10, 0xFF111319);
+                winmgr_draw_text(win, pcx - 90, pcy - 30, s->contact_name, 0xFFFFFFFF);
+                
+                draw_rounded_rect(win, pcx - 50, pcy + 20, 100, 40, 10, 0xFF3C9B4A);
+                winmgr_draw_text(win, pcx - 16, pcy + 32, "Save", 0xFFFFFFFF);
+            }
+        } else if (s->state == CALL_STATE_CALLING) {
+            winmgr_draw_text(win, pcx - 40, pcy - 40, "Calling...", 0xFFFFFFFF);
+            winmgr_draw_text(win, pcx - 40, pcy - 20, contacts_get_name(s->target_username), 0xFF3C9B4A);
 
-        winmgr_fill_rect(win, cx + 10, cy + 20, 80, 40, 0xFFAA0000);
-        winmgr_draw_text(win, cx + 25, cy + 32, "Reject", 0xFFFFFFFF);
-    } else if (s->state == CALL_STATE_INCALL) {
-        winmgr_draw_text(win, cx - 30, cy - 30, "In Call", 0xFF00AA00);
-        winmgr_draw_text(win, cx - 40, cy - 10, contacts_get_name(s->target_username), th->accent);
+            draw_rounded_rect(win, pcx - 60, pcy + 20, 120, 40, 10, 0xFFAA0000);
+            winmgr_draw_text(win, pcx - 24, pcy + 32, "Cancel", 0xFFFFFFFF);
+        } else if (s->state == CALL_STATE_RINGING) {
+            winmgr_draw_text(win, pcx - 50, pcy - 40, "Incoming call!", 0xFF3C9B4A);
+            winmgr_draw_text(win, pcx - 40, pcy - 20, contacts_get_name(s->target_username), 0xFFFFFFFF);
 
-        winmgr_fill_rect(win, cx - 40, cy + 20, 80, 40, 0xFFAA0000);
-        winmgr_draw_text(win, cx - 30, cy + 32, "Hang Up", 0xFFFFFFFF);
+            draw_rounded_rect(win, pcx - 100, pcy + 20, 80, 40, 10, 0xFF3C9B4A);
+            winmgr_draw_text(win, pcx - 80, pcy + 32, "Accept", 0xFFFFFFFF);
+
+            draw_rounded_rect(win, pcx + 20, pcy + 20, 80, 40, 10, 0xFFAA0000);
+            winmgr_draw_text(win, pcx + 40, pcy + 32, "Reject", 0xFFFFFFFF);
+        } else if (s->state == CALL_STATE_INCALL) {
+            winmgr_draw_text(win, pcx - 30, pcy - 40, "In Call", 0xFF3C9B4A);
+            winmgr_draw_text(win, pcx - 40, pcy - 20, contacts_get_name(s->target_username), 0xFFFFFFFF);
+
+            draw_rounded_rect(win, pcx - 60, pcy + 20, 120, 40, 10, 0xFFAA0000);
+            winmgr_draw_text(win, pcx - 28, pcy + 32, "Hang Up", 0xFFFFFFFF);
+        }
     }
 }
 
@@ -308,10 +398,6 @@ static void phone_process_packet(window_t* win, const char* json) {
                         int mono_samples = plen / 2;
                         if (mono_samples > 8192) mono_samples = 8192;
 
-                        if (s->echo_state && mono_samples == 1024) {
-                            speex_echo_playback(s->echo_state, mono);
-                        }
-
                         for (int i = 0; i < mono_samples; i++) {
                             int16_t sample = mono[i];
                             s->rx_stereo_buf[i * 2] = sample;
@@ -326,22 +412,56 @@ static void phone_process_packet(window_t* win, const char* json) {
     win->needs_redraw = 1;
 }
 
+static void phone_send_json(phone_state_t *s, const char *json) {
+    uint32_t len = strlen(json);
+    if (len + 4 > sizeof(s->packet_send_buf)) return;
+    *(uint32_t*)s->packet_send_buf = len;
+    memcpy(s->packet_send_buf + 4, json, len);
+    tcp_send(&s->conn, s->packet_send_buf, len + 4);
+}
+
 void phone_update(void *w) {
     window_t *win = (window_t *)w;
     phone_state_t *s = get_state(win);
 
     if (s->connecting) {
-        s->server_ip = make_ip(10, 0, 2, 2); 
-        if (tcp_connect(&s->conn, s->server_ip, 7860) == 0) {
-            s->connected = 1;
-            char auth[128];
-            strcpy(auth, "{\"type\":\"auth\",\"username\":\"PureOS_Phone\"} \n");
-            tcp_send(&s->conn, auth, strlen(auth));
-            s->rx_json_idx = 0;
-            s->rx_json_len = 0;
+        if (!s->conn_in_progress) {
+            s->server_ip = make_ip(10, 0, 2, 2); 
+            int ret = tcp_connect(&s->conn, s->server_ip, 7860);
+            if (ret == 0) {
+                s->connected = 1;
+                s->connecting = 0;
+                s->conn_in_progress = 0;
+                char auth[128];
+                strcpy(auth, "{\"type\":\"auth\",\"username\":\"PureOS_Phone\"}");
+                phone_send_json(s, auth);
+                s->rx_json_len = 0;
+            } else if (ret == 1) {
+                s->conn_in_progress = 1;
+            } else {
+                s->connecting = 0;
+                s->conn_in_progress = 0;
+            }
+            win->needs_redraw = 1;
+        } else {
+            int ret = tcp_check_connect(&s->conn);
+            if (ret == 0) {
+                s->connected = 1;
+                s->connecting = 0;
+                s->conn_in_progress = 0;
+                char auth[128];
+                strcpy(auth, "{\"type\":\"auth\",\"username\":\"PureOS_Phone\"}");
+                phone_send_json(s, auth);
+                s->rx_json_len = 0;
+                win->needs_redraw = 1;
+            } else if (ret == 1) {
+                // Still waiting
+            } else {
+                s->connecting = 0;
+                s->conn_in_progress = 0;
+                win->needs_redraw = 1;
+            }
         }
-        s->connecting = 0;
-        win->needs_redraw = 1;
     }
 
     if (s->connected) {
@@ -354,6 +474,12 @@ void phone_update(void *w) {
         while (work_done < max_work) {
             int activity = 0;
             
+            if (s->conn.tx_len > 0) {
+                int old_len = s->conn.tx_len;
+                tcp_flush(&s->conn);
+                if (s->conn.tx_len < old_len) activity = 1;
+            }
+            
             // 1. Poll NIC (Priority) - 4 polls to keep up with audio packets
             for (int p = 0; p < 4; p++) {
                 static uint8_t phone_poll_buf[1600];
@@ -364,49 +490,62 @@ void phone_update(void *w) {
                 }
             }
             
-            // 2. Drain TCP with safety margin
-            if (s->conn.rx_ready && s->rx_json_len < (int)sizeof(s->rx_json_buf) - 2048) {
-                int n = tcp_recv(&s->conn, s->rx_json_buf + s->rx_json_len, 
-                                 sizeof(s->rx_json_buf) - s->rx_json_len - 1);
-                if (n > 0) {
-                    s->rx_json_len += n;
-                    s->rx_json_buf[s->rx_json_len] = 0;
-                    activity = 1;
-                } else if (n < 0) {
-                    s->connected = 0;
-                    return;
+            // 2. Drain TCP via length-prefixed protocol
+            if (s->conn.rx_ready) {
+                // Read 4-byte length prefix
+                if (s->rx_json_len < 4) {
+                    int n = tcp_recv(&s->conn, s->rx_json_buf + s->rx_json_len, 4 - s->rx_json_len);
+                    if (n > 0) { s->rx_json_len += n; activity = 1; }
+                    else if (n < 0) { s->connected = 0; return; }
                 }
-            }
-            
-            // 3. Process ALL available JSON packets (drain before mic work)
-            for (int pkt = 0; pkt < 8; pkt++) {
-                char *lines = (char*)s->rx_json_buf + s->rx_json_idx;
-                char *nl = strchr(lines, '\n');
-                if (!nl) break;
-                *nl = 0;
-                phone_process_packet(win, lines);
-                s->rx_json_idx = (nl + 1) - (char*)s->rx_json_buf;
-                activity = 1;
                 
-                // Pack only when needed (Lazy compaction)
-                if (s->rx_json_idx > 32768) {
-                    int remain = s->rx_json_len - s->rx_json_idx;
-                    if (remain > 0) memmove(s->rx_json_buf, s->rx_json_buf + s->rx_json_idx, remain);
-                    s->rx_json_len = remain;
-                    s->rx_json_idx = 0;
-                    s->rx_json_buf[s->rx_json_len] = 0;
+                if (s->rx_json_len >= 4) {
+                    uint32_t expected_len = *(uint32_t*)s->rx_json_buf;
+                    if (expected_len > sizeof(s->rx_json_buf) - 5) {
+                        // Protocol error, drop connection
+                        s->connected = 0;
+                        return;
+                    }
+                    int current_data = s->rx_json_len - 4;
+                    if (current_data < (int)expected_len) {
+                        int n = tcp_recv(&s->conn, s->rx_json_buf + s->rx_json_len, expected_len - current_data);
+                        if (n > 0) { s->rx_json_len += n; activity = 1; }
+                        else if (n < 0) { s->connected = 0; return; }
+                        current_data = s->rx_json_len - 4;
+                    }
+                    
+                    if (current_data == (int)expected_len) {
+                        // Full packet received
+                        uint8_t *payload = s->rx_json_buf + 4;
+                        if (payload[0] == '{') {
+                            payload[expected_len] = 0;
+                            phone_process_packet(win, (char*)payload);
+                        } else if (payload[0] == 0x01) {
+                            // Binary audio
+                            int pcm_len = expected_len - 1;
+                            int16_t *mono = (int16_t *)(payload + 1);
+                            int mono_samples = pcm_len / 2;
+                            if (mono_samples > 8192) mono_samples = 8192;
+                            for (int i = 0; i < mono_samples; i++) {
+                                int16_t sample = mono[i];
+                                s->rx_stereo_buf[i * 2] = sample;
+                                s->rx_stereo_buf[i * 2 + 1] = sample;
+                            }
+                            ac97_stream_pcm((uint8_t*)s->rx_stereo_buf, mono_samples * 4, 48000, 16, 2);
+                        }
+                        // Reset buffer for next packet
+                        s->rx_json_len = 0;
+                        activity = 1;
+                    }
                 }
             }
-            if (s->rx_json_len - s->rx_json_idx > 32768) {
-                // Gap recovery: discard 16KB if stuck
-                s->rx_json_idx += 16384; 
-                activity = 1;
-            }
             
-            // 4. Send exactly ONE mic chunk
+            // 4. Send all available mic chunks
             if (s->state == CALL_STATE_INCALL) {
-                int r_mic = ac97_read_capture(s->mic_buf, 1024);
-                if (r_mic > 0) {
+                while (1) {
+                    int r_mic = ac97_read_capture(s->mic_buf, 1024);
+                    if (r_mic <= 0) break;
+                    
                     activity = 1;
                     int16_t *samples = (int16_t *)s->mic_buf;
                     int stereo_frames = r_mic / 4; // each frame = 2 samples (L+R) = 4 bytes
@@ -417,20 +556,13 @@ void phone_update(void *w) {
                         s->mic_accum[s->mic_accum_len++] = (uint8_t)((sample >> 8) & 0xFF);
                         
                         if (s->mic_accum_len >= 2048) {
-                            if (s->echo_state) {
-                                int16_t processed[1024];
-                                speex_echo_capture(s->echo_state, (int16_t*)s->mic_accum, processed);
-                                speex_preprocess_run(s->preprocess_state, processed);
-                                b64_encode((uint8_t*)processed, 2048, s->b64_send_buf);
-                            } else {
-                                b64_encode(s->mic_accum, 2048, s->b64_send_buf);
-                            }
-                            strcpy(s->packet_send_buf, "{\"type\":\"audio\",\"to\":\"");
-                            strcat(s->packet_send_buf, s->target_username);
-                            strcat(s->packet_send_buf, "\",\"data\":\"");
-                            strcat(s->packet_send_buf, s->b64_send_buf);
-                            strcat(s->packet_send_buf, "\"} \n");
-                            tcp_send(&s->conn, s->packet_send_buf, strlen(s->packet_send_buf));
+                            uint32_t pkt_len = 1 + 32 + 2048;
+                            *(uint32_t*)s->packet_send_buf = pkt_len;
+                            s->packet_send_buf[4] = 0x01;
+                            memset(s->packet_send_buf + 5, 0, 32);
+                            strncpy((char*)s->packet_send_buf + 5, s->target_username, 31);
+                            memcpy(s->packet_send_buf + 37, s->mic_accum, 2048);
+                            tcp_send(&s->conn, s->packet_send_buf, 4 + pkt_len);
                             s->mic_accum_len = 0;
                         }
                     }
@@ -449,25 +581,22 @@ static void phone_on_key(void *w, int key, char c) {
 
     if (s->state == CALL_STATE_IDLE) {
         int len = strlen(s->target_username);
-        // Only accept typing if we are on Dialer tab, but really they use mouse now
-        if (s->ui_tab == 0) {
-            if (c >= 32 && c <= 126 && len < 31) {
-                s->target_username[len] = c;
-                s->target_username[len+1] = 0;
+        if (c >= 32 && c <= 126 && len < 31) {
+            s->target_username[len] = c;
+            s->target_username[len+1] = 0;
+            win->needs_redraw = 1;
+        } else if (c == '\b' && len > 0) {
+            s->target_username[len-1] = 0;
+            win->needs_redraw = 1;
+        } else if (c == '\n' || c == '\r') {
+            if (len > 0) {
+                char packet[128];
+                strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
+                strcat(packet, s->target_username);
+                strcat(packet, "\"}");
+                phone_send_json(s, packet);
+                s->state = CALL_STATE_CALLING;
                 win->needs_redraw = 1;
-            } else if (c == '\b' && len > 0) {
-                s->target_username[len-1] = 0;
-                win->needs_redraw = 1;
-            } else if (c == '\n' || c == '\r') {
-                if (len > 0) {
-                    char packet[128];
-                    strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
-                    strcat(packet, s->target_username);
-                    strcat(packet, "\"} \n");
-                    tcp_send(&s->conn, packet, strlen(packet));
-                    s->state = CALL_STATE_CALLING;
-                    win->needs_redraw = 1;
-                }
             }
         }
     } else if (s->state == CALL_STATE_ADD_CONTACT) {
@@ -496,7 +625,7 @@ static void phone_on_key(void *w, int key, char c) {
             } else if (c == '\n' || c == '\r') {
                 contacts_add(s->target_username, s->contact_name);
                 s->state = CALL_STATE_IDLE;
-                s->ui_tab = 1;
+                s->ui_tab = 2;
                 win->needs_redraw = 1;
             }
         }
@@ -510,134 +639,152 @@ static void phone_on_mouse(void *w, int x, int y, int buttons) {
     int click = (buttons & 1) && !(last_buttons & 1);
     last_buttons = buttons;
 
-    if (!click || !s->connected) return;
+    if (!click) return;
 
-    int cx = win->width / 2;
-    int cy = (win->height + 24) / 2;
+    if (!s->connected) {
+        if (!s->connecting) {
+            s->connecting = 1;
+            win->needs_redraw = 1;
+        }
+        return;
+    }
 
-    if (s->state == CALL_STATE_IDLE) {
-        if (y >= 24 && y <= 58) {
-            if (x < win->width/2) s->ui_tab = 0;
-            else s->ui_tab = 1;
+    if (s->state != CALL_STATE_IDLE) {
+        int pw = 400;
+        int ph = 300;
+        int px = (win->width - pw) / 2;
+        int py = (win->height + 24 - ph) / 2;
+        int pcx = px + pw / 2;
+        int pcy = py + ph / 2;
+
+        if (s->state == CALL_STATE_ADD_CONTACT) {
+            if (x >= pcx - 50 && x <= pcx + 50 && y >= pcy + 20 && y <= pcy + 60) {
+                if (s->add_step == 0) s->add_step = 1;
+                else {
+                    contacts_add(s->target_username, s->contact_name);
+                    s->state = CALL_STATE_IDLE;
+                    s->ui_tab = 2;
+                }
+                win->needs_redraw = 1;
+            }
+        } else if (s->state == CALL_STATE_CALLING || s->state == CALL_STATE_INCALL) {
+            if (x >= pcx - 60 && x <= pcx + 60 && y >= pcy + 20 && y <= pcy + 60) {
+                char packet[128];
+                strcpy(packet, "{\"type\":\"call_end\",\"from\":\"PureOS_Phone\",\"to\":\"");
+                strcat(packet, s->target_username);
+                strcat(packet, "\"}");
+                phone_send_json(s, packet);
+                s->state = CALL_STATE_IDLE;
+                ac97_stop_capture();
+                ac97_stop_playback();
+                phone_destroy_aec(s);
+                win->needs_redraw = 1;
+            }
+        } else if (s->state == CALL_STATE_RINGING) {
+            if (x >= pcx - 100 && x <= pcx - 20 && y >= pcy + 20 && y <= pcy + 60) {
+                char packet[128];
+                strcpy(packet, "{\"type\":\"call_accept\",\"from\":\"PureOS_Phone\",\"to\":\"");
+                strcat(packet, s->target_username);
+                strcat(packet, "\"}");
+                phone_send_json(s, packet);
+                s->state = CALL_STATE_INCALL;
+                ac97_start_capture(NULL, 0);
+                phone_init_aec(s);
+                win->needs_redraw = 1;
+            } else if (x >= pcx + 20 && x <= pcx + 100 && y >= pcy + 20 && y <= pcy + 60) {
+                char packet[128];
+                strcpy(packet, "{\"type\":\"call_reject\",\"from\":\"PureOS_Phone\",\"to\":\"");
+                strcat(packet, s->target_username);
+                strcat(packet, "\"}");
+                phone_send_json(s, packet);
+                s->state = CALL_STATE_IDLE;
+                win->needs_redraw = 1;
+            }
+        }
+        return;
+    }
+
+    if (x >= 15 && x <= 185 && y >= 112 && y <= 148) { s->ui_tab = 0; win->needs_redraw = 1; }
+    if (x >= 15 && x <= 185 && y >= 162 && y <= 198) { s->ui_tab = 1; win->needs_redraw = 1; }
+    if (x >= 15 && x <= 185 && y >= 212 && y <= 248) { s->ui_tab = 2; win->needs_redraw = 1; }
+
+    if (s->ui_tab == 2) {
+        if (x >= 230 && x <= 380 && y >= 110 && y <= 146) {
+            s->contact_name[0] = 0;
+            s->target_username[0] = 0;
+            s->add_step = 0;
+            s->state = CALL_STATE_ADD_CONTACT;
             win->needs_redraw = 1;
             return;
         }
         
-        if (s->ui_tab == 0) {
-            // Keypad
-            for (int i=0; i<12; i++) {
-                int kx = cx + ((i%3)-1)*65;
-                int ky = 140 + (i/3)*55;
-                if ((x-kx)*(x-kx) + (y-ky)*(y-ky) <= 484) {
-                    const char *keys = "123456789*0#";
-                    int len = strlen(s->target_username);
-                    if (len < 31) {
-                        s->target_username[len] = keys[i];
-                        s->target_username[len+1] = 0;
-                        win->needs_redraw = 1;
-                    }
-                    return;
-                }
-            }
-            
-            // Call Button
-            if ((x-cx)*(x-cx) + (y-350)*(y-350) <= 676) {
-                if (strlen(s->target_username) > 0) {
-                    char packet[128];
-                    strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
-                    strcat(packet, s->target_username);
-                    strcat(packet, "\"} \n");
-                    tcp_send(&s->conn, packet, strlen(packet));
-                    s->state = CALL_STATE_CALLING;
-                    win->needs_redraw = 1;
-                }
-                return;
-            }
-            
-            // Del Button
-            if (x >= cx + 40 && x <= cx + 80 && y >= 330 && y <= 370) {
-                int len = strlen(s->target_username);
-                if (len > 0) {
-                    s->target_username[len-1] = 0;
-                    win->needs_redraw = 1;
-                }
-                return;
-            }
-        } else if (s->ui_tab == 1) {
-            int current_y = 70;
-            // New contact
-            if (x >= 20 && x <= win->width-20 && y >= current_y && y <= current_y+36) {
-                s->contact_name[0] = 0;
-                s->target_username[0] = 0;
-                s->add_step = 0;
-                s->state = CALL_STATE_ADD_CONTACT;
+        int cy_c = 170;
+        for (int i=0; i<_global_contacts_count; i++) {
+            if (x >= 510 && x <= 570 && y >= cy_c && y <= cy_c + 32) {
+                strcpy(s->target_username, _global_contacts[i].number);
+                char packet[128];
+                strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
+                strcat(packet, s->target_username);
+                strcat(packet, "\"}");
+                phone_send_json(s, packet);
+                s->state = CALL_STATE_CALLING;
                 win->needs_redraw = 1;
                 return;
             }
-            current_y += 46;
-            
-            for (int i=0; i<_global_contacts_count; i++) {
-                int bx = win->width - 40;
-                int by = current_y + 24;
-                if ((x-bx)*(x-bx) + (y-by)*(y-by) <= 400) {
-                    strcpy(s->target_username, _global_contacts[i].number);
-                    char packet[128];
-                    strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
-                    strcat(packet, s->target_username);
-                    strcat(packet, "\"} \n");
-                    tcp_send(&s->conn, packet, strlen(packet));
-                    s->state = CALL_STATE_CALLING;
-                    win->needs_redraw = 1;
-                    return;
-                }
-                current_y += 52;
+            cy_c += 60;
+        }
+    } else if (s->ui_tab == 0 || s->ui_tab == 1) {
+        int ry = 110;
+        if (x >= 230 && x <= 500) {
+            if (y >= ry && y <= ry+40) { strcpy(s->target_username, "Emma Watson"); win->needs_redraw=1; }
+            ry += 60;
+            if (y >= ry && y <= ry+40) { strcpy(s->target_username, "+1 555-3921"); win->needs_redraw=1; }
+            ry += 60;
+            if (y >= ry && y <= ry+40) { strcpy(s->target_username, "Alex Thompson"); win->needs_redraw=1; }
+        }
+    }
+
+    int keypad_cx = 750;
+    int keypad_cy = 200;
+    
+    for(int i=0; i<12; i++) {
+        int row = i / 3;
+        int col = i % 3;
+        int kx = keypad_cx + (col - 1) * 82;
+        int ky = keypad_cy + row * 82;
+        if ((x-kx)*(x-kx) + (y-ky)*(y-ky) <= 38*38) {
+            const char *keys = "123456789*0#";
+            int len = strlen(s->target_username);
+            if (len < 31) {
+                s->target_username[len] = keys[i];
+                s->target_username[len+1] = 0;
+                win->needs_redraw = 1;
             }
+            return;
         }
-    } else if (s->state == CALL_STATE_ADD_CONTACT) {
-        if (x >= cx - 40 && x <= cx + 40 && y >= cy + 10 && y <= cy + 46) {
-            if (s->add_step == 0) {
-                s->add_step = 1;
-            } else {
-                contacts_add(s->target_username, s->contact_name);
-                s->state = CALL_STATE_IDLE;
-                s->ui_tab = 1;
-            }
-            win->needs_redraw = 1;
-        }
-    } else if (s->state == CALL_STATE_CALLING || s->state == CALL_STATE_INCALL) {
-        if (x >= cx - 40 && x <= cx + 40 && y >= cy + 20 && y <= cy + 60) {
+    }
+
+    int call_y = keypad_cy + 4 * 82;
+    if ((x-keypad_cx)*(x-keypad_cx) + (y-call_y)*(y-call_y) <= 38*38) {
+        if (strlen(s->target_username) > 0) {
             char packet[128];
-            strcpy(packet, "{\"type\":\"call_end\",\"from\":\"PureOS_Phone\",\"to\":\"");
+            strcpy(packet, "{\"type\":\"call_request\",\"from\":\"PureOS_Phone\",\"to\":\"");
             strcat(packet, s->target_username);
-            strcat(packet, "\"} \n");
-            tcp_send(&s->conn, packet, strlen(packet));
-            s->state = CALL_STATE_IDLE;
-            ac97_stop_capture();
-            ac97_stop_playback();
-            phone_destroy_aec(s);
+            strcat(packet, "\"}");
+            phone_send_json(s, packet);
+            s->state = CALL_STATE_CALLING;
             win->needs_redraw = 1;
         }
-    } else if (s->state == CALL_STATE_RINGING) {
-        if (x >= cx - 90 && x <= cx - 10 && y >= cy + 20 && y <= cy + 60) {
-            char packet[128];
-            strcpy(packet, "{\"type\":\"call_accept\",\"from\":\"PureOS_Phone\",\"to\":\"");
-            strcat(packet, s->target_username);
-            strcat(packet, "\"} \n");
-            tcp_send(&s->conn, packet, strlen(packet));
-            s->state = CALL_STATE_INCALL;
-            ac97_start_capture(NULL, 0);
-            phone_init_aec(s);
+        return;
+    }
+
+    if (x >= 840 && x <= 860 && y >= 110 && y <= 130) {
+        int len = strlen(s->target_username);
+        if (len > 0) {
+            s->target_username[len-1] = 0;
             win->needs_redraw = 1;
         }
-        else if (x >= cx + 10 && x <= cx + 90 && y >= cy + 20 && y <= cy + 60) {
-            char packet[128];
-            strcpy(packet, "{\"type\":\"call_reject\",\"from\":\"PureOS_Phone\",\"to\":\"");
-            strcat(packet, s->target_username);
-            strcat(packet, "\"} \n");
-            tcp_send(&s->conn, packet, strlen(packet));
-            s->state = CALL_STATE_IDLE;
-            win->needs_redraw = 1;
-        }
+        return;
     }
 }
 
@@ -660,17 +807,18 @@ void phone_on_close(void *w) {
 }
 
 void phone_init(void) {
-    window_t *win = winmgr_create_window(-1, -1, 300, 400, "Phone");
+    window_t *win = winmgr_create_window(-1, -1, 900, 600, "Phone");
     if (!win) return;
 
     phone_state_t *s = (phone_state_t *)kmalloc(sizeof(phone_state_t));
     memset(s, 0, sizeof(phone_state_t));
 
-    strcpy(s->target_username, "Android_User");
-    s->connecting = 1;
+    strcpy(s->target_username, "");
+    s->connecting = 0;
+    s->ui_tab = 1;
 
     win->user_data = s;
-    win->app_type = 16; // APP_PHONE
+    win->app_type = 16;
     win->draw = (void (*)(void *))phone_draw;
     win->on_key = (void (*)(void *, int, char))phone_on_key;
     win->on_mouse = (void (*)(void *, int, int, int))phone_on_mouse;

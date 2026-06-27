@@ -28,6 +28,11 @@ void camera_update(void) {
 
     // If we have a real UVC camera, let it handle the frame buffer
     if (uvc_is_streaming) {
+        static int live_feed_logged = 0;
+        if (!live_feed_logged) {
+            print_serial("Camera: live feed active\n");
+            live_feed_logged = 1;
+        }
         uvc_update();
         return;
     }

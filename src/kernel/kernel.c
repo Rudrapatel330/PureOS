@@ -13,15 +13,19 @@
 #include "compositor.h"
 #include "config.h"
 #include "desktop.h"
+#include "io.h"
 #include "hal/hal.h"
 #include "hal/gfx_device.h"
 #include "heap.h"
+#include "ipc.h"
 #include "profiler.h"
 #include "screen.h"
+#include "smp.h"
 #include "string.h"
 #include "task.h"
 #include "theme.h"
 #include "window.h"
+#include "workspace.h"
 #include <stdint.h>
 
 extern void videoplayer_update();
@@ -40,6 +44,13 @@ uint32_t *framebuffer = (uint32_t *)0xE0000000;
 window_t *sysmon_win = 0;
 uint32_t *real_lfb = (uint32_t *)0xE0000000;
 uint32_t *backbuffer = 0;
+volatile uint64_t desktop_idle_cycles = 0;
+
+static inline uint64_t rdtsc_local(void) {
+  uint32_t lo, hi;
+  __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+  return ((uint64_t)hi << 32) | lo;
+}
 
 int screen_width = SCREEN_WIDTH;
 int screen_height = SCREEN_HEIGHT;
@@ -330,22 +341,31 @@ void desktop_process_messages(void) {
       if (mouse_moved) {
         desktop_mouse_move(mouse_x, mouse_y);
       }
-
+      
       static int local_prev_buttons = 0;
+      
+      extern void compositor_handle_cube_drag(int mx, int my, int dx, int dy, int btns);
+      if (curr_btns & 1) {
+        compositor_handle_cube_drag(mouse_x, mouse_y, dx, -dy, curr_btns);
+      } else if (local_prev_buttons & 1) {
+        compositor_handle_cube_drag(mouse_x, mouse_y, 0, 0, 0); // Release
+      }
+
       int wm_consumed = 0;
-      if (curr_btns != local_prev_buttons || dx != 0 || dy != 0) {
+      extern int in_cube_mode;
+      if (!in_cube_mode && (curr_btns != local_prev_buttons || dx != 0 || dy != 0)) {
         wm_consumed = winmgr_handle_mouse_global(mouse_x, mouse_y, curr_btns);
         if (wm_consumed)
           ui_dirty = 1;
       }
 
-      if (curr_btns && !local_prev_buttons) {
+      if (!in_cube_mode && curr_btns && !local_prev_buttons) {
         if (!wm_consumed) {
           desktop_click(mouse_x, mouse_y, curr_btns);
           ui_dirty = 1;
         }
       }
-      if (!curr_btns && local_prev_buttons) {
+      if (!in_cube_mode && !curr_btns && local_prev_buttons) {
         desktop_mouse_up(mouse_x, mouse_y);
         ui_dirty = 1;
       }
@@ -388,7 +408,8 @@ void desktop_task() {
 
   ui_dirty = 1;
 
-  // Startup Sound
+  print_serial("Bypassing startup sound to test freeze...\n");
+  /*
   play_sound(440);
   sleep(5);
   play_sound(554);
@@ -396,8 +417,14 @@ void desktop_task() {
   play_sound(659);
   sleep(10);
   nosound();
+  */
+  print_serial("Sound bypassed. Entering main loop...\n");
 
   while (1) {
+    // print_serial("Loop start.\n"); // Too spammy, let's just print once
+    static int loop_started = 0;
+    if (!loop_started) { print_serial("Main loop first iteration.\n"); loop_started = 1; }
+
     desktop_process_messages();
     usb_poll();
 
@@ -539,10 +566,18 @@ void desktop_task() {
     videoplayer_update();
     camera_update();
     camera_app_update();
-    /* Yield to scheduler — do NOT use hlt here!
-       This is the master render loop. hlt halts the entire CPU
-       and blocks all rendering/input processing until next IRQ. */
-    __asm__ volatile("int $32");
+    /* Yield to scheduler and put CPU to sleep until next interrupt.
+       This dramatically drops host CPU usage from 100% to near 0% when idle. */
+    // Core ID is fetched via get_core_id() from cpu.h
+    int core_before = get_core_id();
+    uint64_t t1 = rdtsc_local();
+    __asm__ volatile("sti; hlt");
+    uint64_t t2 = rdtsc_local();
+    int core_after = get_core_id();
+    if (core_before == core_after && t2 > t1) {
+      desktop_idle_cycles += (t2 - t1);
+    }
+    __asm__ volatile("int $49");
   }
 }
 
@@ -664,6 +699,14 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   serial_init();
   print_serial("\n[K1] KERNEL MAIN REACHED\n");
 
+  // Rust FFI Test
+  extern uint32_t rust_test(void);
+  if (rust_test() == 42) {
+    print_serial("Rust FFI: OK\n");
+  } else {
+    print_serial("Rust FFI: FAIL\n");
+  }
+
   // 0. VISUAL DEBUG & INIT (Blue Screen Test)
   uint32_t *fb_addr_ptr = (uint32_t *)0x6000;
   uint32_t fb_val = *fb_addr_ptr;
@@ -713,7 +756,7 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   // 2. Memory (Heap)
   heap_init();
   print_serial("HEAP OK\n");
-  
+
   // 2.5 C++ Constructors (MUST be after Heap)
   call_cpp_constructors();
 
@@ -726,6 +769,9 @@ void kernel_main(unsigned int magic, unsigned int addr) {
   __asm__ volatile("sti"); // Enable interrupts early for timer but keep IRQs
                            // masked at PIC if needed
   print_serial("TASKING & TIMER (EARLY) OK\n");
+
+  // 7b. Release APs into the scheduler (multi-core)
+  smp_start_aps();
 
   // 4. Filesystem
   print_serial("[INIT 1] FS START\n");
@@ -785,6 +831,13 @@ void kernel_main(unsigned int magic, unsigned int addr) {
 
   print_serial("Initializing WinMgr...\n");
   winmgr_init();
+  workspace_init();
+
+  // 5.5 IPC Systems
+  print_serial("[INIT 7.5] IPC START\n");
+  shm_init();
+  ipc_init();
+  wm_init();
 
   print_serial("Initializing Fonts...\n");
   extern void ttf_init(void);

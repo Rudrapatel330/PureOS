@@ -51,6 +51,7 @@ The algorithm implemented here is described in:
 #include "smallft.h"
 #include <math.h>
 #include <stdlib.h>
+extern int rand(void);
 
 #ifndef M_PI
 #define M_PI           3.14159265358979323846  /* pi */

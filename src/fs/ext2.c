@@ -266,7 +266,9 @@ inode_operations_t ext2_inode_ops = {
   ext2_vfs_finddir,
   0,
   0,
-  0
+  0,
+  0,  // create
+  0   // rename
 };
 
 int ext2_init(void) {

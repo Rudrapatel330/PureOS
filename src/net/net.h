@@ -170,10 +170,16 @@ typedef struct {
   int connected;
   int error;
   int lwip_fd; // <-- ADDED FOR LWIP
+  
+  // Transmit buffer
+  uint8_t tx_buf[65536];
+  int tx_len;
 } tcp_conn_t;
 
 int tcp_connect(tcp_conn_t *conn, uint32_t ip, uint16_t port);
+int tcp_check_connect(tcp_conn_t *conn);
 int tcp_send(tcp_conn_t *conn, const void *data, int len);
+void tcp_flush(tcp_conn_t *conn);
 int tcp_recv(tcp_conn_t *conn, void *buf, int max_len);
 void tcp_close(tcp_conn_t *conn);
 void tcp_receive(uint32_t src_ip, const uint8_t *data, uint16_t len);

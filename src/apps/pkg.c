@@ -1,4 +1,4 @@
-#include "../../kernel/syscall.h"
+#include <syscall.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
