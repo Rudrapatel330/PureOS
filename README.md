@@ -41,86 +41,86 @@ The OS is structured in clean layers, each built on top of the previous one:
 
 ```mermaid
 flowchart TD
-    subgraph HW[Hardware Layer]
-        CPU[x86-64 CPU]
-        PCI[PCI Bus]
-        DISK[ATA / AHCI / NVMe Storage]
-        NIC[PCnet / NE2000 NIC]
-        GPU[VGA / BGA / SVGA3D Display]
-        KBD[PS/2 Keyboard]
-        MOUSE[PS/2 Mouse]
-        AUDIO[AC97 / ES1370 Audio]
-        USB_HW[USB UHCI / OHCI / xHCI 3.0]
-        BT_HW[Bluetooth CSR8510 USB Dongle]
-        PHONE_HW[Android & Samsung Smartphones]
+    subgraph HW["Hardware Layer"]
+        CPU["x86-64 CPU"]
+        PCI["PCI Bus"]
+        DISK["ATA / AHCI / NVMe Storage"]
+        NIC["PCnet / NE2000 NIC"]
+        GPU["VGA / BGA / SVGA3D Display"]
+        KBD["PS/2 Keyboard"]
+        MOUSE["PS/2 Mouse"]
+        AUDIO["AC97 / ES1370 Audio"]
+        USB_HW["USB UHCI / OHCI / xHCI 3.0"]
+        BT_HW["Bluetooth CSR8510 USB Dongle"]
+        PHONE_HW["Android & Samsung Smartphones"]
     end
 
-    subgraph KRN[Kernel & Compatibility Layer]
-        BOOT[Custom 2-Stage Bootloader] --> KERNEL[64-bit C Kernel]
-        KERNEL --> GDT[GDT / IDT / ISR]
-        KERNEL --> PAGING[Virtual Memory & Paging]
-        KERNEL --> HEAP[Dynamic Heap Allocator]
-        KERNEL --> SCHED[Task Scheduler & SMP]
-        KERNEL --> SYSCALL[PureOS System Calls]
-        KERNEL --> LINUX_ABI[Linux x86-64 Syscall Emulation in Rust]
-        KERNEL --> ELF_LOADER[ELF64 Binary Loader]
-        KERNEL --> ACPI_K[ACPI Power Management]
+    subgraph KRN["Kernel & Compatibility Layer"]
+        BOOT["Custom 2-Stage Bootloader"] --> KERNEL["64-bit C Kernel"]
+        KERNEL --> GDT["GDT / IDT / ISR"]
+        KERNEL --> PAGING["Virtual Memory & Paging"]
+        KERNEL --> HEAP["Dynamic Heap Allocator"]
+        KERNEL --> SCHED["Task Scheduler & SMP"]
+        KERNEL --> SYSCALL["PureOS System Calls"]
+        KERNEL --> LINUX_ABI["Linux x86-64 Syscall Emulation in Rust"]
+        KERNEL --> ELF_LOADER["ELF64 Binary Loader"]
+        KERNEL --> ACPI_K["ACPI Power Management"]
     end
 
-    subgraph DRV[Driver Layer]
-        DRIVERS[Device Drivers]
-        DRIVERS --> VGA_D[VGA / BGA / SVGA3D Graphics]
-        DRIVERS --> KBD_D[Keyboard Driver]
-        DRIVERS --> MOUSE_D[Mouse Driver]
-        DRIVERS --> ATA_D[ATA / AHCI / NVMe Storage]
-        DRIVERS --> NET_D[PCnet / NE2000 Network]
-        DRIVERS --> AUDIO_D[AC97 / ES1370 Audio & SpeexDSP AEC]
-        DRIVERS --> XHCI_D[Rust xHCI USB 3.0 Driver]
-        DRIVERS --> BT_D[Physical Bluetooth HCI & GAP Stack]
-        DRIVERS --> MTP_D[USB MTP Smartphone Storage Driver]
-        DRIVERS --> TIMER_D[PIT Timer and RTC Clock]
-        DRIVERS --> PCI_D[PCI Bus Enumeration]
+    subgraph DRV["Driver Layer"]
+        DRIVERS["Device Drivers"]
+        DRIVERS --> VGA_D["VGA / BGA / SVGA3D Graphics"]
+        DRIVERS --> KBD_D["Keyboard Driver"]
+        DRIVERS --> MOUSE_D["Mouse Driver"]
+        DRIVERS --> ATA_D["ATA / AHCI / NVMe Storage"]
+        DRIVERS --> NET_D["PCnet / NE2000 Network"]
+        DRIVERS --> AUDIO_D["AC97 / ES1370 Audio & SpeexDSP AEC"]
+        DRIVERS --> XHCI_D["Rust xHCI USB 3.0 Driver"]
+        DRIVERS --> BT_D["Physical Bluetooth HCI & GAP Stack"]
+        DRIVERS --> MTP_D["USB MTP Smartphone Storage Driver"]
+        DRIVERS --> TIMER_D["PIT Timer and RTC Clock"]
+        DRIVERS --> PCI_D["PCI Bus Enumeration"]
     end
 
-    subgraph FSL[Filesystem Layer]
-        VFS[Virtual Filesystem Switch]
-        VFS --> FAT[FAT12 / FAT16 / FAT32]
-        VFS --> EXT2[Ext2 Linux Filesystem]
-        VFS --> RAMFS[RAM Filesystem]
-        VFS --> DEVFS[Device FS]
-        VFS --> PIPES[Unix-style Pipes]
-        VFS --> MTP_FS[/phone Smartphone Mount]
+    subgraph FSL["Filesystem Layer"]
+        VFS["Virtual Filesystem Switch"]
+        VFS --> FAT["FAT12 / FAT16 / FAT32"]
+        VFS --> EXT2["Ext2 Linux Filesystem"]
+        VFS --> RAMFS["RAM Filesystem"]
+        VFS --> DEVFS["Device FS"]
+        VFS --> PIPES["Unix-style Pipes"]
+        VFS --> MTP_FS["Phone Storage (/phone)"]
     end
 
-    subgraph NETL[Network Layer]
-        NET_STACK[Network Stack]
-        NET_STACK --> ETH[Ethernet Frames]
-        NET_STACK --> ARP[ARP Resolution]
-        NET_STACK --> IPV4[IPv4 Routing]
-        NET_STACK --> ICMP_N[UDP / TCP]
-        NET_STACK --> DNS_N[DNS Resolver]
-        NET_STACK --> DHCP_N[DHCP Client]
-        NET_STACK --> HTTP_N[HTTP 1.1 Client]
-        NET_STACK --> TLS_N[TLS 1.2 via BearSSL / WolfSSL]
-        NET_STACK --> SMTP_N[SMTP Email Client]
+    subgraph NETL["Network Layer"]
+        NET_STACK["Network Stack"]
+        NET_STACK --> ETH["Ethernet Frames"]
+        NET_STACK --> ARP["ARP Resolution"]
+        NET_STACK --> IPV4["IPv4 Routing"]
+        NET_STACK --> ICMP_N["UDP / TCP"]
+        NET_STACK --> DNS_N["DNS Resolver"]
+        NET_STACK --> DHCP_N["DHCP Client"]
+        NET_STACK --> HTTP_N["HTTP 1.1 Client"]
+        NET_STACK --> TLS_N["TLS 1.2 via BearSSL / WolfSSL"]
+        NET_STACK --> SMTP_N["SMTP Email Client"]
     end
 
-    subgraph DE[Desktop Environment]
-        COMPOSITOR[Window Compositor]
-        COMPOSITOR --> TASKBAR_D[Taskbar & System Tray]
-        COMPOSITOR --> STARTMENU_D[Start Menu]
-        COMPOSITOR --> SYSMENU_D[System Quick-Settings Menu]
-        COMPOSITOR --> ANIMATIONS[Spring & Ease Animations]
-        COMPOSITOR --> THEMES[Theme Engine]
-        COMPOSITOR --> WORKSPACES[3D Cube Virtual Workspaces]
-        COMPOSITOR --> CLIPBOARD_D[Clipboard Manager]
+    subgraph DE["Desktop Environment"]
+        COMPOSITOR["Window Compositor"]
+        COMPOSITOR --> TASKBAR_D["Taskbar & System Tray"]
+        COMPOSITOR --> STARTMENU_D["Start Menu"]
+        COMPOSITOR --> SYSMENU_D["System Quick-Settings Menu"]
+        COMPOSITOR --> ANIMATIONS["Spring & Ease Animations"]
+        COMPOSITOR --> THEMES["Theme Engine"]
+        COMPOSITOR --> WORKSPACES["3D Cube Virtual Workspaces"]
+        COMPOSITOR --> CLIPBOARD_D["Clipboard Manager"]
     end
 
-    subgraph APP[Applications & Userland]
-        APPS[16+ Native GUI Apps]
-        BT_APP[Bluetooth Device Manager & Radar]
-        PHONE_APP[Phone File Explorer & Photo Viewer]
-        LINUX_BIN[Linux ELF Binaries: curl, busybox]
+    subgraph APP["Applications & Userland"]
+        APPS["16+ Native GUI Apps"]
+        BT_APP["Bluetooth Device Manager & Radar"]
+        PHONE_APP["Phone File Explorer & Photo Viewer"]
+        LINUX_BIN["Linux ELF Binaries: curl, busybox"]
     end
 
     HW --> KRN
@@ -677,7 +677,9 @@ flowchart TD
 
 3. **14-Byte Stride Bugfix (`HCI_EVENT_INQUIRY_RESULT_WITH_RSSI` 0x22)**:
    - In accordance with **Bluetooth Core Specification v5.4 §7.7.33**, each Inquiry Result with RSSI record occupies exactly **14 bytes**:
-     $$\text{Stride} = 6\,(\text{BD\_ADDR}) + 1\,(\text{PSR}) + 1\,(\text{Reserved}) + 3\,(\text{CoD}) + 2\,(\text{Clock Offset}) + 1\,(\text{RSSI}) = 14\text{ bytes}$$
+     ```text
+     Stride = 6 (BD_ADDR) + 1 (PSR) + 1 (Reserved) + 3 (CoD) + 2 (Clock Offset) + 1 (RSSI) = 14 bytes
+     ```
    - Fixing an off-by-one 15-byte stride bug restored the array bounds check `(p + 14) <= (params + param_len)`, allowing over-the-air radio packets to be extracted and forwarded to the UI.
 
 4. **Remote Name Resolution & Class of Device (CoD)**:
@@ -808,7 +810,9 @@ flowchart TD
    - Traverses Program Headers (`PT_LOAD` segments), computing the lowest and highest virtual memory boundaries.
    - Allocates contiguous physical frames and maps page tables with userland access permissions (`R/W/X`).
    - Sets up the user stack (`USER_STACK_TOP` at `0x70010000`) conforming to the Linux AMD64 ABI:
-     $$\text{Stack Layout: } \text{argc} \to \text{argv[]} \to \text{NULL} \to \text{envp[]} \to \text{NULL} \to \text{Auxiliary Vectors (AT\_PAGESZ, AT\_ENTRY, AT\_RANDOM)}$$
+     ```text
+     Stack Layout: argc -> argv[] -> NULL -> envp[] -> NULL -> Auxiliary Vectors (AT_PAGESZ, AT_ENTRY, AT_RANDOM)
+     ```
    - Flags the task with `t->is_linux = 1`.
 
 2. **Hardware Syscall Trap (`syscall` instruction)**:
@@ -884,7 +888,7 @@ graph TB
     VFS --> RAMFS[RAMFS<br>In-Memory FS]
     VFS --> DEVFS[DevFS<br>Device Nodes]
     VFS --> PIPE[Pipes<br>IPC Channels]
-    VFS --> MTP_NODE[/phone<br>Smartphone Storage]
+    VFS --> MTP_NODE["/phone<br>Smartphone Storage"]
 
     style VFS fill:#264653,color:#fff
     style FAT32 fill:#2a9d8f,color:#fff
