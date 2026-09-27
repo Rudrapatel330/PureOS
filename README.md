@@ -17,16 +17,21 @@
 - [Networking Stack](#-networking-stack)
 - [Email Client (SMTP)](#-email-client-smtp)
 - [Web Browser](#-web-browser)
+- [Bluetooth Subsystem (Physical Radio)](#-bluetooth-subsystem-physical-radio)
+- [USB Smartphone Storage & MTP](#-usb-smartphone-storage--mtp)
+- [Linux Binary Compatibility Layer](#-linux-binary-compatibility-layer)
+- [Command-Line Networking & `curl`](#-command-line-networking--curl)
 - [Filesystem Support](#-filesystem-support)
 - [Hardware & Drivers](#-hardware--drivers)
 - [Build Instructions](#-build-instructions)
 - [Email Setup Guide](#-email-setup-guide)
+- [PureChat & Relay Server](#-purechat--relay-server)
 
 ---
 
 ## 🌟 Overview
 
-PureOS is a fully functional desktop operating system engineered entirely from scratch — no Linux kernel, no POSIX libraries, no borrowed OS code. Every layer is hand-written: from the bootloader and kernel, through memory management and interrupt handling, all the way up to a composited windowed desktop with animations, a TCP/IP network stack with TLS encryption, and a suite of native GUI applications.
+PureOS is a fully functional desktop operating system engineered entirely from scratch — no Linux kernel, no POSIX libraries, no borrowed OS code. Every layer is hand-written: from the bootloader and kernel, through memory management and interrupt handling, all the way up to a composited windowed desktop with animations, a TCP/IP network stack with TLS encryption, a native Linux binary compatibility layer capable of executing standard Linux ELF64 binaries like `curl`, a bare-metal Rust xHCI USB 3.0 stack with smartphone MTP file transfer, and physical Bluetooth radio communication with real hardware.
 
 ---
 
@@ -39,34 +44,40 @@ flowchart TD
     subgraph HW[Hardware Layer]
         CPU[x86-64 CPU]
         PCI[PCI Bus]
-        DISK[ATA / AHCI Disk]
+        DISK[ATA / AHCI / NVMe Storage]
         NIC[PCnet / NE2000 NIC]
-        GPU[VGA / BGA Display]
+        GPU[VGA / BGA / SVGA3D Display]
         KBD[PS/2 Keyboard]
         MOUSE[PS/2 Mouse]
         AUDIO[AC97 / ES1370 Audio]
-        USB_HW[USB UHCI]
+        USB_HW[USB UHCI / OHCI / xHCI 3.0]
+        BT_HW[Bluetooth CSR8510 USB Dongle]
+        PHONE_HW[Android & Samsung Smartphones]
     end
 
-    subgraph KRN[Kernel Layer]
+    subgraph KRN[Kernel & Compatibility Layer]
         BOOT[Custom 2-Stage Bootloader] --> KERNEL[64-bit C Kernel]
         KERNEL --> GDT[GDT / IDT / ISR]
-        KERNEL --> PAGING[Virtual Memory and Paging]
+        KERNEL --> PAGING[Virtual Memory & Paging]
         KERNEL --> HEAP[Dynamic Heap Allocator]
-        KERNEL --> SCHED[Task Scheduler and SMP]
-        KERNEL --> SYSCALL[System Calls]
+        KERNEL --> SCHED[Task Scheduler & SMP]
+        KERNEL --> SYSCALL[PureOS System Calls]
+        KERNEL --> LINUX_ABI[Linux x86-64 Syscall Emulation in Rust]
+        KERNEL --> ELF_LOADER[ELF64 Binary Loader]
         KERNEL --> ACPI_K[ACPI Power Management]
     end
 
     subgraph DRV[Driver Layer]
         DRIVERS[Device Drivers]
-        DRIVERS --> VGA_D[VGA / BGA Graphics]
+        DRIVERS --> VGA_D[VGA / BGA / SVGA3D Graphics]
         DRIVERS --> KBD_D[Keyboard Driver]
         DRIVERS --> MOUSE_D[Mouse Driver]
-        DRIVERS --> ATA_D[ATA / AHCI Storage]
+        DRIVERS --> ATA_D[ATA / AHCI / NVMe Storage]
         DRIVERS --> NET_D[PCnet / NE2000 Network]
-        DRIVERS --> AUDIO_D[ES1370 and WAV Audio]
-        DRIVERS --> USB_D[USB UHCI Driver]
+        DRIVERS --> AUDIO_D[AC97 / ES1370 Audio & SpeexDSP AEC]
+        DRIVERS --> XHCI_D[Rust xHCI USB 3.0 Driver]
+        DRIVERS --> BT_D[Physical Bluetooth HCI & GAP Stack]
+        DRIVERS --> MTP_D[USB MTP Smartphone Storage Driver]
         DRIVERS --> TIMER_D[PIT Timer and RTC Clock]
         DRIVERS --> PCI_D[PCI Bus Enumeration]
     end
@@ -74,10 +85,11 @@ flowchart TD
     subgraph FSL[Filesystem Layer]
         VFS[Virtual Filesystem Switch]
         VFS --> FAT[FAT12 / FAT16 / FAT32]
-        VFS --> EXT2[Ext2]
+        VFS --> EXT2[Ext2 Linux Filesystem]
         VFS --> RAMFS[RAM Filesystem]
         VFS --> DEVFS[Device FS]
         VFS --> PIPES[Unix-style Pipes]
+        VFS --> MTP_FS[/phone Smartphone Mount]
     end
 
     subgraph NETL[Network Layer]
@@ -89,23 +101,26 @@ flowchart TD
         NET_STACK --> DNS_N[DNS Resolver]
         NET_STACK --> DHCP_N[DHCP Client]
         NET_STACK --> HTTP_N[HTTP 1.1 Client]
-        NET_STACK --> TLS_N[TLS 1.2 via BearSSL]
+        NET_STACK --> TLS_N[TLS 1.2 via BearSSL / WolfSSL]
         NET_STACK --> SMTP_N[SMTP Email Client]
     end
 
     subgraph DE[Desktop Environment]
         COMPOSITOR[Window Compositor]
-        COMPOSITOR --> TASKBAR_D[Taskbar and System Tray]
+        COMPOSITOR --> TASKBAR_D[Taskbar & System Tray]
         COMPOSITOR --> STARTMENU_D[Start Menu]
         COMPOSITOR --> SYSMENU_D[System Quick-Settings Menu]
-        COMPOSITOR --> ANIMATIONS[Spring and Ease Animations]
+        COMPOSITOR --> ANIMATIONS[Spring & Ease Animations]
         COMPOSITOR --> THEMES[Theme Engine]
-        COMPOSITOR --> WORKSPACES[Virtual Workspaces]
+        COMPOSITOR --> WORKSPACES[3D Cube Virtual Workspaces]
         COMPOSITOR --> CLIPBOARD_D[Clipboard Manager]
     end
 
-    subgraph APP[Applications]
+    subgraph APP[Applications & Userland]
         APPS[16+ Native GUI Apps]
+        BT_APP[Bluetooth Device Manager & Radar]
+        PHONE_APP[Phone File Explorer & Photo Viewer]
+        LINUX_BIN[Linux ELF Binaries: curl, busybox]
     end
 
     HW --> KRN
@@ -114,6 +129,7 @@ flowchart TD
     DRV --> NETL
     KRN --> DE
     DE --> APP
+    LINUX_ABI --> LINUX_BIN
 ```
 
 ---
@@ -197,6 +213,7 @@ PureOS ships with **16+ native desktop applications**, all built directly into t
 | 🎨 **Paint** | Pixel-level drawing application with freehand brush, color palette, and canvas |
 | 📝 **Text Editor** | Multi-line text editor with keyboard input, scrolling, cursor navigation, and file save/load |
 | 🧮 **Calculator** | Graphical calculator with button grid supporting basic arithmetic operations |
+| 📊 **PurePoint** | Native presentation suite with 16:9 slide canvas, slide deck sidebar, interactive text/shape editing, Undo/Redo, color themes, file saving/loading, and F5 fullscreen slideshow mode |
 
 ### Media & Documents
 | App | Description |
@@ -598,6 +615,263 @@ sequenceDiagram
 
 ---
 
+## 📶 Bluetooth Subsystem (Physical Radio)
+
+PureOS features a custom-built, bare-metal Bluetooth subsystem that interfaces directly with physical USB Bluetooth controllers (such as the Cambridge Silicon Radio **CSR8510 A10** / Broadcom chipsets) passed through from real hardware. It includes a custom xHCI USB transport driver written in Rust, a complete Bluetooth Host Controller Interface (HCI) stack in C, and a GAP (Generic Access Profile) device discovery and pairing manager.
+
+```mermaid
+flowchart TD
+    subgraph HW["📡 Physical Bluetooth Hardware"]
+        ANT["2.4 GHz Antenna (CSR8510)"]
+        RADIO["Baseband & Link Manager"]
+        USB_BT["USB BT Controller (VID:0x0A12 PID:0x0001)"]
+        ANT <--> RADIO <--> USB_BT
+    end
+
+    subgraph RUST["🦀 Bare-Metal Rust xHCI Driver"]
+        X_CORE["xHCI Host Controller Engine"]
+        EP0_RING["EP0 Control Transfer Ring (Setup, Data, Status TRBs)"]
+        EP3_RING["EP3 Interrupt IN Ring (HCI Event Polling)"]
+        ISR["xHCI ISR & Event Dispatcher"]
+        X_CORE --> EP0_RING
+        X_CORE --> EP3_RING
+        X_CORE --> ISR
+    end
+
+    subgraph C_STACK["⚙️ PureOS Bluetooth HCI Stack (C)"]
+        HCI_CORE["HCI Protocol Engine (bt_core.c)"]
+        CMD_BUILDER["HCI Command Formatter (Reset, Inquiry, NameReq)"]
+        EVENT_PARSER["HCI Event Dispatcher (0x0E, 0x0F, 0x22, 0x07)"]
+        STRIDE_FIX["14-Byte RSSI Parser (BT Core Spec v5.4 §7.7.33)"]
+        COD_DEC["Class of Device Decoder (Phone, PC, Audio)"]
+        HCI_CORE --> CMD_BUILDER
+        HCI_CORE --> EVENT_PARSER
+        EVENT_PARSER --> STRIDE_FIX
+        STRIDE_FIX --> COD_DEC
+    end
+
+    subgraph UI["🎨 Desktop Settings UI"]
+        RADAR["Animated Radio Radar / Scanner"]
+        DEV_LIST["Discovered Device List (MAC, RSSI, Type)"]
+        PAIR_BTN["Interactive Pairing & Link Key Generation"]
+    end
+
+    USB_BT <-->|Control & Interrupt Transfers| X_CORE
+    EP0_RING <-->|HCI Commands via EP0 Control| HCI_CORE
+    EP3_RING -->|HCI Events via Interrupt IN| EVENT_PARSER
+    COD_DEC --> DEV_LIST
+    DEV_LIST --> RADAR
+    DEV_LIST --> PAIR_BTN
+```
+
+### 🔬 Key Bluetooth Engineering Highlights
+
+1. **EP0 Control Transfer Architecture (USB Bluetooth Spec Compliance)**:
+   - Early implementations routed HCI commands through Bulk OUT endpoints, which caused dual-mode controllers like the CSR8510 to respond with `HCI_EVENT_HARDWARE_ERROR (0x10)`. Per the USB Bluetooth Class Specification, **HCI commands must be routed through Endpoint 0 control transfers** (`bmRequestType = 0x20`, `bRequest = 0x00`), while Bulk endpoints are reserved exclusively for ACL data packets.
+   - The Rust xHCI driver orchestrates a three-stage TRB sequence (`Setup Stage` -> `Data Stage` -> `Status Stage`) on the EP0 ring, while isolating completion flags so high-frequency Interrupt IN packets on EP3 cannot clobber control transfer state.
+
+2. **Dual-Mode Scanning: Classic BR/EDR & BLE**:
+   - **Classic Inquiry (`0x0401`)**: Issues general inquiries using General Inquiry Access Code (`GIAC 0x9E8B33`) with a 10.24-second window to discover nearby discoverable devices.
+   - **Bluetooth Low Energy Active Scan (`0x200B` / `0x200C`)**: Configures scan intervals and windows with duplicate filtering to intercept BLE advertising reports (`HCI_EVENT_LE_META` 0x3E).
+   - **Host Support Flag (`HCI_Write_LE_Host_Support` 0x0C6D)**: Unlocks the controller's dual-mode Link Manager, preventing `0x11` (Unsupported Feature) errors on BLE commands.
+
+3. **14-Byte Stride Bugfix (`HCI_EVENT_INQUIRY_RESULT_WITH_RSSI` 0x22)**:
+   - In accordance with **Bluetooth Core Specification v5.4 §7.7.33**, each Inquiry Result with RSSI record occupies exactly **14 bytes**:
+     $$\text{Stride} = 6\,(\text{BD\_ADDR}) + 1\,(\text{PSR}) + 1\,(\text{Reserved}) + 3\,(\text{CoD}) + 2\,(\text{Clock Offset}) + 1\,(\text{RSSI}) = 14\text{ bytes}$$
+   - Fixing an off-by-one 15-byte stride bug restored the array bounds check `(p + 14) <= (params + param_len)`, allowing over-the-air radio packets to be extracted and forwarded to the UI.
+
+4. **Remote Name Resolution & Class of Device (CoD)**:
+   - Upon capturing an inquiry result, the stack automatically dispatches `HCI_Remote_Name_Request` (opcode `0x0419`).
+   - The Link Manager decodes the 24-bit Class of Device field to dynamically categorize hardware:
+     - Major Device Class `0x02`: Smartphone / Cellular phone (renders phone icon and smartphone badges).
+     - Major Device Class `0x01`: Desktop Computer / Laptop Workstation.
+     - Major Device Class `0x04`: Audio / Video Headset.
+   - Live RSSI measurements (in dBm) are converted into animated 4-stage signal bars.
+
+5. **Real-World Hardware Verification**:
+   - Tested and verified over physical 2.4 GHz radio waves using a USB passthrough CSR8510 dongle.
+   - Successfully discovered real nearby hardware over the air:
+     - Discovered a **Nokia 8210 4G** (`E0:29:67:B4:2F:0F`) at -76 dBm and resolved its friendly name.
+     - Established two-way radio link with a **Samsung Galaxy Smartphone** (`B8:A8:25:CE:A2:81`) at -42 dBm.
+     - The smartphone recognized PureOS as a Desktop Computer workstation broadcasting over Bluetooth.
+
+---
+
+## 📱 USB Smartphone Storage & MTP
+
+PureOS features a native **Media Transfer Protocol (MTP)** and **Picture Transfer Protocol (PTP / ISO 15740)** driver written from scratch. When an Android or Samsung smartphone is connected to a physical USB port via cable, PureOS automatically identifies the device, negotiates an MTP session over xHCI Bulk pipes, and mounts the phone's internal storage directly into the PureOS Virtual Filesystem at `/phone`.
+
+```mermaid
+sequenceDiagram
+    participant Phone as 📱 Android / Samsung Phone
+    participant xHCI as 🦀 Rust xHCI (Bulk In/Out)
+    participant MTP as 🔌 MTP Engine (mtp.c)
+    participant VFS as 📁 VFS Layer (/phone)
+    participant FM as 🗂️ File Manager & Photo Viewer
+
+    Note over Phone, xHCI: 🔌 USB Cable Plugged In
+    xHCI->>xHCI: Enumerate USB Device & Configure Bulk Endpoints
+    MTP->>Phone: MTP_OP_OPEN_SESSION (TransactionID = 0)
+    Phone-->>MTP: Session Established (Code: 0x2001 OK)
+
+    MTP->>Phone: MTP_OP_GET_STORAGE_IDS
+    Phone-->>MTP: Storage IDs: [0x00010001 (Internal Storage)]
+
+    MTP->>Phone: MTP_OP_GET_STORAGE_INFO (0x00010001)
+    Phone-->>MTP: Storage Info (Free Space, Total Capacity, Volume Name)
+    MTP->>VFS: Register /phone Mount Point
+
+    Note over VFS, FM: 📂 User Opens File Manager -> /phone
+    FM->>VFS: vfs_readdir("/phone")
+    VFS->>MTP: mtp_get_object_handles(StorageID, Parent=0)
+    MTP->>Phone: MTP_OP_GET_OBJECT_HANDLES (Parent=0)
+    Phone-->>MTP: Handles: [DCIM, Pictures, Downloads, Documents, Music]
+    MTP-->>FM: Display Phone Folders in GUI
+
+    Note over FM, Phone: 📥 File Transfer: Copying Photos from Phone to PureOS Disk
+    FM->>VFS: vfs_read("/phone/DCIM/Camera/photo.jpg")
+    MTP->>Phone: MTP_OP_GET_OBJECT (ObjectHandle)
+    Phone-->>MTP: High-speed Chunked Data Stream (16KB Buffer)
+    MTP->>VFS: Write bytes to /home/user/photo.jpg on NVMe/FAT32
+    FM-->>FM: Render High-Resolution JPEG in Photo Viewer
+```
+
+### 🛠️ MTP Engine Capabilities
+
+| Feature | Implementation Details |
+|---|---|
+| **Bulk Pipe Streaming** | Direct transfer over USB 3.0/2.0 xHCI Bulk IN & Bulk OUT endpoints with 16KB ping-pong buffer |
+| **Session State Machine** | Strict ISO 15740 compliance with session initialization, storage pool enumeration, and transaction tracking |
+| **Storage Discovery** | Automatic detection of Internal Flash Storage (`0x00010001`) and external MicroSD Card partitions |
+| **Folder Traversal** | Recursive object enumeration: browse `/phone/DCIM/Camera`, `/phone/Download`, `/phone/Music` |
+| **Metadata Parsing** | Decodes UTF-16LE object names, timestamps, file sizes, and MIME types into standard C strings |
+| **Bidirectional Transfer** | **Download:** Copy photos/videos from phone to PureOS storage.<br>**Upload:** Transfer documents/music from PureOS to phone |
+| **Re-entrancy Protection** | Built-in mutex locking and heartbeat yielding to prevent GUI stalls during gigabyte-scale transfers |
+
+---
+
+## 🐧 Linux Binary Compatibility Layer
+
+PureOS contains a high-performance **Linux Application Binary Interface (ABI) compatibility layer**, allowing unmodified Linux x86-64 ELF binaries to run directly on the PureOS kernel without a virtual machine, containers, or emulated CPU instructions.
+
+```mermaid
+flowchart TD
+    subgraph USERSPACE["🐧 Linux Userland Executable"]
+        BIN["Linux x86-64 ELF Binary (curl / busybox / custom tool)"]
+        GLIBC["Static / Musl / Glibc Userland"]
+        BIN --> GLIBC
+        GLIBC --> SYSCALL_INST["Hardware 'syscall' Instruction"]
+    end
+
+    subgraph KERNEL_ENTRY["⚡ PureOS Hardware Trap Layer"]
+        MSR_LSTAR["IA32_LSTAR MSR Fast Syscall Entry (entry.asm)"]
+        FRAME["CPU State Capture (Registers Struct: RDI, RSI, RDX, R10, R8, R9)"]
+        SYSCALL_INST --> MSR_LSTAR
+        MSR_LSTAR --> FRAME
+    end
+
+    subgraph DISPATCHER["🦀 Rust Linux Syscall Dispatcher (syscalls.rs)"]
+        FILTER{"Task Flag: is_linux?"}
+        FRAME --> FILTER
+        FILTER -->|Yes| RUST_DISP["linux_syscall_handler(regs)"]
+        FILTER -->|No| PURE_DISP["Standard PureOS Syscall Table"]
+        
+        subgraph EMULATED["Emulated Linux Subsystems"]
+            VFS_SYS["VFS Operations: sys_read, sys_write, sys_open, sys_stat, sys_poll"]
+            MEM_SYS["Memory Management: sys_mmap, sys_mprotect, sys_munmap, sys_brk"]
+            NET_SYS["POSIX Sockets: sys_socket, sys_connect, sys_sendto, sys_recvfrom"]
+            PROC_SYS["Process/Thread: sys_clone, sys_set_tid_address, sys_exit_group"]
+            IPC_SYS["IPC: sys_pipe2, sys_eventfd2"]
+        end
+
+        RUST_DISP --> VFS_SYS
+        RUST_DISP --> MEM_SYS
+        RUST_DISP --> NET_SYS
+        RUST_DISP --> PROC_SYS
+        RUST_DISP --> IPC_SYS
+    end
+
+    subgraph BACKEND["💿 PureOS Native Kernel Backends"]
+        NATIVE_VFS["PureOS Virtual Filesystem (FAT32/Ext2/NVMe)"]
+        NATIVE_PAGING["Page Frame Allocator & Virtual Memory Manager"]
+        NATIVE_NET["PureOS TCP/IP Stack & DNS Resolver"]
+        VFS_SYS --> NATIVE_VFS
+        MEM_SYS --> NATIVE_PAGING
+        NET_SYS --> NATIVE_NET
+    end
+```
+
+### 🧠 How It Works Under the Hood
+
+1. **ELF64 Executable Loader (`src/kernel/elf.c`)**:
+   - Parses standard System V AMD64 ELF headers, validating the magic sequence `\x7fELF`.
+   - Traverses Program Headers (`PT_LOAD` segments), computing the lowest and highest virtual memory boundaries.
+   - Allocates contiguous physical frames and maps page tables with userland access permissions (`R/W/X`).
+   - Sets up the user stack (`USER_STACK_TOP` at `0x70010000`) conforming to the Linux AMD64 ABI:
+     $$\text{Stack Layout: } \text{argc} \to \text{argv[]} \to \text{NULL} \to \text{envp[]} \to \text{NULL} \to \text{Auxiliary Vectors (AT\_PAGESZ, AT\_ENTRY, AT\_RANDOM)}$$
+   - Flags the task with `t->is_linux = 1`.
+
+2. **Hardware Syscall Trap (`syscall` instruction)**:
+   - When a Linux binary executes the x86-64 `syscall` instruction, the CPU switches to Ring 0 via the `IA32_LSTAR` Model-Specific Register.
+   - The register state is captured into a 64-bit frame and forwarded directly to `linux_syscall_handler` in Rust.
+
+3. **60+ Emulated Linux Syscalls (`rust/src/linux_compat/syscalls.rs`)**:
+   - **File I/O**: `SYS_READ` (0), `SYS_WRITE` (1), `SYS_OPEN` (2), `SYS_CLOSE` (3), `SYS_STAT` (4), `SYS_FSTAT` (5), `SYS_LSEEK` (8), `SYS_READV` (19), `SYS_WRITEV` (20), `SYS_DUP` (32), `SYS_DUP2` (33).
+   - **Virtual Memory**: `SYS_MMAP` (9) supporting anonymous memory allocation, `SYS_MPROTECT` (10), `SYS_MUNMAP` (11), `SYS_BRK` (12) managing the application heap boundary.
+   - **Networking**: `SYS_SOCKET` (41), `SYS_CONNECT` (42), `SYS_SENDTO` (44), `SYS_RECVFROM` (45), `SYS_SENDMSG` (46), `SYS_RECVMSG` (47), `SYS_SHUTDOWN` (48), `SYS_SETSOCKOPT` (54), `SYS_GETSOCKOPT` (55).
+   - **Multiplexing & Async**: `SYS_POLL` (7), `SYS_SELECT` (23), `SYS_EVENTFD2` (290), `SYS_PIPE2` (293).
+   - **Process & Threading**: `SYS_CLONE` (56), `SYS_EXIT` (60), `SYS_EXIT_GROUP` (231), `SYS_SET_TID_ADDRESS` (218), `SYS_NANOSLEEP` (35), `SYS_GETPID` (39), `SYS_GETUID` (102), `SYS_GETGID` (104).
+
+---
+
+## 🌐 Command-Line Networking & `curl`
+
+Through the Linux Compatibility Layer and PureOS native network translation, PureOS runs an **unmodified, full-featured Linux `curl` binary (6.5 MB)** directly inside the operating system terminal!
+
+```mermaid
+sequenceDiagram
+    participant Term as 💻 PureOS Terminal
+    participant ELF as 📜 ELF Loader
+    participant Curl as 🌐 Linux curl Executable
+    participant Syscall as 🦀 Rust Syscall Translator
+    participant Net as 🔌 PureOS TCP/IP Stack
+    participant Web as 🌍 Remote Web Server
+
+    Term->>ELF: Run command: "curl -I https://example.com"
+    ELF->>Curl: Load PT_LOAD segments & launch at entrypoint
+    Note over Curl: curl initializes TLS engine & HTTP client
+
+    Curl->>Syscall: socket(AF_INET, SOCK_STREAM, 0)
+    Syscall->>Net: pureos_socket_create()
+    Syscall-->>Curl: fd = 3 (POSIX socket handle)
+
+    Curl->>Syscall: connect(fd=3, 93.184.216.34:443)
+    Syscall->>Net: pureos_tcp_connect()
+    Net->>Web: TCP SYN -> SYN-ACK -> ACK
+    Net-->>Syscall: Connection Established
+    Syscall-->>Curl: 0 (Success)
+
+    Note over Curl, Web: 🔒 TLS Handshake & Encrypted HTTP/1.1 GET
+    Curl->>Syscall: write(fd=3, "GET / HTTP/1.1\r\n...")
+    Syscall->>Net: pureos_socket_send()
+    Net->>Web: Transmit Ethernet Frames
+
+    Web-->>Net: HTTP 200 OK + Response Payload
+    Net-->>Syscall: Packet Available (poll / recvfrom)
+    Syscall-->>Curl: Buffer filled with response data
+
+    Curl->>Syscall: write(fd=1, "HTTP/1.1 200 OK\r\nContent-Type: ...")
+    Syscall->>Term: Render colored text to Terminal Window
+```
+
+### ⚡ Practical Uses in PureOS
+- **Command-Line Downloads**: Download files, tarballs, and assets directly from the public Internet onto PureOS storage drives (`curl -O http://...`).
+- **REST API Testing**: Send GET, POST, PUT requests with custom headers and JSON payloads directly from the terminal shell.
+- **Network Diagnostics**: Inspect HTTP headers, TLS certificate validation, response latency, and DNS resolution directly from the PureOS CLI.
+- **BusyBox Integration**: Runs core POSIX command-line utilities (`sh`, `ls`, `grep`, `cat`, `head`, `tail`, `wc`, `find`) using the exact same ABI translation layer.
+
+---
+
 ## 💾 Filesystem Support
 
 ```mermaid
@@ -610,11 +884,13 @@ graph TB
     VFS --> RAMFS[RAMFS<br>In-Memory FS]
     VFS --> DEVFS[DevFS<br>Device Nodes]
     VFS --> PIPE[Pipes<br>IPC Channels]
+    VFS --> MTP_NODE[/phone<br>Smartphone Storage]
 
     style VFS fill:#264653,color:#fff
     style FAT32 fill:#2a9d8f,color:#fff
     style EXT2 fill:#e9c46a,color:#000
     style RAMFS fill:#f4a261,color:#000
+    style MTP_NODE fill:#e76f51,color:#fff
 ```
 
 | Filesystem | Capabilities |
@@ -624,6 +900,7 @@ graph TB
 | **RAMFS** | Fast in-memory filesystem for temporary data and mail storage |
 | **DevFS** | Device file nodes (similar to Linux `/dev/`) |
 | **Pipes** | Unix-style inter-process communication pipes |
+| **MTP Filesystem** | Mounts connected Android / Samsung smartphone storage directly at `/phone` |
 
 ---
 
@@ -631,12 +908,14 @@ graph TB
 
 | Category | Drivers |
 |---|---|
-| **Display** | VGA text mode, VGA graphics mode, Bochs BGA (high-res framebuffer) |
-| **Input** | PS/2 Keyboard (scancode translation, shift/caps), PS/2 Mouse (movement + buttons) |
-| **Storage** | ATA PIO, AHCI (SATA) |
+| **Display** | VGA text mode, VGA graphics mode, Bochs BGA (high-res framebuffer), VMware SVGA II / SVGA3D hardware acceleration |
+| **Input** | PS/2 Keyboard (scancode translation, shift/caps), PS/2 Mouse (movement + buttons, cursor compositing) |
+| **Storage** | ATA PIO, AHCI (SATA), NVMe PCI Express (Solid State Drives) |
 | **Network** | AMD PCnet-PCI II, NE2000 (Realtek 8029) |
-| **Audio** | Intel AC97 codec (recording & playback via DMA), Ensoniq ES1370 (AudioPCI), WAV file decoder and playback |
-| **USB** | UHCI host controller, USB device enumeration |
+| **Audio** | Intel AC97 codec (DMA playback/recording), Ensoniq ES1370 (AudioPCI), WAV decoder, SpeexDSP Acoustic Echo Cancellation |
+| **USB** | UHCI, OHCI, and xHCI 3.0 SuperSpeed Controller (bare-metal Rust driver) with MTP smartphone storage support |
+| **Bluetooth** | Cambridge Silicon Radio (CSR8510 A10) / Broadcom dual-mode controller (BR/EDR + BLE) with EP0 control transfer routing |
+| **Binary Compatibility** | Linux x86-64 ABI Layer (ELF64 loader, 60+ POSIX syscalls emulated in Rust: `curl`, `busybox`) |
 | **System** | PCI bus enumeration, PIT timer, RTC real-time clock, PC speaker, ACPI, APIC, SMP multi-core |
 
 ---
